@@ -1,0 +1,69 @@
+name: release
+
+# Builds the portable exe, bumps the patch version automatically, and publishes
+# it to GitHub Releases. Runs on every push to main (skipping docs-only changes)
+# and can also be started by hand from the Actions tab.
+
+on:
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+      - '.gitignore'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  build-release:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET 9
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Compute next version (auto patch)
+        id: ver
+        shell: pwsh
+        run: |
+          git fetch --tags --force | Out-Null
+          $tags = git tag --list 'v*.*.*' |
+            ForEach-Object { $_.TrimStart('v') } |
+            Where-Object { $_ -match '^\d+\.\d+\.\d+$' } |
+            ForEach-Object { [version]$_ } |
+            Sort-Object
+          if (-not $tags) {
+            $version = '1.0.0'
+          } else {
+            $last = $tags[-1]
+            $version = '{0}.{1}.{2}' -f $last.Major, $last.Minor, ($last.Build + 1)
+          }
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "Next version: $version"
+
+      - name: Publish portable exe
+        shell: pwsh
+        run: >
+          dotnet publish pdanet-windows/PdaNetPortable.csproj
+          -c Release -o dist
+          -p:Version=${{ steps.ver.outputs.version }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.ver.outputs.version }}
+          name: PdaNet Windows v${{ steps.ver.outputs.version }}
+          generate_release_notes: true
+          files: dist/PdaNetPortable.exe

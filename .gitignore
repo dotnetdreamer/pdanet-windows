@@ -1,0 +1,41 @@
+# ===== .NET build output =====
+bin/
+obj/
+dist/
+publish/
+*.user
+*.suo
+*.binlog
+
+# ===== IDEs =====
+.vs/
+.vscode/
+.idea/
+*.DotSettings.user
+
+# ===== Portable runtime data (created when the app runs) =====
+data/
+*.log
+
+# ===== Android agent build intermediates and toolchain =====
+# The prebuilt agent (pdanet-windows/Resources/proxy.dex) IS committed.
+# These are only needed to rebuild it and are downloadable, so they stay out of git.
+agent/classes/
+agent/dexout/
+agent/android-9/
+agent/*.zip
+agent/ecj.jar
+
+# ===== NuGet =====
+*.nupkg
+packages/
+
+# ===== Scratch / temp =====
+.tmp/
+__empty/
+
+# ===== OS junk =====
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.DS_Store

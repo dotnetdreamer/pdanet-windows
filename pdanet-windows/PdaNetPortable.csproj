@@ -1,0 +1,49 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>PdaNetPortable</AssemblyName>
+    <RootNamespace>PdaNetPortable</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <StartupObject>PdaNetPortable.Program</StartupObject>
+    <NoWarn>WFO0003</NoWarn>
+    <Version>1.0.0</Version>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <AssemblyTitle>PdaNet Windows (Portable)</AssemblyTitle>
+    <Product>PdaNet Windows Portable</Product>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The phone-side agent (ProxyMain.java compiled to dex), embedded for one-click deploy -->
+    <EmbeddedResource Include="Resources\proxy.dex">
+      <LogicalName>PdaNetPortable.proxy.dex</LogicalName>
+    </EmbeddedResource>
+    <!-- Bundled Google platform-tools adb (portable: no separate adb install needed) -->
+    <EmbeddedResource Include="Resources\adb\adb.exe">
+      <LogicalName>PdaNetPortable.adb.adb.exe</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\adb\AdbWinApi.dll">
+      <LogicalName>PdaNetPortable.adb.AdbWinApi.dll</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\adb\AdbWinUsbApi.dll">
+      <LogicalName>PdaNetPortable.adb.AdbWinUsbApi.dll</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+
+  <!-- Portable single-file self-contained publish defaults -->
+  <PropertyGroup Condition="'$(Configuration)'=='Release'">
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <DebugType>none</DebugType>
+  </PropertyGroup>
+
+</Project>

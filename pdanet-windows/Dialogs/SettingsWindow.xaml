@@ -1,0 +1,76 @@
+<Window x:Class="PdaNetPortable.Dialogs.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="SETTINGS" Height="520" Width="520"
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize"
+        Background="{StaticResource B_Black}">
+    <Border BorderBrush="{StaticResource B_BorderGray}" BorderThickness="1" Margin="6">
+        <DockPanel Margin="12">
+            <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+                <Button Content="SAVE" Style="{StaticResource ConnectButton}" Width="100" Height="32" Click="OnSave" Margin="0,0,8,0" />
+                <Button Content="CANCEL" Width="90" Height="32" Click="OnCancel" />
+            </StackPanel>
+
+            <TabControl Background="{StaticResource B_Black}" BorderThickness="0">
+                <TabItem Header="CONNECTION">
+                    <StackPanel Margin="6,10,6,0">
+                        <TextBlock Text="PROXY IP (USB MODE)" Style="{StaticResource MetricLabel}" />
+                        <TextBox x:Name="ProxyIp" Margin="0,2,0,8" />
+                        <TextBlock Text="PROXY PORT" Style="{StaticResource MetricLabel}" />
+                        <TextBox x:Name="ProxyPort" Margin="0,2,0,8" />
+
+                        <TextBlock Text="STEALTH LEVEL" Style="{StaticResource MetricLabel}" />
+                        <ComboBox x:Name="StealthLevel" Margin="0,2,0,8">
+                            <ComboBoxItem Content="1 - Basic (TTL only)" />
+                            <ComboBoxItem Content="2 - Moderate (TTL + IPv6 + DNS)" />
+                            <ComboBoxItem Content="3 - Aggressive (all layers)" />
+                        </ComboBox>
+
+                        <CheckBox x:Name="StealthMode" Content="Enable carrier bypass / stealth (TTL 65)" Margin="0,2,0,6" />
+                        <CheckBox x:Name="UseSystemBypass" Content="System-wide bypass - all layers (needs admin/UAC)" Margin="0,2,0,6" />
+                        <CheckBox x:Name="SetWinHttp" Content="Also set machine-wide WinHTTP proxy (system mode, USB)" Margin="0,2,0,6" />
+                        <CheckBox x:Name="RequireBypass" Content="Require bypass (fail connect if it cannot be applied)" Margin="0,2,0,6" />
+                        <TextBlock Text="Default (system-wide unchecked) applies TTL=65 with NO admin via a local proxy; it covers browser/app traffic that uses the Windows proxy. Checking system-wide also sets global TTL, IPv6 block, DNS and update blocking but prompts for admin (UAC)." TextWrapping="Wrap" Foreground="{StaticResource B_TextGray}" FontSize="10" Margin="0,2,0,6" />
+
+                        <TextBlock Text="LOCAL PROXY / ADB-FORWARD PORT" Style="{StaticResource MetricLabel}" />
+                        <TextBox x:Name="LocalPort" Margin="0,2,0,8" />
+
+                        <TextBlock Text="ADB AGENT PORT (phone-side, VPN mode)" Style="{StaticResource MetricLabel}" />
+                        <TextBox x:Name="AgentPort" Margin="0,2,0,8" />
+                        <TextBlock Text="ADB PATH (blank = auto-detect)" Style="{StaticResource MetricLabel}" />
+                        <TextBox x:Name="AdbPathBox" Margin="0,2,0,8" />
+
+                        <TextBlock Text="RECONNECT ATTEMPTS" Style="{StaticResource MetricLabel}" />
+                        <TextBox x:Name="ReconnectAttempts" Margin="0,2,0,8" />
+                        <TextBlock Text="RECONNECT DELAY (s)" Style="{StaticResource MetricLabel}" />
+                        <TextBox x:Name="ReconnectDelay" Margin="0,2,0,8" />
+                    </StackPanel>
+                </TabItem>
+
+                <TabItem Header="INTERFACE">
+                    <StackPanel Margin="6,10,6,0">
+                        <TextBlock Text="LOG VERBOSITY" Style="{StaticResource MetricLabel}" />
+                        <ComboBox x:Name="LogLevel" Margin="0,2,0,8">
+                            <ComboBoxItem Content="DEBUG" />
+                            <ComboBoxItem Content="INFO" />
+                            <ComboBoxItem Content="WARNING" />
+                            <ComboBoxItem Content="ERROR" />
+                            <ComboBoxItem Content="CRITICAL" />
+                        </ComboBox>
+
+                        <TextBlock Text="DATA WARNING (MB)" Style="{StaticResource MetricLabel}" />
+                        <TextBox x:Name="DataWarning" Margin="0,2,0,8" />
+                        <TextBlock Text="DATA CRITICAL (MB)" Style="{StaticResource MetricLabel}" />
+                        <TextBox x:Name="DataCritical" Margin="0,2,0,8" />
+
+                        <CheckBox x:Name="Notifications" Content="Show desktop notifications" Margin="0,2,0,6" />
+                        <CheckBox x:Name="StartMinimized" Content="Start minimized to tray" Margin="0,2,0,6" />
+                        <CheckBox x:Name="SingleInstance" Content="Allow only a single instance" Margin="0,2,0,6" />
+
+                        <TextBlock x:Name="DataDirLabel" Text="" Foreground="{StaticResource B_TextGray}" FontSize="10" Margin="0,12,0,0" TextWrapping="Wrap" />
+                    </StackPanel>
+                </TabItem>
+            </TabControl>
+        </DockPanel>
+    </Border>
+</Window>

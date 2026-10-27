@@ -1,0 +1,274 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:sys="clr-namespace:System;assembly=mscorlib">
+
+    <!-- ============================================================
+         PdaNet Windows - Cyberpunk Theme
+         Ported from src/theme.py (pure black #000000, green/red/orange,
+         monospaced). NO emoji, terminal/hacker aesthetic.
+         ============================================================ -->
+
+    <!-- Colors -->
+    <Color x:Key="C_Black">#FF000000</Color>
+    <Color x:Key="C_DarkGray">#FF1A1A1A</Color>
+    <Color x:Key="C_MediumGray">#FF2A2A2A</Color>
+    <Color x:Key="C_BorderGray">#FF333333</Color>
+    <Color x:Key="C_TextGray">#FFCCCCCC</Color>
+    <Color x:Key="C_TextWhite">#FFE0E0E0</Color>
+    <Color x:Key="C_Green">#FF00FF00</Color>
+    <Color x:Key="C_GreenDim">#FF00CC00</Color>
+    <Color x:Key="C_GreenDark">#FF008800</Color>
+    <Color x:Key="C_Red">#FFFF0000</Color>
+    <Color x:Key="C_RedDim">#FFCC0000</Color>
+    <Color x:Key="C_RedDark">#FF880000</Color>
+    <Color x:Key="C_Yellow">#FFFFB84D</Color>
+    <Color x:Key="C_Orange">#FFFFA500</Color>
+
+    <!-- Brushes -->
+    <SolidColorBrush x:Key="B_Black" Color="{StaticResource C_Black}" />
+    <SolidColorBrush x:Key="B_DarkGray" Color="{StaticResource C_DarkGray}" />
+    <SolidColorBrush x:Key="B_MediumGray" Color="{StaticResource C_MediumGray}" />
+    <SolidColorBrush x:Key="B_BorderGray" Color="{StaticResource C_BorderGray}" />
+    <SolidColorBrush x:Key="B_TextGray" Color="{StaticResource C_TextGray}" />
+    <SolidColorBrush x:Key="B_TextWhite" Color="{StaticResource C_TextWhite}" />
+    <SolidColorBrush x:Key="B_Green" Color="{StaticResource C_Green}" />
+    <SolidColorBrush x:Key="B_GreenDim" Color="{StaticResource C_GreenDim}" />
+    <SolidColorBrush x:Key="B_GreenDark" Color="{StaticResource C_GreenDark}" />
+    <SolidColorBrush x:Key="B_Red" Color="{StaticResource C_Red}" />
+    <SolidColorBrush x:Key="B_RedDim" Color="{StaticResource C_RedDim}" />
+    <SolidColorBrush x:Key="B_RedDark" Color="{StaticResource C_RedDark}" />
+    <SolidColorBrush x:Key="B_Yellow" Color="{StaticResource C_Yellow}" />
+    <SolidColorBrush x:Key="B_Orange" Color="{StaticResource C_Orange}" />
+
+    <FontFamily x:Key="MonoFont">JetBrains Mono, Cascadia Mono, Consolas, Courier New</FontFamily>
+
+    <!-- Base text -->
+    <Style TargetType="{x:Type TextBlock}">
+        <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="Foreground" Value="{StaticResource B_TextWhite}" />
+    </Style>
+
+    <Style TargetType="{x:Type Label}">
+        <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="Foreground" Value="{StaticResource B_TextWhite}" />
+    </Style>
+
+    <!-- Panel header text -->
+    <Style x:Key="PanelHeader" TargetType="{x:Type TextBlock}">
+        <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+        <Setter Property="FontSize" Value="11" />
+        <Setter Property="FontWeight" Value="Bold" />
+        <Setter Property="Foreground" Value="{StaticResource B_TextWhite}" />
+        <Setter Property="Padding" Value="4,4,4,6" />
+    </Style>
+
+    <Style x:Key="MetricLabel" TargetType="{x:Type TextBlock}">
+        <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+        <Setter Property="FontSize" Value="11" />
+        <Setter Property="Foreground" Value="{StaticResource B_TextGray}" />
+    </Style>
+
+    <Style x:Key="MetricValue" TargetType="{x:Type TextBlock}">
+        <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="FontWeight" Value="Bold" />
+        <Setter Property="Foreground" Value="{StaticResource B_TextWhite}" />
+    </Style>
+
+    <!-- Panel border -->
+    <Style x:Key="Panel" TargetType="{x:Type Border}">
+        <Setter Property="Background" Value="{StaticResource B_Black}" />
+        <Setter Property="BorderBrush" Value="{StaticResource B_MediumGray}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="Padding" Value="10" />
+        <Setter Property="Margin" Value="5" />
+    </Style>
+
+    <!-- Generic button -->
+    <Style TargetType="{x:Type Button}">
+        <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+        <Setter Property="FontSize" Value="11" />
+        <Setter Property="Foreground" Value="{StaticResource B_TextWhite}" />
+        <Setter Property="Background" Value="{StaticResource B_DarkGray}" />
+        <Setter Property="BorderBrush" Value="{StaticResource B_BorderGray}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="Padding" Value="10,6" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="SnapsToDevicePixels" Value="True" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="{x:Type Button}">
+                    <Border x:Name="bd" Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                          Margin="{TemplateBinding Padding}" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="bd" Property="Background" Value="{StaticResource B_MediumGray}" />
+                            <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource B_GreenDark}" />
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="bd" Property="Background" Value="{StaticResource B_Black}" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Opacity" Value="0.4" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Connect button (green accent) -->
+    <Style x:Key="ConnectButton" TargetType="{x:Type Button}" BasedOn="{StaticResource {x:Type Button}}">
+        <Setter Property="BorderBrush" Value="{StaticResource B_GreenDark}" />
+        <Setter Property="Foreground" Value="{StaticResource B_Green}" />
+        <Setter Property="FontWeight" Value="Bold" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="{x:Type Button}">
+                    <Border x:Name="bd" Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                          Margin="{TemplateBinding Padding}" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="bd" Property="Background" Value="{StaticResource B_GreenDark}" />
+                            <Setter Property="Foreground" Value="{StaticResource B_Black}" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Opacity" Value="0.4" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Disconnect button (red accent) -->
+    <Style x:Key="DisconnectButton" TargetType="{x:Type Button}" BasedOn="{StaticResource {x:Type Button}}">
+        <Setter Property="BorderBrush" Value="{StaticResource B_RedDark}" />
+        <Setter Property="Foreground" Value="{StaticResource B_Red}" />
+        <Setter Property="FontWeight" Value="Bold" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="{x:Type Button}">
+                    <Border x:Name="bd" Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                          Margin="{TemplateBinding Padding}" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="bd" Property="Background" Value="{StaticResource B_RedDark}" />
+                            <Setter Property="Foreground" Value="{StaticResource B_Black}" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Opacity" Value="0.4" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Switch-style ToggleButton (used for AUTO-RECONNECT / START ON BOOT / STEALTH) -->
+    <Style x:Key="SwitchToggle" TargetType="{x:Type ToggleButton}">
+        <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+        <Setter Property="FontSize" Value="10" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="Width" Value="56" />
+        <Setter Property="Height" Value="22" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="{x:Type ToggleButton}">
+                    <Border x:Name="track" Background="{StaticResource B_DarkGray}"
+                            BorderBrush="{StaticResource B_BorderGray}" BorderThickness="1">
+                        <Grid>
+                            <TextBlock x:Name="txt" Text="OFF" Foreground="{StaticResource B_TextGray}"
+                                       HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,6,0"
+                                       FontFamily="{StaticResource MonoFont}" FontSize="9" />
+                            <Border x:Name="knob" Width="18" Height="16" Background="{StaticResource B_MediumGray}"
+                                    HorizontalAlignment="Left" Margin="2,0,0,0" />
+                        </Grid>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Setter TargetName="track" Property="Background" Value="{StaticResource B_GreenDark}" />
+                            <Setter TargetName="track" Property="BorderBrush" Value="{StaticResource B_Green}" />
+                            <Setter TargetName="knob" Property="Background" Value="{StaticResource B_Green}" />
+                            <Setter TargetName="knob" Property="HorizontalAlignment" Value="Right" />
+                            <Setter TargetName="knob" Property="Margin" Value="0,0,2,0" />
+                            <Setter TargetName="txt" Property="Text" Value="ON" />
+                            <Setter TargetName="txt" Property="HorizontalAlignment" Value="Left" />
+                            <Setter TargetName="txt" Property="Margin" Value="6,0,0,0" />
+                            <Setter TargetName="txt" Property="Foreground" Value="{StaticResource B_Black}" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- TextBox -->
+    <Style TargetType="{x:Type TextBox}">
+        <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="Foreground" Value="{StaticResource B_TextWhite}" />
+        <Setter Property="Background" Value="{StaticResource B_DarkGray}" />
+        <Setter Property="BorderBrush" Value="{StaticResource B_BorderGray}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="Padding" Value="5" />
+        <Setter Property="CaretBrush" Value="{StaticResource B_Green}" />
+    </Style>
+
+    <Style TargetType="{x:Type PasswordBox}">
+        <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="Foreground" Value="{StaticResource B_TextWhite}" />
+        <Setter Property="Background" Value="{StaticResource B_DarkGray}" />
+        <Setter Property="BorderBrush" Value="{StaticResource B_BorderGray}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="Padding" Value="5" />
+        <Setter Property="CaretBrush" Value="{StaticResource B_Green}" />
+    </Style>
+
+    <!-- ComboBox (simplified dark template) -->
+    <Style TargetType="{x:Type ComboBox}">
+        <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+        <Setter Property="FontSize" Value="11" />
+        <Setter Property="Foreground" Value="{StaticResource B_TextWhite}" />
+        <Setter Property="Background" Value="{StaticResource B_DarkGray}" />
+        <Setter Property="BorderBrush" Value="{StaticResource B_BorderGray}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="Padding" Value="5,3" />
+    </Style>
+
+    <Style TargetType="{x:Type ComboBoxItem}">
+        <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+        <Setter Property="Foreground" Value="{StaticResource B_TextWhite}" />
+        <Setter Property="Background" Value="{StaticResource B_DarkGray}" />
+        <Setter Property="Padding" Value="5,3" />
+    </Style>
+
+    <!-- CheckBox -->
+    <Style TargetType="{x:Type CheckBox}">
+        <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+        <Setter Property="FontSize" Value="11" />
+        <Setter Property="Foreground" Value="{StaticResource B_TextWhite}" />
+    </Style>
+
+    <!-- Window background default -->
+    <Style TargetType="{x:Type Window}">
+        <Setter Property="Background" Value="{StaticResource B_Black}" />
+        <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+    </Style>
+
+</ResourceDictionary>
