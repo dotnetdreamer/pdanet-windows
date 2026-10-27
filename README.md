@@ -13,6 +13,51 @@ This is an independent project inspired by PdaNet. It is not made by, or connect
 - Guide you with a step by step screen that checks your phone is ready before you connect
 - Show live speed, data used, signal strength, and a plain language activity log on a modern dark screen
 
+## What it looks like
+
+Pick how to connect, follow the short checklist so your phone is ready, then press the button
+
+![The PdaNet Windows home screen](docs/screenshots/connect.png)
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <b>You are online</b><br>
+      Live download, upload, data used, signal and ping
+      <img src="docs/screenshots/online.png" alt="Connected, showing live traffic">
+    </td>
+    <td width="50%" valign="top">
+      <b>It walks you through it</b><br>
+      Clear progress, one step at a time
+      <img src="docs/screenshots/connecting.png" alt="Connecting, step by step">
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <b>Help when something is off</b><br>
+      It says what to do in plain words
+      <img src="docs/screenshots/fixit.png" alt="A friendly fix it guide">
+    </td>
+    <td width="50%" valign="top">
+      <b>Simple settings</b><br>
+      Everything already works out of the box
+      <img src="docs/screenshots/settings.png" alt="The settings page">
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <b>Answers built in</b><br>
+      Plain help for the common questions
+      <img src="docs/screenshots/help.png" alt="The help page">
+    </td>
+    <td width="50%" valign="top">
+      <b>A full activity log</b><br>
+      For when you want the detail
+      <img src="docs/screenshots/activity.png" alt="The activity log">
+    </td>
+  </tr>
+</table>
+
 ## What you need
 
 - A Windows 10 or Windows 11 PC, 64 bit
