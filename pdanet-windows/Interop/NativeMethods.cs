@@ -21,4 +21,30 @@ internal static class NativeMethods
         }
         catch { /* best effort */ }
     }
+
+    // ---- Desktop Window Manager: dark non client area + rounded corners (Windows 10/11) ----
+    private const int DWMWA_USE_IMMERSIVE_DARK_MODE = 20;
+    private const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
+    private const int DWMWCP_ROUND = 2;
+
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
+
+    /// <summary>
+    /// Makes the window's system drawn parts match the dark theme: a dark border and shadow,
+    /// and rounded corners on Windows 11. All attributes are best effort and ignored on
+    /// versions that do not support them.
+    /// </summary>
+    public static void StyleWindow(IntPtr hwnd)
+    {
+        if (hwnd == IntPtr.Zero) return;
+        try
+        {
+            int on = 1;
+            DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, ref on, sizeof(int));
+            int round = DWMWCP_ROUND;
+            DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, ref round, sizeof(int));
+        }
+        catch { /* best effort */ }
+    }
 }

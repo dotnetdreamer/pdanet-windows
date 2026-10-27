@@ -1,22 +1,37 @@
-using System.Collections.ObjectModel;
 using System.ComponentModel;
-using System.IO;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
-using System.Windows.Data;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
-using System.Windows.Shapes;
+using System.Windows.Media.Animation;
+using System.Windows.Media.Effects;
 using System.Windows.Threading;
 using PdaNetPortable.Core;
-using PdaNetPortable.Dialogs;
+using PdaNetPortable.Interop;
 using PdaNetPortable.Models;
 using PdaNetPortable.Services;
+using PdaNetPortable.Views;
+using Application = System.Windows.Application;
 using Drawing = System.Drawing;
+using FontFamily = System.Windows.Media.FontFamily;
+using HorizontalAlignment = System.Windows.HorizontalAlignment;
+using KeyEventArgs = System.Windows.Input.KeyEventArgs;
+using Point = System.Windows.Point;
+using RadioButton = System.Windows.Controls.RadioButton;
 using WinForms = System.Windows.Forms;
 
 namespace PdaNetPortable;
 
+public enum ToastKind { Success, Info, Warning, Error }
+
+public enum AppPage { Connect, Activity, History, Settings, Help }
+
+/// <summary>
+/// The app shell: custom title bar, navigation rail, page host, in window sheets, toasts,
+/// status strip and the tray icon. Pages talk back to it through the public methods below.
+/// </summary>
 public partial class MainWindow : Window
 {
     private readonly ConnectionManager _cm = ConnectionManager.Instance;
@@ -24,427 +39,613 @@ public partial class MainWindow : Window
     private readonly Logger _log = Logger.Instance;
     private readonly StatsCollector _stats = StatsCollector.Instance;
 
-    private readonly ObservableCollection<LogEntry> _logs = new();
-    private ICollectionView? _logView;
-    private DispatcherTimer? _uiTimer;
+    private readonly DispatcherTimer _uiTimer = new() { Interval = TimeSpan.FromSeconds(1) };
     private WinForms.NotifyIcon? _tray;
-    private Drawing.Icon? _iconRed, _iconOrange, _iconGreen;
-    private bool _reallyExit;
-    private bool _dataWarned;
+    private Drawing.Icon? _iconOff, _iconBusy, _iconOn, _iconError;
+    private FrameworkElement _currentPage;
+    private IInputElement? _focusBeforeSheet;
+    private ConnectionState _lastState = ConnectionState.Disconnected;
+    private bool _reallyExit, _wasOnline, _dataWarned, _dataCritical, _trayHintShown;
     private int _pingCounter;
-    private ConnectionProfile? _selectedProfile;
 
-    private readonly List<double> _downHist = new();
-    private readonly List<double> _upHist = new();
-    private const int GraphPoints = 60;
+    // Screenshot only demo state (see Demo), never set during normal use.
+    private ConnectionState? _demoState;
+    private ConnectionMode _demoMode = ConnectionMode.AdbAgent;
+    private int _demoTick;
 
     public MainWindow()
     {
         InitializeComponent();
+        FitToScreen();
+        VersionText.Text = $"v{Constants.AppVersion}";
 
-        Width = _config.WindowWidth;
-        Height = _config.WindowHeight;
-        EndpointValue.Text = $"{_config.ProxyIp}:{_config.ProxyPort}";
-        WarningValue.Text = $"{_config.DataWarningMb} MB";
-        StealthStatus.Text = _config.StealthMode ? "[AUTO]" : "[OFF]";
+        ConnectPage.Attach(this);
+        ActivityPage.Attach(this);
+        HistoryPage.Attach(this);
+        SettingsPage.Attach(this);
+        HelpPage.Attach(this);
+        _currentPage = ConnectPage;
+        OnModeChanged(ConnectPage.SelectedMode);
 
-        // Log panel
-        foreach (var e in _log.GetRecent(500)) _logs.Add(e);
-        _logView = CollectionViewSource.GetDefaultView(_logs);
-        _logView.Filter = LogFilter;
-        LogList.ItemsSource = _logView;
         _log.EntryAdded += OnLogEntry;
-
-        // Operations state
-        ModeCombo.SelectedIndex = ConnectionModeExtensions.FromKey(_config.ConnectionMode) switch
-        {
-            ConnectionMode.Usb => 0,
-            ConnectionMode.Iphone => 2,
-            ConnectionMode.AdbAgent => 3,
-            _ => 1
-        };
-        AutoReconnectSwitch.IsChecked = _config.AutoReconnect;
-        AutostartSwitch.IsChecked = AutoStart.IsEnabled();
-        _cm.AutoReconnectEnabled = _config.AutoReconnect;
-        LoadProfiles();
-
-        // Connection events (marshal to UI thread)
-        _cm.StateChanged += s => Dispatcher.Invoke(() => OnStateChanged(s));
+        _cm.StateChanged += s => Dispatcher.Invoke(() => OnConnectionStateChanged(s));
         _cm.ErrorOccurred += m => Dispatcher.Invoke(() => OnError(m));
-        _cm.Tick += () => Dispatcher.Invoke(UpdateMetrics);
+        _cm.AutoReconnectEnabled = _config.AutoReconnect;
 
-        // UI heartbeat (clock + periodic ping + metric refresh)
-        _uiTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _uiTimer.Tick += (_, _) => OnUiTick();
         _uiTimer.Start();
 
         SetupTray();
-        SetupShortcuts();
-
+        PreviewKeyDown += OnPreviewKeyDown;
+        SourceInitialized += (_, _) => NativeMethods.StyleWindow(new WindowInteropHelper(this).Handle);
         Loaded += (_, _) =>
         {
-            if (Program.StartMinimizedRequested || _config.StartMinimized)
+            ApplyState(_cm.State);
+            OnUiTick();
+            if (Demo.Active) Dispatcher.BeginInvoke(ApplyDemo, DispatcherPriority.Loaded);
+            else if (Program.StartMinimizedRequested || _config.StartMinimized)
                 HideToTray(initial: true);
         };
 
-        _log.Info("GUI ready");
+        _log.Info("Window ready");
     }
 
-    private ConnectionMode SelectedMode() => ModeCombo.SelectedIndex switch
+    private void FitToScreen()
     {
-        0 => ConnectionMode.Usb,
-        2 => ConnectionMode.Iphone,
-        3 => ConnectionMode.AdbAgent,
-        _ => ConnectionMode.Wifi
-    };
+        int w = _config.WindowWidth, h = _config.WindowHeight;
+        if (w == 900 && h == 620)
+        {
+            // Size saved by the previous layout, the new one needs more room.
+            w = Constants.MainWindowWidth;
+            h = Constants.MainWindowHeight;
+        }
+        var area = SystemParameters.WorkArea;
+        Width = Math.Max(MinWidth, Math.Min(w, area.Width - 32));
+        Height = Math.Max(MinHeight, Math.Min(h, area.Height - 32));
+    }
 
-    // ======================= Connection actions =======================
-    private void OnConnectClicked(object sender, RoutedEventArgs e) => DoConnect();
-    private void OnDisconnectClicked(object sender, RoutedEventArgs e) => DoDisconnect();
-
-    private void DoConnect()
+    // ============================ Navigation ============================
+    public void Navigate(AppPage page)
     {
-        if (_cm.IsConnected) return;
-        var mode = SelectedMode();
+        FrameworkElement target = page switch
+        {
+            AppPage.Activity => ActivityPage,
+            AppPage.History => HistoryPage,
+            AppPage.Settings => SettingsPage,
+            AppPage.Help => HelpPage,
+            _ => ConnectPage,
+        };
+        RadioButton nav = page switch
+        {
+            AppPage.Activity => NavActivity,
+            AppPage.History => NavHistory,
+            AppPage.Settings => NavSettings,
+            AppPage.Help => NavHelp,
+            _ => NavConnect,
+        };
+        nav.IsChecked = true;
+        if (ReferenceEquals(_currentPage, target)) return;
+
+        foreach (UIElement child in PageHost.Children)
+            child.Visibility = ReferenceEquals(child, target) ? Visibility.Visible : Visibility.Collapsed;
+        _currentPage = target;
+        Ui.Enter(target, rise: 12, ms: 260);
+        (target as IPage)?.OnShown();
+    }
+
+    private void OnNav(object sender, RoutedEventArgs e) => Navigate(
+        sender == NavActivity ? AppPage.Activity
+        : sender == NavHistory ? AppPage.History
+        : sender == NavSettings ? AppPage.Settings
+        : sender == NavHelp ? AppPage.Help
+        : AppPage.Connect);
+
+    // ======================== Connection actions ========================
+    public void RequestConnect()
+    {
+        if (SheetOpen) return;
+        if (_cm.State is ConnectionState.Connected or ConnectionState.Connecting or ConnectionState.Disconnecting) return;
+
+        var mode = ConnectPage.SelectedMode;
         _config.ConnectionMode = mode.ToKey();
         ConfigManager.Instance.SaveConfig();
 
-        if (mode == ConnectionMode.Usb || mode == ConnectionMode.AdbAgent)
+        if (mode is ConnectionMode.Usb or ConnectionMode.AdbAgent)
         {
             _cm.Connect(mode);
             return;
         }
 
-        // WiFi / iPhone: gather SSID + password
-        var preset = _selectedProfile?.Ssid ?? WifiManager.GetCurrentSsid();
-        var dlg = new WifiCredentialsDialog(mode, preset) { Owner = this };
-        if (dlg.ShowDialog() == true)
-            _cm.Connect(mode, dlg.Ssid, dlg.Password);
+        // WiFi and iPhone: ask which hotspot to join, in a sheet over the window.
+        var sheet = new WifiSheet(mode);
+        sheet.Submitted += (ssid, password) =>
+        {
+            CloseSheet();
+            _cm.Connect(mode, ssid, password);
+        };
+        sheet.Cancelled += CloseSheet;
+        ShowSheet(sheet);
     }
 
-    private void DoDisconnect()
+    public void RequestDisconnect()
     {
         if (!_cm.IsConnected && _cm.State != ConnectionState.Error) return;
         _cm.Disconnect();
     }
 
-    private void OnStateChanged(ConnectionState state)
+    public void ToggleConnection()
     {
+        if (_cm.IsConnected) RequestDisconnect();
+        else RequestConnect();
+    }
+
+    public void OpenSpeedTest()
+    {
+        if (SheetOpen) return;
+        var sheet = new SpeedTestSheet();
+        sheet.Closed += CloseSheet;
+        ShowSheet(sheet);
+    }
+
+    public void OnModeChanged(ConnectionMode mode) => SbMode.Text = Friendly.ModeName(mode).ToUpperInvariant();
+
+    public void OnSettingsSaved()
+    {
+        _log.SetLevel(_config.LogLevel);
+        _cm.AutoReconnectEnabled = _config.AutoReconnect;
+        OnUiTick();
+    }
+
+    // ============================ State ============================
+    private void OnConnectionStateChanged(ConnectionState state)
+    {
+        _lastState = state;
+        ApplyState(state);
+
         switch (state)
         {
             case ConnectionState.Connected:
-                StatusValue.Text = "● ACTIVE";
-                StatusValue.Foreground = Brush("B_Green");
-                HeaderStatus.Text = "[CONNECTED]";
-                HeaderStatus.Foreground = Brush("B_Green");
-                InterfaceValue.Text = _cm.CurrentInterface?.Alias ?? "--";
-                EndpointValue.Text = _cm.CurrentMode switch
+                _wasOnline = true;
+                Notify("You are online", $"Connected with {Friendly.ModeName(_cm.CurrentMode)}");
+                if (!ReferenceEquals(_currentPage, ConnectPage))
+                    Toast($"You are online with {Friendly.ModeName(_cm.CurrentMode)}");
+                break;
+
+            case ConnectionState.Disconnected:
+                _dataWarned = _dataCritical = false;
+                if (_wasOnline)
                 {
-                    ConnectionMode.Usb => $"{_config.ProxyIp}:{_config.ProxyPort}",
-                    ConnectionMode.AdbAgent => $"adb :{_config.AgentPort} (VPN)",
-                    _ => _cm.CurrentSsid ?? "WiFi"
-                };
-                StealthValue.Text = _cm.StealthStatusString();
-                StealthValue.Foreground = _cm.BypassActive ? Brush("B_Green") : Brush("B_TextGray");
-                ShowNotification("Connected", $"{_cm.CurrentMode.Display()} connection active");
-                break;
-
-            case ConnectionState.Connecting:
-                StatusValue.Text = "◐ CONNECTING";
-                StatusValue.Foreground = Brush("B_Orange");
-                HeaderStatus.Text = "[CONNECTING]";
-                HeaderStatus.Foreground = Brush("B_Orange");
-                break;
-
-            case ConnectionState.Disconnecting:
-                StatusValue.Text = "◐ DISCONNECTING";
-                StatusValue.Foreground = Brush("B_Orange");
-                HeaderStatus.Text = "[DISCONNECTING]";
-                HeaderStatus.Foreground = Brush("B_Orange");
-                break;
-
-            case ConnectionState.Error:
-                StatusValue.Text = "● ERROR";
-                StatusValue.Foreground = Brush("B_Red");
-                HeaderStatus.Text = "[ERROR]";
-                HeaderStatus.Foreground = Brush("B_Red");
-                break;
-
-            default: // Disconnected
-                StatusValue.Text = "● INACTIVE";
-                StatusValue.Foreground = Brush("B_Red");
-                HeaderStatus.Text = "[DISCONNECTED]";
-                HeaderStatus.Foreground = Brush("B_TextGray");
-                InterfaceValue.Text = "NOT DETECTED";
-                StealthValue.Text = "DISABLED";
-                StealthValue.Foreground = Brush("B_TextGray");
-                _dataWarned = false;
-                ShowNotification("Disconnected", "Tethering stopped");
+                    _wasOnline = false;
+                    Notify("You are offline", "Your network settings are back to normal");
+                }
                 break;
         }
+    }
 
-        UpdateButtons(state);
+    private void ApplyState(ConnectionState state)
+    {
+        ConnectPage.ApplyState(state);
+        ApplyChrome(state);
+    }
+
+    /// <summary>Updates the title bar pill, status strip, ambient glow and tray for a state.</summary>
+    private void ApplyChrome(ConnectionState state, ConnectionMode? mode = null)
+    {
+        if (mode.HasValue) OnModeChanged(mode.Value);
+
+        var (key, text) = state switch
+        {
+            ConnectionState.Connected => ("B.Accent", "Online"),
+            ConnectionState.Connecting => ("B.Amber", "Connecting"),
+            ConnectionState.Disconnecting => ("B.Amber", "Disconnecting"),
+            ConnectionState.Error => ("B.Red", "Needs attention"),
+            _ => ("B.Text3", "Offline"),
+        };
+        var brush = Ui.Brush(key);
+        var color = ((SolidColorBrush)brush).Color;
+        bool busy = state is ConnectionState.Connecting or ConnectionState.Disconnecting;
+
+        PillDot.Fill = brush;
+        PillText.Text = text;
+        PillTime.Visibility = state == ConnectionState.Connected ? Visibility.Visible : Visibility.Collapsed;
+        StatusPill.Background = new SolidColorBrush(Ui.WithAlpha(color, 0x18));
+        StatusPill.BorderBrush = new SolidColorBrush(Ui.WithAlpha(color, 0x55));
+        PillDot.BeginAnimation(OpacityProperty, busy
+            ? new DoubleAnimation(1, 0.25, TimeSpan.FromSeconds(0.7)) { AutoReverse = true, RepeatBehavior = RepeatBehavior.Forever }
+            : null);
+
+        SbDot.Fill = brush;
+        SbState.Text = text.ToUpperInvariant();
+        SbState.Foreground = state == ConnectionState.Disconnected ? Ui.Brush("B.Text3") : brush;
+
+        var glow = state == ConnectionState.Disconnected ? Ui.Color("C.Accent") : color;
+        AmbientStop.Color = Ui.WithAlpha(glow, state switch
+        {
+            ConnectionState.Connected => (byte)0x1E,
+            ConnectionState.Disconnected => (byte)0x0C,
+            _ => (byte)0x16,
+        });
+
         UpdateTrayIcon(state);
-        SbStatus.Text = $"SYS: {(state == ConnectionState.Connected ? "ACTIVE" : state.ToString().ToUpperInvariant())}";
     }
 
     private void OnError(string message)
     {
-        ShowNotification("Error", message);
+        var f = Friendly.Explain(message, _cm.CurrentMode);
+        Notify(f.Title, f.Steps.FirstOrDefault() ?? f.Summary);
+        if (!ReferenceEquals(_currentPage, ConnectPage) || _cm.State != ConnectionState.Connecting)
+            Toast(f.Title, ToastKind.Error);
     }
 
-    private void UpdateButtons(ConnectionState state)
+    // ======================= Screenshot only demo =======================
+    private void ApplyDemo()
     {
-        bool connected = state == ConnectionState.Connected;
-        bool busy = state is ConnectionState.Connecting or ConnectionState.Disconnecting;
-        ConnectBtn.IsEnabled = !connected && !busy;
-        DisconnectBtn.IsEnabled = connected || state == ConnectionState.Error;
-        ModeCombo.IsEnabled = !connected && !busy;
+        var nav = Demo.Value("nav");
+        if (!string.IsNullOrEmpty(nav))
+            Navigate(Enum.TryParse<AppPage>(nav, true, out var p) ? p : AppPage.Connect);
+
+        var sheet = Demo.Value("sheet");
+        if (sheet == "wifi") RequestConnectDemo(ConnectionMode.Wifi);
+        else if (sheet == "iphone") RequestConnectDemo(ConnectionMode.Iphone);
+        else if (sheet == "speed") OpenSpeedTest();
+
+        var state = Demo.Value("state");
+        if (!string.IsNullOrEmpty(state))
+        {
+            _demoMode = Demo.Value("mode") switch
+            {
+                "usb" => ConnectionMode.Usb,
+                "wifi" => ConnectionMode.Wifi,
+                "iphone" => ConnectionMode.Iphone,
+                _ => ConnectionMode.AdbAgent,
+            };
+            _demoState = state.ToLowerInvariant() switch
+            {
+                "connected" or "online" => ConnectionState.Connected,
+                "connecting" => ConnectionState.Connecting,
+                "error" => ConnectionState.Error,
+                "disconnecting" => ConnectionState.Disconnecting,
+                _ => ConnectionState.Disconnected,
+            };
+            string? ssid = _demoMode is ConnectionMode.Wifi or ConnectionMode.Iphone ? "Galaxy S24 5G" : null;
+            ConnectPage.DemoState(_demoState.Value, _demoMode, ssid);
+            ApplyChrome(_demoState.Value, _demoMode);
+            if (_demoState == ConnectionState.Connecting) SeedConnectingLog(_demoMode);
+            OnUiTick();
+        }
     }
 
-    // ======================= Metrics =======================
+    private void RequestConnectDemo(ConnectionMode mode)
+    {
+        var sheet = new WifiSheet(mode);
+        sheet.Cancelled += CloseSheet;
+        ShowSheet(sheet);
+    }
+
+    private void SeedConnectingLog(ConnectionMode mode)
+    {
+        var steps = Friendly.ConnectSteps(mode);
+        int shown = Math.Min(steps.Count, mode == ConnectionMode.AdbAgent ? 3 : 2);
+        for (int i = 0; i < shown; i++)
+            ConnectPage.OnLog(new LogEntry(DateTime.Now.ToString("HH:mm:ss"), "INFO", $"[{i + 1}/{steps.Count}] {steps[i]}"));
+    }
+
+    private Telemetry DemoTelemetry()
+    {
+        _demoTick++;
+        bool online = _demoState == ConnectionState.Connected;
+        // A gentle sine wave so the chart and numbers look alive in screenshots.
+        double wave = (Math.Sin(_demoTick / 4.0) + 1) / 2;
+        double down = online && _demoMode != ConnectionMode.AdbAgent ? (2.2 + wave * 3.0) * 1024 * 1024 : 0;
+        double up = online && _demoMode != ConnectionMode.AdbAgent ? (0.3 + wave * 0.5) * 1024 * 1024 : 0;
+        return new Telemetry(online, _demoMode, down, up,
+            (long)(1.84 * 1024 * 1024 * 1024), (long)(236.0 * 1024 * 1024),
+            online ? 1_000 + _demoTick : 0, online ? 34 : null, online ? 96 : 0);
+    }
+
+    // ============================ Live data ============================
     private void OnUiTick()
     {
-        HeaderClock.Text = DateTime.Now.ToString("HH:mm:ss");
+        SbClock.Text = DateTime.Now.ToString("HH:mm:ss");
 
-        // Periodic latency probe while connected (off the UI thread).
-        if (_cm.IsConnected && (_pingCounter++ % 3 == 0))
+        if (_demoState.HasValue)
+        {
+            var dt = DemoTelemetry();
+            ConnectPage.UpdateTelemetry(dt);
+            long demoTotal = dt.Connected ? dt.TotalDown + dt.TotalUp : 0;
+            bool demoPhone = dt.Connected && _demoMode == ConnectionMode.AdbAgent;
+            PillTime.Text = dt.Connected ? Fmt.Uptime(dt.Uptime) : "";
+            SbDown.Text = Fmt.Bandwidth(dt.Down);
+            SbUp.Text = Fmt.Bandwidth(dt.Up);
+            SbStealth.Text = !dt.Connected ? "STEALTH IDLE" : demoPhone ? "STEALTH VIA PHONE" : "STEALTH ON";
+            SbData.Text = demoPhone ? "DATA COUNTED ON PHONE" : $"DATA {Fmt.Bytes(demoTotal)}";
+            return;
+        }
+
+        bool connected = _cm.IsConnected;
+        bool phone = connected && _cm.CurrentMode == ConnectionMode.AdbAgent;
+
+        // Latency probe every few seconds. Skipped in Phone VPN mode, where a ping from the PC
+        // would not travel through the phone and would give a misleading number.
+        if (connected && !phone && _pingCounter++ % 3 == 0)
             Task.Run(() => _stats.PingTest());
 
-        UpdateMetrics();
+        var t = new Telemetry(
+            connected,
+            _cm.CurrentMode,
+            connected ? _stats.DownloadRate : 0,
+            connected ? _stats.UploadRate : 0,
+            _stats.TotalDownloaded,
+            _stats.TotalUploaded,
+            connected ? _stats.UptimeSeconds : 0,
+            connected ? _stats.Latency : null,
+            connected ? _stats.Quality() : 0);
+        ConnectPage.UpdateTelemetry(t);
+
+        long total = connected ? t.TotalDown + t.TotalUp : 0;
+        PillTime.Text = connected ? Fmt.Uptime(t.Uptime) : "";
+        SbDown.Text = Fmt.Bandwidth(t.Down);
+        SbUp.Text = Fmt.Bandwidth(t.Up);
+        SbStealth.Text = !connected ? "STEALTH IDLE"
+            : phone ? "STEALTH VIA PHONE"
+            : _cm.BypassActive ? "STEALTH ON" : "STEALTH OFF";
+        SbData.Text = phone ? "DATA COUNTED ON PHONE" : $"DATA {Fmt.Bytes(total)}";
+
+        if (connected && !phone) CheckDataUse(total);
+        if (_tray != null) _tray.Text = TrayText();
     }
 
-    private void UpdateMetrics()
+    private void CheckDataUse(long totalBytes)
     {
-        bool connected = _cm.IsConnected;
-
-        DownValue.Text = Fmt.Bandwidth(connected ? _stats.DownloadRate : 0);
-        UpValue.Text = Fmt.Bandwidth(connected ? _stats.UploadRate : 0);
-        LatencyValue.Text = _stats.Latency.HasValue ? $"{_stats.Latency:0} ms" : "-- ms";
-        LossValue.Text = $"{_stats.PacketLoss:0} %";
-        TotalValue.Text = $"↓ {Fmt.Bytes(_stats.TotalDownloaded)}  ↑ {Fmt.Bytes(_stats.TotalUploaded)}";
-
-        SessionDown.Text = Fmt.Bytes(_stats.TotalDownloaded);
-        SessionUp.Text = Fmt.Bytes(_stats.TotalUploaded);
-        SessionTotal.Text = Fmt.Bytes(_stats.TotalDownloaded + _stats.TotalUploaded);
-
-        var up = Fmt.Uptime(_stats.UptimeSeconds);
-        UptimeValue.Text = up;
-
-        // Quality
-        int q = connected ? _stats.Quality() : 0;
-        QualityBar.Value = q;
-        if (!connected) { QualityValue.Text = "● UNKNOWN"; QualityValue.Foreground = Brush("B_TextGray"); }
-        else if (q >= Constants.QualityExcellent) { QualityValue.Text = "● EXCELLENT"; QualityValue.Foreground = Brush("B_Green"); }
-        else if (q >= Constants.QualityGood) { QualityValue.Text = "● GOOD"; QualityValue.Foreground = Brush("B_GreenDim"); }
-        else if (q >= Constants.QualityFair) { QualityValue.Text = "● FAIR"; QualityValue.Foreground = Brush("B_Orange"); }
-        else { QualityValue.Text = "● POOR"; QualityValue.Foreground = Brush("B_Red"); }
-
-        // Status bar
-        SbNetwork.Text = $"NET: {Fmt.Bandwidth(connected ? _stats.DownloadRate + _stats.UploadRate : 0)}";
-        SbStealth.Text = $"STEALTH: {(_cm.BypassActive ? "ON" : "OFF")}";
-        SbUptime.Text = $"UPTIME: {up}";
-
-        UpdateGraph(connected);
-        CheckDataWarning();
-    }
-
-    private void UpdateGraph(bool connected)
-    {
-        _downHist.Add(connected ? _stats.DownloadRate : 0);
-        _upHist.Add(connected ? _stats.UploadRate : 0);
-        while (_downHist.Count > GraphPoints) _downHist.RemoveAt(0);
-        while (_upHist.Count > GraphPoints) _upHist.RemoveAt(0);
-
-        double w = BandwidthCanvas.ActualWidth;
-        double h = BandwidthCanvas.ActualHeight;
-        if (w <= 0 || h <= 0) return;
-
-        double max = Math.Max(1, Math.Max(_downHist.DefaultIfEmpty(0).Max(), _upHist.DefaultIfEmpty(0).Max()));
-        DownLine.Points = BuildPoints(_downHist, w, h, max);
-        UpLine.Points = BuildPoints(_upHist, w, h, max);
-    }
-
-    private static PointCollection BuildPoints(List<double> data, double w, double h, double max)
-    {
-        var pts = new PointCollection();
-        if (data.Count < 2) return pts;
-        double stepX = w / (GraphPoints - 1);
-        for (int i = 0; i < data.Count; i++)
-        {
-            double x = i * stepX;
-            double y = h - (data[i] / max) * (h - 2) - 1;
-            pts.Add(new System.Windows.Point(x, y));
-        }
-        return pts;
-    }
-
-    private void CheckDataWarning()
-    {
-        if (_dataWarned || !_cm.IsConnected) return;
-        long totalMb = (_stats.TotalDownloaded + _stats.TotalUploaded) / (1024 * 1024);
-        if (totalMb >= _config.DataWarningMb)
+        long mb = totalBytes / (1024 * 1024);
+        if (!_dataWarned && mb >= _config.DataWarningMb)
         {
             _dataWarned = true;
-            _log.Warning($"Data usage warning: {totalMb} MB exceeds threshold of {_config.DataWarningMb} MB");
-            ShowNotification("Data Usage Warning", $"{totalMb} MB used this session");
+            _log.Warning($"Data alert, {Fmt.Bytes(totalBytes)} used this session");
+            Notify("Data alert", $"You have used {Fmt.Bytes(totalBytes)} this session");
+            Toast($"Data alert, {Fmt.Bytes(totalBytes)} used this session", ToastKind.Warning);
+        }
+        if (!_dataCritical && mb >= _config.DataCriticalMb)
+        {
+            _dataCritical = true;
+            _log.Warning($"Data limit reached, {Fmt.Bytes(totalBytes)} used this session");
+            Notify("Data limit reached", $"You have used {Fmt.Bytes(totalBytes)} this session");
+            Toast($"Data limit reached, {Fmt.Bytes(totalBytes)} used", ToastKind.Error);
         }
     }
 
-    // ======================= Log panel =======================
-    private void OnLogEntry(LogEntry entry)
+    private void OnLogEntry(LogEntry entry) => Dispatcher.BeginInvoke(() =>
     {
-        Dispatcher.BeginInvoke(() =>
+        ActivityPage.Append(entry);
+        ConnectPage.OnLog(entry);
+    });
+
+    // ============================== Toasts ==============================
+    public void Toast(string text, ToastKind kind = ToastKind.Success)
+    {
+        var (key, glyph) = kind switch
         {
-            _logs.Add(entry);
-            while (_logs.Count > Constants.LogBufferMaxSize) _logs.RemoveAt(0);
-            if (LogList.Items.Count > 0)
-                LogList.ScrollIntoView(LogList.Items[LogList.Items.Count - 1]);
-        });
-    }
-
-    private bool LogFilter(object obj)
-    {
-        if (obj is not LogEntry entry) return false;
-        if (FilterErrors.IsChecked == true &&
-            entry.Level is not ("ERROR" or "CRITICAL" or "WARN"))
-            return false;
-        var q = LogSearch.Text?.Trim();
-        if (!string.IsNullOrEmpty(q))
-            return entry.Display.Contains(q, StringComparison.OrdinalIgnoreCase);
-        return true;
-    }
-
-    private void OnLogSearchChanged(object sender, TextChangedEventArgs e) => _logView?.Refresh();
-    private void OnLogFilterChanged(object sender, RoutedEventArgs e) => _logView?.Refresh();
-
-    private void OnCopyLogs(object sender, RoutedEventArgs e)
-    {
-        try
-        {
-            var text = string.Join(Environment.NewLine, _logs.Select(l => l.Display));
-            System.Windows.Clipboard.SetText(text);
-            _log.Ok("Logs copied to clipboard");
-        }
-        catch (Exception ex) { _log.Error($"Copy failed: {ex.Message}"); }
-    }
-
-    private void OnExportLogs(object sender, RoutedEventArgs e)
-    {
-        var dlg = new Microsoft.Win32.SaveFileDialog
-        {
-            FileName = $"pdanet-log-{DateTime.Now:yyyyMMdd-HHmmss}.txt",
-            Filter = "Text files (*.txt)|*.txt|All files (*.*)|*.*"
+            ToastKind.Info => ("B.Cyan", ""),
+            ToastKind.Warning => ("B.Amber", ""),
+            ToastKind.Error => ("B.Red", ""),
+            _ => ("B.Accent", ""),
         };
-        if (dlg.ShowDialog() == true)
+        var accent = Ui.Brush(key);
+
+        var icon = new TextBlock
         {
-            try
-            {
-                File.WriteAllText(dlg.FileName, string.Join(Environment.NewLine, _logs.Select(l => l.Display)));
-                _log.Ok($"Logs exported to {dlg.FileName}");
-            }
-            catch (Exception ex) { _log.Error($"Export failed: {ex.Message}"); }
-        }
-    }
-
-    private void OnClearLogs(object sender, RoutedEventArgs e)
-    {
-        _logs.Clear();
-        _log.ClearBuffer();
-    }
-
-    // ======================= Profiles =======================
-    private void LoadProfiles()
-    {
-        ProfilesCombo.Items.Clear();
-        ProfilesCombo.Items.Add("— none —");
-        foreach (var p in ConfigManager.Instance.Profiles)
-            ProfilesCombo.Items.Add(p.Name);
-        ProfilesCombo.SelectedIndex = 0;
-    }
-
-    private void OnRefreshProfiles(object sender, RoutedEventArgs e) => LoadProfiles();
-
-    private void OnProfileSelected(object sender, SelectionChangedEventArgs e)
-    {
-        if (ProfilesCombo.SelectedIndex <= 0) { _selectedProfile = null; return; }
-        var name = ProfilesCombo.SelectedItem as string;
-        _selectedProfile = ConfigManager.Instance.Profiles.FirstOrDefault(p => p.Name == name);
-        if (_selectedProfile != null)
+            Text = glyph,
+            FontFamily = (FontFamily)FindResource("F.Icon"),
+            FontSize = 14,
+            Foreground = accent,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        var label = new TextBlock
         {
-            ModeCombo.SelectedIndex = ConnectionModeExtensions.FromKey(_selectedProfile.Mode) switch
-            {
-                ConnectionMode.Usb => 0,
-                ConnectionMode.Iphone => 2,
-                _ => 1
-            };
-        }
-    }
+            Text = Friendly.Clean(text),
+            FontSize = 13,
+            Foreground = Ui.Brush("B.Text"),
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(12, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        var row = new DockPanel();
+        DockPanel.SetDock(icon, Dock.Left);
+        row.Children.Add(icon);
+        row.Children.Add(label);
 
-    // ======================= Toggles =======================
-    private void OnAutoReconnectToggled(object sender, RoutedEventArgs e)
-    {
-        _config.AutoReconnect = AutoReconnectSwitch.IsChecked == true;
-        _cm.AutoReconnectEnabled = _config.AutoReconnect;
-        ConfigManager.Instance.SaveConfig();
-        _log.Info($"Auto-reconnect {( _config.AutoReconnect ? "enabled" : "disabled")}");
-    }
-
-    private void OnAutostartToggled(object sender, RoutedEventArgs e)
-    {
-        if (AutostartSwitch.IsChecked == true) AutoStart.Enable();
-        else AutoStart.Disable();
-        _config.AutoStart = AutostartSwitch.IsChecked == true;
-        ConfigManager.Instance.SaveConfig();
-    }
-
-    // ======================= Dialogs =======================
-    private void OnSettingsClicked(object sender, RoutedEventArgs e)
-    {
-        var dlg = new SettingsWindow { Owner = this };
-        if (dlg.ShowDialog() == true)
+        // Shadow lives on its own layer so the text keeps crisp ClearType rendering.
+        var shadow = new Border
         {
-            _log.SetLevel(_config.LogLevel);
-            EndpointValue.Text = $"{_config.ProxyIp}:{_config.ProxyPort}";
-            WarningValue.Text = $"{_config.DataWarningMb} MB";
-            StealthStatus.Text = _config.StealthMode ? "[AUTO]" : "[OFF]";
-            AutoReconnectSwitch.IsChecked = _config.AutoReconnect;
-            _cm.AutoReconnectEnabled = _config.AutoReconnect;
+            CornerRadius = new CornerRadius(12),
+            Background = Ui.Brush("B.Bg2"),
+            Effect = new DropShadowEffect { BlurRadius = 26, ShadowDepth = 6, Opacity = 0.6, Color = Colors.Black },
+        };
+        var body = new Border
+        {
+            CornerRadius = new CornerRadius(12),
+            Background = Ui.Brush("B.Bg2"),
+            BorderBrush = new SolidColorBrush(Ui.WithAlpha(((SolidColorBrush)accent).Color, 0x55)),
+            BorderThickness = new Thickness(1),
+            Padding = new Thickness(14, 11, 16, 11),
+            Child = row,
+        };
+        var card = new Grid { Margin = new Thickness(0, 0, 0, 8), Cursor = System.Windows.Input.Cursors.Hand };
+        card.Children.Add(shadow);
+        card.Children.Add(body);
+
+        var slide = new TranslateTransform(28, 0);
+        card.RenderTransform = slide;
+        ToastHost.Children.Insert(0, card);
+        while (ToastHost.Children.Count > 3) ToastHost.Children.RemoveAt(ToastHost.Children.Count - 1);
+
+        card.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(180)));
+        slide.BeginAnimation(TranslateTransform.XProperty,
+            new DoubleAnimation(28, 0, TimeSpan.FromMilliseconds(260)) { EasingFunction = Ui.EaseOut });
+
+        void Dismiss()
+        {
+            var fade = new DoubleAnimation(0, TimeSpan.FromMilliseconds(200));
+            fade.Completed += (_, _) => ToastHost.Children.Remove(card);
+            card.BeginAnimation(OpacityProperty, fade);
         }
+
+        card.MouseLeftButtonUp += (_, _) => Dismiss();
+        var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(kind == ToastKind.Error ? 6 : 3.5) };
+        timer.Tick += (_, _) =>
+        {
+            timer.Stop();
+            Dismiss();
+        };
+        timer.Start();
     }
 
-    private void OnHistoryClicked(object sender, RoutedEventArgs e)
+    // ============================== Sheets ==============================
+    public bool SheetOpen => OverlayHost.Visibility == Visibility.Visible;
+
+    public void ShowSheet(FrameworkElement sheet)
     {
-        new HistoryWindow { Owner = this }.ShowDialog();
+        _focusBeforeSheet = Keyboard.FocusedElement;
+        OverlaySlot.Content = sheet;
+        OverlayHost.Visibility = Visibility.Visible;
+        PageHost.Effect = new BlurEffect { Radius = 6 };
+        OverlayHost.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(160)));
+
+        var scale = new ScaleTransform(0.96, 0.96);
+        sheet.RenderTransformOrigin = new Point(0.5, 0.5);
+        sheet.RenderTransform = scale;
+        var grow = new DoubleAnimation(0.96, 1, TimeSpan.FromMilliseconds(220)) { EasingFunction = Ui.EaseOut };
+        scale.BeginAnimation(ScaleTransform.ScaleXProperty, grow);
+        scale.BeginAnimation(ScaleTransform.ScaleYProperty, grow);
+
+        Dispatcher.BeginInvoke(DispatcherPriority.Input, () => (sheet as ISheet)?.FocusFirst());
     }
 
-    private void OnSpeedTestClicked(object sender, RoutedEventArgs e)
+    public void CloseSheet()
     {
-        new SpeedTestDialog { Owner = this }.ShowDialog();
+        if (!SheetOpen) return;
+        (OverlaySlot.Content as ISheet)?.OnClosing();
+        OverlaySlot.Content = null;
+        OverlayHost.Visibility = Visibility.Collapsed;
+        PageHost.Effect = null;
+        _focusBeforeSheet?.Focus();
+        _focusBeforeSheet = null;
     }
 
-    // ======================= System tray =======================
+    private void OnScrimClick(object sender, MouseButtonEventArgs e) => CloseSheet();
+
+    // ============================ Keyboard ============================
+    private void OnPreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        bool ctrl = (Keyboard.Modifiers & ModifierKeys.Control) != 0;
+        if (e.Key == Key.Escape && SheetOpen) { CloseSheet(); e.Handled = true; return; }
+        if (ctrl && e.Key == Key.Q) { ExitApp(); e.Handled = true; return; }
+        if (SheetOpen) return;
+
+        if (ctrl && e.Key == Key.Enter) ToggleConnection();
+        else if (ctrl && e.Key == Key.D) RequestDisconnect();
+        else if (ctrl && e.Key is Key.D1 or Key.NumPad1) Navigate(AppPage.Connect);
+        else if (ctrl && e.Key is Key.D2 or Key.NumPad2) Navigate(AppPage.Activity);
+        else if (ctrl && e.Key is Key.D3 or Key.NumPad3) Navigate(AppPage.History);
+        else if (ctrl && e.Key is Key.D4 or Key.NumPad4) Navigate(AppPage.Settings);
+        else if (ctrl && e.Key is Key.D5 or Key.NumPad5) Navigate(AppPage.Help);
+        else if (ctrl && e.Key == Key.S)
+        {
+            if (ReferenceEquals(_currentPage, SettingsPage)) SettingsPage.Save();
+            else Navigate(AppPage.Settings);
+        }
+        else if (e.Key == Key.F1) Navigate(AppPage.Help);
+        else if (e.Key == Key.F5) (_currentPage as IPage)?.Refresh();
+        else return;
+        e.Handled = true;
+    }
+
+    // ============================ Window chrome ============================
+    private void OnMinimize(object sender, RoutedEventArgs e) => SystemCommands.MinimizeWindow(this);
+
+    private void OnMaximize(object sender, RoutedEventArgs e)
+    {
+        if (WindowState == WindowState.Maximized) SystemCommands.RestoreWindow(this);
+        else SystemCommands.MaximizeWindow(this);
+    }
+
+    private void OnCloseClick(object sender, RoutedEventArgs e) => Close();
+
+    protected override void OnStateChanged(EventArgs e)
+    {
+        base.OnStateChanged(e);
+        bool max = WindowState == WindowState.Maximized;
+        // A maximized custom chrome window hangs over the screen edge by its resize frame.
+        var t = SystemParameters.WindowResizeBorderThickness;
+        Frame.Margin = max ? new Thickness(t.Left + 4, t.Top + 4, t.Right + 4, t.Bottom + 4) : new Thickness(0);
+        Frame.BorderThickness = new Thickness(max ? 0 : 1);
+        MaxBtn.Content = max ? "" : "";
+        MaxBtn.ToolTip = max ? "Restore" : "Maximize";
+        AutomationProperties.SetName(MaxBtn, max ? "Restore" : "Maximize");
+    }
+
+    // ============================== Tray ==============================
     private void SetupTray()
     {
-        _iconRed = MakeDotIcon(Drawing.Color.FromArgb(255, 0, 0));
-        _iconOrange = MakeDotIcon(Drawing.Color.FromArgb(255, 165, 0));
-        _iconGreen = MakeDotIcon(Drawing.Color.FromArgb(0, 255, 0));
+        _iconOff = MakeStatusIcon(Drawing.Color.FromArgb(123, 138, 157));
+        _iconBusy = MakeStatusIcon(Drawing.Color.FromArgb(255, 182, 77));
+        _iconOn = MakeStatusIcon(Drawing.Color.FromArgb(43, 245, 168));
+        _iconError = MakeStatusIcon(Drawing.Color.FromArgb(255, 94, 123));
 
-        _tray = new WinForms.NotifyIcon
+        _tray = new WinForms.NotifyIcon { Text = TrayText(), Icon = _iconOff, Visible = true };
+        _tray.MouseClick += (_, e) =>
         {
-            Text = "PdaNet Windows — Disconnected",
-            Icon = _iconRed,
-            Visible = true
+            if (e.Button == WinForms.MouseButtons.Left) ShowFromTray();
         };
-        _tray.DoubleClick += (_, _) => ShowFromTray();
 
-        var menu = new WinForms.ContextMenuStrip();
-        menu.Items.Add("Show", null, (_, _) => ShowFromTray());
-        menu.Items.Add("Connect", null, (_, _) => DoConnect());
-        menu.Items.Add("Disconnect", null, (_, _) => DoDisconnect());
-        menu.Items.Add(new WinForms.ToolStripSeparator());
-        menu.Items.Add("Quit", null, (_, _) => ExitApp());
+        var font = new Drawing.Font("Segoe UI", 9.5f);
+        var menu = new WinForms.ContextMenuStrip
+        {
+            ShowImageMargin = false,
+            Renderer = new WinForms.ToolStripProfessionalRenderer(new TrayColors()),
+            BackColor = Drawing.Color.FromArgb(16, 22, 29),
+            ForeColor = Drawing.Color.FromArgb(231, 237, 244),
+            Font = font,
+        };
+        var open = new WinForms.ToolStripMenuItem("Open PdaNet", null, (_, _) => ShowFromTray())
+        {
+            Font = new Drawing.Font(font, Drawing.FontStyle.Bold),
+        };
+        var connect = new WinForms.ToolStripMenuItem("Connect", null, (_, _) =>
+        {
+            if (ConnectPage.SelectedMode is ConnectionMode.Wifi or ConnectionMode.Iphone) ShowFromTray();
+            RequestConnect();
+        });
+        var disconnect = new WinForms.ToolStripMenuItem("Disconnect", null, (_, _) => RequestDisconnect());
+        var quit = new WinForms.ToolStripMenuItem("Quit", null, (_, _) => ExitApp());
+        menu.Items.AddRange(new WinForms.ToolStripItem[]
+        {
+            open, new WinForms.ToolStripSeparator(), connect, disconnect, new WinForms.ToolStripSeparator(), quit,
+        });
+        foreach (WinForms.ToolStripItem item in menu.Items)
+        {
+            item.ForeColor = menu.ForeColor;
+            item.Padding = new WinForms.Padding(6, 4, 6, 4);
+        }
+        menu.Opening += (_, _) =>
+        {
+            connect.Enabled = _cm.State is ConnectionState.Disconnected or ConnectionState.Error;
+            disconnect.Enabled = _cm.IsConnected || _cm.State == ConnectionState.Error;
+        };
         _tray.ContextMenuStrip = menu;
+    }
+
+    private string TrayText()
+    {
+        var text = _cm.State switch
+        {
+            ConnectionState.Connected => $"PdaNet Windows · Online {Fmt.Uptime(_stats.UptimeSeconds)}",
+            ConnectionState.Connecting => "PdaNet Windows · Connecting",
+            ConnectionState.Disconnecting => "PdaNet Windows · Disconnecting",
+            ConnectionState.Error => "PdaNet Windows · Needs attention",
+            _ => "PdaNet Windows · Offline",
+        };
+        return text.Length > 63 ? text[..63] : text;
     }
 
     private void UpdateTrayIcon(ConnectionState state)
@@ -452,63 +653,68 @@ public partial class MainWindow : Window
         if (_tray == null) return;
         _tray.Icon = state switch
         {
-            ConnectionState.Connected => _iconGreen,
-            ConnectionState.Connecting or ConnectionState.Disconnecting => _iconOrange,
-            _ => _iconRed
+            ConnectionState.Connected => _iconOn,
+            ConnectionState.Connecting or ConnectionState.Disconnecting => _iconBusy,
+            ConnectionState.Error => _iconError,
+            _ => _iconOff,
         };
-        _tray.Text = $"PdaNet Windows — {state}";
+        _tray.Text = TrayText();
     }
 
-    private static Drawing.Icon MakeDotIcon(Drawing.Color color)
+    /// <summary>A small radar style ring with a center dot in the state color.</summary>
+    private static Drawing.Icon MakeStatusIcon(Drawing.Color color)
     {
-        using var bmp = new Drawing.Bitmap(16, 16);
+        int s = Math.Max(16, WinForms.SystemInformation.SmallIconSize.Width);
+        using var bmp = new Drawing.Bitmap(s, s);
         using (var g = Drawing.Graphics.FromImage(bmp))
         {
             g.SmoothingMode = Drawing.Drawing2D.SmoothingMode.AntiAlias;
             g.Clear(Drawing.Color.Transparent);
-            using var brush = new Drawing.SolidBrush(color);
-            g.FillEllipse(brush, 2, 2, 12, 12);
+            float stroke = Math.Max(1.6f, s / 9f);
+            float inset = stroke / 2 + s * 0.05f;
+            using var pen = new Drawing.Pen(color, stroke);
+            g.DrawEllipse(pen, inset, inset, s - 2 * inset, s - 2 * inset);
+            float r = s * 0.2f;
+            using var fill = new Drawing.SolidBrush(color);
+            g.FillEllipse(fill, s / 2f - r, s / 2f - r, 2 * r, 2 * r);
         }
         return Drawing.Icon.FromHandle(bmp.GetHicon());
     }
 
-    private void ShowNotification(string title, string message)
+    private void Notify(string title, string message)
     {
         if (!_config.EnableNotifications || _tray == null) return;
-        try { _tray.ShowBalloonTip(5000, title, message, WinForms.ToolTipIcon.Info); } catch { }
+        if (IsVisible && IsActive) return; // the window already shows it
+        try { _tray.ShowBalloonTip(5000, Friendly.Clean(title), Friendly.Clean(message), WinForms.ToolTipIcon.None); }
+        catch { /* notifications are best effort */ }
     }
 
-    private void ShowFromTray()
+    public void ShowFromTray()
     {
         Show();
-        WindowState = WindowState.Normal;
-        Activate();
         ShowInTaskbar = true;
+        if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
+        Activate();
     }
 
     private void HideToTray(bool initial = false)
     {
         Hide();
         ShowInTaskbar = false;
-        if (!initial) ShowNotification("PdaNet Windows", "Still running in the system tray");
-    }
-
-    // ======================= Shortcuts =======================
-    private void SetupShortcuts()
-    {
-        KeyDown += (_, e) =>
+        if (!initial && !_trayHintShown && _config.EnableNotifications && _tray != null)
         {
-            bool ctrl = Keyboard.Modifiers.HasFlag(ModifierKeys.Control);
-            if (ctrl && e.Key == Key.C) DoConnect();
-            else if (ctrl && e.Key == Key.D) DoDisconnect();
-            else if (ctrl && e.Key == Key.Q) ExitApp();
-            else if (ctrl && e.Key == Key.S) OnSettingsClicked(this, new RoutedEventArgs());
-            else if (e.Key == Key.F5) LoadProfiles();
-        };
+            _trayHintShown = true;
+            try
+            {
+                _tray.ShowBalloonTip(4000, "PdaNet is still running",
+                    "Find it in the tray near the clock, right click it to quit", WinForms.ToolTipIcon.None);
+            }
+            catch { }
+        }
     }
 
-    // ======================= Lifecycle =======================
-    private void ExitApp()
+    // ============================ Lifecycle ============================
+    public void ExitApp()
     {
         _reallyExit = true;
         Close();
@@ -527,15 +733,36 @@ public partial class MainWindow : Window
         try { SystemProxy.ClearWinInet(); } catch { }
         if (_cm.IsConnected) _cm.Disconnect(); // best-effort teardown (may prompt for bypass removal)
 
-        _config.WindowWidth = (int)Width;
-        _config.WindowHeight = (int)Height;
+        if (WindowState == WindowState.Normal)
+        {
+            _config.WindowWidth = (int)Width;
+            _config.WindowHeight = (int)Height;
+        }
         try { ConfigManager.Instance.SaveConfig(); } catch { }
 
         if (_tray != null) { _tray.Visible = false; _tray.Dispose(); }
         base.OnClosing(e);
-        System.Windows.Application.Current.Shutdown();
+        Application.Current.Shutdown();
     }
 
-    private System.Windows.Media.Brush Brush(string key) =>
-        (System.Windows.Media.Brush)System.Windows.Application.Current.Resources[key];
+    private sealed class TrayColors : WinForms.ProfessionalColorTable
+    {
+        private static readonly Drawing.Color Bg = Drawing.Color.FromArgb(16, 22, 29);
+        private static readonly Drawing.Color Hover = Drawing.Color.FromArgb(28, 38, 50);
+        private static readonly Drawing.Color Line = Drawing.Color.FromArgb(36, 49, 64);
+
+        public override Drawing.Color ToolStripDropDownBackground => Bg;
+        public override Drawing.Color MenuBorder => Line;
+        public override Drawing.Color MenuItemBorder => Hover;
+        public override Drawing.Color MenuItemSelected => Hover;
+        public override Drawing.Color MenuItemSelectedGradientBegin => Hover;
+        public override Drawing.Color MenuItemSelectedGradientEnd => Hover;
+        public override Drawing.Color MenuItemPressedGradientBegin => Hover;
+        public override Drawing.Color MenuItemPressedGradientEnd => Hover;
+        public override Drawing.Color ImageMarginGradientBegin => Bg;
+        public override Drawing.Color ImageMarginGradientMiddle => Bg;
+        public override Drawing.Color ImageMarginGradientEnd => Bg;
+        public override Drawing.Color SeparatorDark => Line;
+        public override Drawing.Color SeparatorLight => Bg;
+    }
 }

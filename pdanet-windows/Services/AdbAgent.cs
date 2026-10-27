@@ -22,6 +22,42 @@ public static class AdbAgent
 
     public static string? AdbPath { get; private set; }
     private static Process? _agentProc;
+    private static readonly object _extractLock = new();
+
+    public enum PhoneState { NoAdb, NotFound, Unauthorized, Offline, Ready }
+
+    /// <summary>
+    /// Read only check used by the Connect page to show whether the phone is ready.
+    /// Lists devices and returns the best state seen plus the phone model when known.
+    /// </summary>
+    public static (PhoneState State, string? Model) Probe(string? configured)
+    {
+        var adb = FindAdb(configured);
+        if (adb == null) return (PhoneState.NoAdb, null);
+
+        var r = ProcessRunner.Run(adb, "devices -l", 10000);
+        var best = PhoneState.NotFound;
+        foreach (var line in r.StdOut.Split('\n'))
+        {
+            var l = line.Trim();
+            if (l.Length == 0 || l.StartsWith("List of devices") || l.StartsWith("*")) continue;
+            var tok = l.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+            if (tok.Length < 2) continue;
+            switch (tok[1])
+            {
+                case "device":
+                    var model = tok.FirstOrDefault(t => t.StartsWith("model:"))?.Substring(6).Replace('_', ' ');
+                    return (PhoneState.Ready, model);
+                case "unauthorized":
+                    best = PhoneState.Unauthorized;
+                    break;
+                case "offline":
+                    if (best == PhoneState.NotFound) best = PhoneState.Offline;
+                    break;
+            }
+        }
+        return (best, null);
+    }
 
     public static string? FindAdb(string? configured)
     {
@@ -53,6 +89,11 @@ public static class AdbAgent
 
     /// <summary>Extract the embedded adb.exe + its DLLs to the app data dir and return its path.</summary>
     private static string? ExtractBundledAdb()
+    {
+        lock (_extractLock) return ExtractBundledAdbLocked();
+    }
+
+    private static string? ExtractBundledAdbLocked()
     {
         try
         {
@@ -86,7 +127,7 @@ public static class AdbAgent
         AdbPath = FindAdb(configured);
         if (AdbPath == null)
         {
-            error = "adb not found. Install Android platform-tools (or set the adb path in Settings).";
+            error = "The adb helper is missing, set a custom adb program in Settings, Advanced";
             return false;
         }
 
@@ -96,9 +137,9 @@ public static class AdbAgent
         if (lines.Any(l => l.EndsWith("\tdevice") || l.EndsWith(" device"))) return true;
 
         if (lines.Any(l => l.Contains("unauthorized")))
-            error = "Device is UNAUTHORIZED — accept the 'Allow USB debugging' prompt on the phone.";
+            error = "Your phone has not allowed this PC yet, unlock it and tap Allow on the USB debugging prompt";
         else
-            error = "No ADB device found. Enable Developer options > USB debugging and connect via USB.";
+            error = "No phone found, plug it in with a USB cable and turn on USB debugging";
         return false;
     }
 
@@ -109,15 +150,15 @@ public static class AdbAgent
         try
         {
             using var rs = Assembly.GetExecutingAssembly().GetManifestResourceStream("PdaNetPortable.proxy.dex");
-            if (rs == null) { error = "embedded agent dex not found in assembly"; return false; }
+            if (rs == null) { error = "The phone helper is missing from this app build"; return false; }
             using var fs = File.Create(tmp);
             rs.CopyTo(fs);
         }
-        catch (Exception e) { error = "failed to extract agent dex: " + e.Message; return false; }
+        catch (Exception e) { error = "Could not unpack the phone helper: " + e.Message; return false; }
 
         KillRemote();
         var push = Adb($"push \"{tmp}\" {DexRemote}");
-        if (!push.Ok) { error = "adb push failed: " + push.All; return false; }
+        if (!push.Ok) { error = "Could not copy the helper to your phone: " + push.All; return false; }
         return true;
     }
 
@@ -137,7 +178,7 @@ public static class AdbAgent
                 CreateNoWindow = true,
             };
             _agentProc = Process.Start(psi);
-            if (_agentProc == null) { error = "failed to start adb shell"; return false; }
+            if (_agentProc == null) { error = "Could not start adb"; return false; }
 
             bool listening = false;
             _agentProc.OutputDataReceived += (_, e) =>
@@ -154,18 +195,18 @@ public static class AdbAgent
             while (sw.ElapsedMilliseconds < 7000 && !listening && !_agentProc.HasExited)
                 Thread.Sleep(200);
 
-            if (_agentProc.HasExited) { error = "agent process exited immediately (check USB debugging)"; return false; }
-            if (!listening) Logger.Instance.Warning("Agent did not confirm 'listening'; continuing anyway");
+            if (_agentProc.HasExited) { error = "The phone helper stopped right away, check that USB debugging is still on"; return false; }
+            if (!listening) Logger.Instance.Warning("The phone helper did not confirm it is ready, continuing anyway");
             return true;
         }
-        catch (Exception e) { error = "start agent failed: " + e.Message; return false; }
+        catch (Exception e) { error = "Could not start the phone helper: " + e.Message; return false; }
     }
 
     public static bool Forward(int localPort, int agentPort, out string error)
     {
         error = "";
         var r = Adb($"forward tcp:{localPort} tcp:{agentPort}");
-        if (!r.Ok) { error = "adb forward failed: " + r.All; return false; }
+        if (!r.Ok) { error = "Could not link this PC to the phone: " + r.All; return false; }
         return true;
     }
 

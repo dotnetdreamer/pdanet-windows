@@ -10,7 +10,8 @@ This is an independent project inspired by PdaNet. It is not made by, or connect
 - Also work with your phone's WiFi hotspot
 - Send your PC's traffic through whatever connection your phone is using, including a VPN that is running on the phone
 - Help stop your mobile carrier from noticing that you are sharing (this is often called tethering)
-- Show a simple dark screen with live speed, data used, and a connection log
+- Guide you with a step by step screen that checks your phone is ready before you connect
+- Show live speed, data used, signal strength, and a plain language activity log on a modern dark screen
 
 ## What you need
 
@@ -25,7 +26,7 @@ Download `PdaNetPortable.exe` from the Releases page of this project. Save it an
 
 ## How to use it
 
-Choose a mode at the top of the window and press CONNECT. Press DISCONNECT when you are finished, which returns your PC's network settings to normal.
+Pick how to connect in step 1, follow the short checklist in step 2 so your phone is ready, then press the large round button in step 3. Press it again to disconnect, which returns your PC's network settings to normal.
 
 ### Phone VPN mode (recommended)
 
@@ -34,7 +35,7 @@ Use this when you want your PC to go online through the same connection, and the
 1. On the phone, turn on Developer options and USB debugging
 2. Connect the phone to the PC with a USB cable
 3. On the phone, tap Allow when it asks whether to trust this computer
-4. In the app, choose ADB AGENT (VPN) and press CONNECT
+4. In the app, choose Phone VPN and press the connect button
 5. Open a browser and visit a site that shows your location
 
 If the phone is connected to a VPN, your PC will now appear to be in the same country as that VPN.
@@ -44,14 +45,14 @@ If the phone is connected to a VPN, your PC will now appear to be in the same co
 Use this to share the phone's internet over the cable.
 
 1. On the phone, turn on USB tethering, found under Settings, then Mobile Hotspot and Tethering
-2. In the app, choose USB TETHER and press CONNECT
+2. In the app, choose USB cable and press the connect button
 
 ### WiFi mode
 
 Use this to share the phone's hotspot.
 
 1. On the phone, turn on the WiFi hotspot
-2. In the app, choose WIFI HOTSPOT, type the hotspot name and password, and press CONNECT
+2. In the app, choose WiFi hotspot, pick your hotspot or type its name and password, and press the connect button
 
 ## Hiding tethering from your carrier
 
@@ -73,8 +74,8 @@ Open Settings from the main screen to change things such as
 
 - Phone not found in VPN mode, check that USB debugging is on and that you tapped Allow on the phone
 - USB mode says there is no connection, turn on USB tethering on the phone and keep mobile data on
-- The browser still shows your real location, some company or school PCs force their own network proxy that overrides the app, in that case set the browser's proxy to the address shown in the app
-- Nothing seems to happen when you connect, open the log panel in the app to see which step failed
+- The browser still shows your real location, some company or school PCs force their own network proxy that overrides the app, in that case open the connection details on the Connect page, copy the proxy address, and set it in your browser
+- Nothing seems to happen when you connect, open the Activity page in the app to see which step failed
 
 ## Privacy
 

@@ -1,0 +1,162 @@
+<UserControl x:Class="PdaNetPortable.Views.HelpView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <UserControl.Resources>
+        <Style x:Key="Q" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="13.5" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="{StaticResource B.Text}" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <Style x:Key="A" TargetType="TextBlock" BasedOn="{StaticResource T.Body}" />
+        <Style x:Key="KeyRow" TargetType="Grid">
+            <Setter Property="Margin" Value="0,0,0,10" />
+        </Style>
+    </UserControl.Resources>
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False" Padding="28,22,28,22">
+        <Grid MaxWidth="900" HorizontalAlignment="Left">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="22" />
+                <ColumnDefinition Width="300" />
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <StackPanel Grid.ColumnSpan="3">
+                <TextBlock Text="Help" Style="{StaticResource T.H1}" />
+                <TextBlock Text="What PdaNet does and answers to common questions" Style="{StaticResource T.Body}" Margin="0,4,0,20" />
+            </StackPanel>
+
+            <!-- Left: what it does, and questions -->
+            <StackPanel Grid.Row="1" Grid.Column="0">
+                <Border Style="{StaticResource Card}" Margin="0,0,0,18">
+                    <StackPanel>
+                        <TextBlock Text="In one line" Style="{StaticResource T.Eyebrow}" />
+                        <TextBlock Text="PdaNet lets this PC use your phone's internet" Style="{StaticResource T.H2}"
+                                   FontSize="17" Margin="0,8,0,0" TextWrapping="Wrap" />
+                        <TextBlock Text="Pick how to connect, get your phone ready with the checklist, then press the big button, that is the whole thing"
+                                   Style="{StaticResource T.Body}" Margin="0,8,0,0" />
+                        <Border Style="{StaticResource Divider}" />
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="&#xEB95;" Style="{StaticResource T.Icon}" FontSize="15" Foreground="{StaticResource B.Accent}"
+                                       VerticalAlignment="Top" Margin="0,1,0,0" />
+                            <TextBlock Grid.Column="1" Margin="12,0,0,0" Style="{StaticResource T.Small}"
+                                       Text="This is an independent project inspired by PdaNet, it is not made by the makers of PdaNet, use it only with your own phone and your own mobile plan" />
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <TextBlock Text="Common questions" Style="{StaticResource T.H2}" FontSize="16" Margin="2,0,0,12" />
+
+                <Expander Style="{StaticResource Accordion}" IsExpanded="True">
+                    <Expander.Header><TextBlock Text="Which way of connecting should I pick?" Style="{StaticResource Q}" /></Expander.Header>
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource A}" Text="Phone VPN is the best all rounder, it sends this PC's traffic through your phone, including any VPN running on the phone, and needs only a USB cable" />
+                        <TextBlock Style="{StaticResource A}" Margin="0,8,0,0" Text="Use USB cable for the simplest wired sharing, or WiFi and iPhone hotspot if you would rather not plug in" />
+                    </StackPanel>
+                </Expander>
+
+                <Expander Style="{StaticResource Accordion}">
+                    <Expander.Header><TextBlock Text="How do I turn on USB debugging?" Style="{StaticResource Q}" /></Expander.Header>
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource A}" Text="Open Settings on your phone, then About phone, tap Build number seven times, go back to Settings, open System then Developer options, and turn on USB debugging" />
+                        <TextBlock Style="{StaticResource A}" Margin="0,8,0,0" Text="When you plug in and the phone asks to trust this computer, tap Allow" />
+                    </StackPanel>
+                </Expander>
+
+                <Expander Style="{StaticResource Accordion}">
+                    <Expander.Header><TextBlock Text="What is carrier stealth?" Style="{StaticResource Q}" /></Expander.Header>
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource A}" Text="Some mobile plans try to notice when you share your phone's internet with another device, stealth makes this PC's traffic look more like normal phone use so it blends in" />
+                        <TextBlock Style="{StaticResource A}" Margin="0,8,0,0" Text="It runs on its own and needs no admin rights, the strongest privacy comes from Phone VPN mode because a VPN also encrypts the traffic" />
+                    </StackPanel>
+                </Expander>
+
+                <Expander Style="{StaticResource Accordion}">
+                    <Expander.Header><TextBlock Text="A website still shows my real location" Style="{StaticResource Q}" /></Expander.Header>
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource A}" Text="Some work or school PCs force their own network proxy that overrides this app, in that case open the connection details on the Connect page, copy the proxy address, and set your browser to use it" />
+                        <TextBlock Style="{StaticResource A}" Margin="0,8,0,0" Text="For this to hide your location at all, your phone itself needs a VPN turned on, then choose Phone VPN mode" />
+                    </StackPanel>
+                </Expander>
+
+                <Expander Style="{StaticResource Accordion}">
+                    <Expander.Header><TextBlock Text="Where are my settings kept?" Style="{StaticResource Q}" /></Expander.Header>
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource A}" Text="In a folder named data next to the app, so your settings travel with it, hotspot passwords are stored in an encrypted form by Windows and the app never sends your information anywhere" />
+                        <TextBlock Style="{StaticResource A}" Margin="0,8,0,0" Text="You can open that folder from Settings, Advanced" />
+                    </StackPanel>
+                </Expander>
+
+                <Expander Style="{StaticResource Accordion}">
+                    <Expander.Header><TextBlock Text="Why does closing the window not quit?" Style="{StaticResource Q}" /></Expander.Header>
+                    <TextBlock Style="{StaticResource A}" Text="Closing tucks the app into the tray near the clock so your connection keeps running, to quit fully right click the tray icon and choose Quit, or press Ctrl and Q" />
+                </Expander>
+            </StackPanel>
+
+            <!-- Right: shortcuts and links -->
+            <StackPanel Grid.Row="1" Grid.Column="2">
+                <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                    <StackPanel>
+                        <TextBlock Text="Keyboard shortcuts" Style="{StaticResource T.H2}" Margin="0,0,0,14" />
+
+                        <Grid Style="{StaticResource KeyRow}">
+                            <TextBlock Text="Connect or disconnect" Style="{StaticResource T.Small}" Foreground="{StaticResource B.Text2}" VerticalAlignment="Center" />
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                <Border Style="{StaticResource KeyCap}"><TextBlock Text="Ctrl" Style="{StaticResource T.Eyebrow}" FontSize="10.5" /></Border>
+                                <Border Style="{StaticResource KeyCap}" Margin="0"><TextBlock Text="Enter" Style="{StaticResource T.Eyebrow}" FontSize="10.5" /></Border>
+                            </StackPanel>
+                        </Grid>
+                        <Grid Style="{StaticResource KeyRow}">
+                            <TextBlock Text="Go to a page" Style="{StaticResource T.Small}" Foreground="{StaticResource B.Text2}" VerticalAlignment="Center" />
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                <Border Style="{StaticResource KeyCap}"><TextBlock Text="Ctrl" Style="{StaticResource T.Eyebrow}" FontSize="10.5" /></Border>
+                                <Border Style="{StaticResource KeyCap}" Margin="0"><TextBlock Text="1 to 5" Style="{StaticResource T.Eyebrow}" FontSize="10.5" /></Border>
+                            </StackPanel>
+                        </Grid>
+                        <Grid Style="{StaticResource KeyRow}">
+                            <TextBlock Text="Refresh this page" Style="{StaticResource T.Small}" Foreground="{StaticResource B.Text2}" VerticalAlignment="Center" />
+                            <Border Style="{StaticResource KeyCap}" HorizontalAlignment="Right" Margin="0"><TextBlock Text="F5" Style="{StaticResource T.Eyebrow}" FontSize="10.5" /></Border>
+                        </Grid>
+                        <Grid Style="{StaticResource KeyRow}">
+                            <TextBlock Text="Open help" Style="{StaticResource T.Small}" Foreground="{StaticResource B.Text2}" VerticalAlignment="Center" />
+                            <Border Style="{StaticResource KeyCap}" HorizontalAlignment="Right" Margin="0"><TextBlock Text="F1" Style="{StaticResource T.Eyebrow}" FontSize="10.5" /></Border>
+                        </Grid>
+                        <Grid Margin="0">
+                            <TextBlock Text="Quit the app" Style="{StaticResource T.Small}" Foreground="{StaticResource B.Text2}" VerticalAlignment="Center" />
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                <Border Style="{StaticResource KeyCap}"><TextBlock Text="Ctrl" Style="{StaticResource T.Eyebrow}" FontSize="10.5" /></Border>
+                                <Border Style="{StaticResource KeyCap}" Margin="0"><TextBlock Text="Q" Style="{StaticResource T.Eyebrow}" FontSize="10.5" /></Border>
+                            </StackPanel>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource Card}">
+                    <StackPanel>
+                        <TextBlock Text="More" Style="{StaticResource T.H2}" Margin="0,0,0,12" />
+                        <Button Style="{StaticResource Btn.Secondary}" Tag="&#xE8A7;" Content="Open the project page" Click="OnProject"
+                                HorizontalContentAlignment="Left" HorizontalAlignment="Stretch" Margin="0,0,0,8" />
+                        <Button x:Name="ActivityBtn" Style="{StaticResource Btn.Secondary}" Tag="&#xE756;" Content="See the activity log"
+                                Click="OnActivity" HorizontalContentAlignment="Left" HorizontalAlignment="Stretch" />
+                        <Border Style="{StaticResource Divider}" />
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="PdaNet Windows" Style="{StaticResource T.Small}" Foreground="{StaticResource B.Text2}" />
+                            <TextBlock x:Name="VersionText" Style="{StaticResource T.Mono}" FontSize="11" Margin="8,0,0,0"
+                                       Foreground="{StaticResource B.Text3}" VerticalAlignment="Center" />
+                        </StackPanel>
+                        <TextBlock Text="Portable and open source, licensed under MIT" Style="{StaticResource T.Small}" FontSize="11" Margin="0,4,0,0" />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </Grid>
+    </ScrollViewer>
+</UserControl>

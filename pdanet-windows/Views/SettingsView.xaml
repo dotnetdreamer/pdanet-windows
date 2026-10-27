@@ -1,0 +1,357 @@
+<UserControl x:Class="PdaNetPortable.Views.SettingsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <UserControl.Resources>
+        <Style x:Key="SectionIcon" TargetType="TextBlock" BasedOn="{StaticResource T.Icon}">
+            <Setter Property="FontSize" Value="15" />
+            <Setter Property="Foreground" Value="{StaticResource B.Accent}" />
+            <Setter Property="HorizontalAlignment" Value="Center" />
+        </Style>
+        <Style x:Key="SectionTile" TargetType="Border" BasedOn="{StaticResource IconTile}">
+            <Setter Property="Width" Value="34" />
+            <Setter Property="Height" Value="34" />
+            <Setter Property="CornerRadius" Value="9" />
+        </Style>
+        <Style x:Key="RowText" TargetType="StackPanel">
+            <Setter Property="Margin" Value="0,0,28,0" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <Style x:Key="RowTitle" TargetType="TextBlock" BasedOn="{StaticResource T.RowTitle}" />
+        <Style x:Key="RowHint" TargetType="TextBlock" BasedOn="{StaticResource T.Small}">
+            <Setter Property="Margin" Value="0,2,0,0" />
+        </Style>
+        <Style x:Key="Unit" TargetType="TextBlock" BasedOn="{StaticResource T.Small}">
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Margin" Value="10,0,0,0" />
+        </Style>
+        <Style x:Key="SettingRow" TargetType="Grid">
+            <Setter Property="Margin" Value="0,9" />
+        </Style>
+    </UserControl.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False" Padding="28,22,28,10">
+            <StackPanel MaxWidth="880" HorizontalAlignment="Left">
+                <TextBlock Text="Settings" Style="{StaticResource T.H1}" />
+                <TextBlock Text="Everything works out of the box, change only what you need" Style="{StaticResource T.Body}" Margin="0,4,0,20" />
+
+                <!-- ============================ Privacy ============================ -->
+                <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                    <StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <Border Style="{StaticResource SectionTile}">
+                                <TextBlock Text="&#xEA18;" Style="{StaticResource SectionIcon}" />
+                            </Border>
+                            <StackPanel Margin="12,0,0,0" VerticalAlignment="Center">
+                                <TextBlock Text="Carrier stealth" Style="{StaticResource T.H2}" />
+                                <TextBlock Text="Make this PC's traffic look like normal phone use" Style="{StaticResource T.Small}" Margin="0,2,0,0" />
+                            </StackPanel>
+                        </StackPanel>
+                        <Border Style="{StaticResource Divider}" />
+
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock Text="Turn on carrier stealth" Style="{StaticResource RowTitle}" />
+                                <TextBlock Text="On by default, works without admin rights" Style="{StaticResource RowHint}" />
+                            </StackPanel>
+                            <ToggleButton x:Name="Stealth" Grid.Column="1" Style="{StaticResource Switch}" Click="OnStealthToggled"
+                                          AutomationProperties.Name="Turn on carrier stealth" />
+                        </Grid>
+
+                        <StackPanel x:Name="StealthOptions">
+                            <Grid Style="{StaticResource SettingRow}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Style="{StaticResource RowText}">
+                                    <TextBlock Text="How strong" Style="{StaticResource RowTitle}" />
+                                    <TextBlock Text="Stronger also hides IPv6 and some system updates" Style="{StaticResource RowHint}" />
+                                </StackPanel>
+                                <Border Grid.Column="1" Style="{StaticResource Seg.Host}">
+                                    <StackPanel Orientation="Horizontal">
+                                        <RadioButton x:Name="Lv1" Style="{StaticResource Seg}" GroupName="Strength" Content="Light" />
+                                        <RadioButton x:Name="Lv2" Style="{StaticResource Seg}" GroupName="Strength" Content="Balanced" />
+                                        <RadioButton x:Name="Lv3" Style="{StaticResource Seg}" GroupName="Strength" Content="Strong" />
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
+
+                            <Grid Style="{StaticResource SettingRow}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Style="{StaticResource RowText}">
+                                    <TextBlock Text="Protect every app" Style="{StaticResource RowTitle}" />
+                                    <TextBlock Text="Covers the whole PC, Windows will ask for admin once" Style="{StaticResource RowHint}" />
+                                </StackPanel>
+                                <ToggleButton x:Name="SystemBypass" Grid.Column="1" Style="{StaticResource Switch}"
+                                              AutomationProperties.Name="Protect every app" />
+                            </Grid>
+
+                            <Grid Style="{StaticResource SettingRow}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Style="{StaticResource RowText}">
+                                    <TextBlock Text="Only connect with stealth" Style="{StaticResource RowTitle}" />
+                                    <TextBlock Text="Stop the connection if stealth cannot turn on" Style="{StaticResource RowHint}" />
+                                </StackPanel>
+                                <ToggleButton x:Name="RequireBypass" Grid.Column="1" Style="{StaticResource Switch}"
+                                              AutomationProperties.Name="Only connect with stealth" />
+                            </Grid>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <!-- ========================== Connection =========================== -->
+                <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                    <StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <Border Style="{StaticResource SectionTile}">
+                                <TextBlock Text="&#xE968;" Style="{StaticResource SectionIcon}" />
+                            </Border>
+                            <StackPanel Margin="12,0,0,0" VerticalAlignment="Center">
+                                <TextBlock Text="Connection" Style="{StaticResource T.H2}" />
+                                <TextBlock Text="Reconnecting and data alerts" Style="{StaticResource T.Small}" Margin="0,2,0,0" />
+                            </StackPanel>
+                        </StackPanel>
+                        <Border Style="{StaticResource Divider}" />
+
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock Text="Reconnect automatically" Style="{StaticResource RowTitle}" />
+                                <TextBlock Text="Get back online by itself if the connection drops" Style="{StaticResource RowHint}" />
+                            </StackPanel>
+                            <ToggleButton x:Name="AutoReconnect" Grid.Column="1" Style="{StaticResource Switch}" Click="OnAutoReconnectToggled"
+                                          AutomationProperties.Name="Reconnect automatically" />
+                        </Grid>
+
+                        <Grid x:Name="ReconnectRow" Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock Text="How many times to try" Style="{StaticResource RowTitle}" />
+                                <TextBlock Text="Between 1 and 10 tries" Style="{StaticResource RowHint}" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                <TextBox x:Name="ReconnectAttempts" Style="{StaticResource Input.Number}" MaxLength="2" />
+                                <TextBlock Text="tries" Style="{StaticResource Unit}" />
+                            </StackPanel>
+                        </Grid>
+
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock Text="Warn me after using" Style="{StaticResource RowTitle}" />
+                                <TextBlock Text="A gentle heads up so a session does not run away with your data" Style="{StaticResource RowHint}" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                <TextBox x:Name="DataWarning" Style="{StaticResource Input.Number}" MaxLength="7" />
+                                <TextBlock Text="MB" Style="{StaticResource Unit}" />
+                            </StackPanel>
+                        </Grid>
+
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock Text="Alert me after using" Style="{StaticResource RowTitle}" />
+                                <TextBlock Text="A stronger alert at this amount" Style="{StaticResource RowHint}" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                <TextBox x:Name="DataCritical" Style="{StaticResource Input.Number}" MaxLength="7" />
+                                <TextBlock Text="MB" Style="{StaticResource Unit}" />
+                            </StackPanel>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <!-- ============================ Windows ============================ -->
+                <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                    <StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <Border Style="{StaticResource SectionTile}">
+                                <TextBlock Text="&#xE770;" Style="{StaticResource SectionIcon}" />
+                            </Border>
+                            <StackPanel Margin="12,0,0,0" VerticalAlignment="Center">
+                                <TextBlock Text="App and Windows" Style="{StaticResource T.H2}" />
+                                <TextBlock Text="How the app starts and lets you know things" Style="{StaticResource T.Small}" Margin="0,2,0,0" />
+                            </StackPanel>
+                        </StackPanel>
+                        <Border Style="{StaticResource Divider}" />
+
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock Text="Start with Windows" Style="{StaticResource RowTitle}" />
+                                <TextBlock Text="Open quietly in the tray when you sign in" Style="{StaticResource RowHint}" />
+                            </StackPanel>
+                            <ToggleButton x:Name="StartWithWindows" Grid.Column="1" Style="{StaticResource Switch}"
+                                          AutomationProperties.Name="Start with Windows" />
+                        </Grid>
+
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock Text="Start minimized" Style="{StaticResource RowTitle}" />
+                                <TextBlock Text="Go straight to the tray instead of opening the window" Style="{StaticResource RowHint}" />
+                            </StackPanel>
+                            <ToggleButton x:Name="StartMinimized" Grid.Column="1" Style="{StaticResource Switch}"
+                                          AutomationProperties.Name="Start minimized" />
+                        </Grid>
+
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock Text="Show desktop notifications" Style="{StaticResource RowTitle}" />
+                                <TextBlock Text="Pop a message when you go online or offline" Style="{StaticResource RowHint}" />
+                            </StackPanel>
+                            <ToggleButton x:Name="Notifications" Grid.Column="1" Style="{StaticResource Switch}"
+                                          AutomationProperties.Name="Show desktop notifications" />
+                        </Grid>
+
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <TextBlock Text="Allow only one window" Style="{StaticResource RowTitle}" />
+                                <TextBlock Text="Stop a second copy of the app from opening" Style="{StaticResource RowHint}" />
+                            </StackPanel>
+                            <ToggleButton x:Name="SingleInstance" Grid.Column="1" Style="{StaticResource Switch}"
+                                          AutomationProperties.Name="Allow only one window" />
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <!-- =========================== Advanced ============================ -->
+                <Expander x:Name="AdvancedExpander" Style="{StaticResource Accordion}" Margin="0,0,0,8">
+                    <Expander.Header>
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE713;" Style="{StaticResource T.Icon}" FontSize="14" Foreground="{StaticResource B.Text2}" />
+                            <StackPanel Margin="12,0,0,0">
+                                <TextBlock Text="Advanced" FontSize="13.5" FontWeight="SemiBold" Foreground="{StaticResource B.Text}" />
+                                <TextBlock Text="Ports and paths, most people never need these" Style="{StaticResource T.Small}" Margin="0,2,0,0" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Expander.Header>
+                    <StackPanel>
+                        <Border Background="{StaticResource B.AmberSoft}" BorderBrush="{StaticResource B.AmberLine}" BorderThickness="1"
+                                CornerRadius="9" Padding="12,9" Margin="0,0,0,16">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE7BA;" Style="{StaticResource T.Icon}" FontSize="13" Foreground="{StaticResource B.Amber}" />
+                                <TextBlock Text="Change these only if you know what they do" Foreground="{StaticResource B.Text2}"
+                                           FontSize="12.5" Margin="10,0,0,0" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Border>
+
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="24" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+
+                            <StackPanel Margin="0,0,0,14">
+                                <TextBlock Text="PHONE SHARING ADDRESS" Style="{StaticResource T.Eyebrow}" Margin="0,0,0,6" />
+                                <TextBox x:Name="ProxyIp" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="2" Margin="0,0,0,14">
+                                <TextBlock Text="PHONE SHARING PORT" Style="{StaticResource T.Eyebrow}" Margin="0,0,0,6" />
+                                <TextBox x:Name="ProxyPort" MaxLength="5" />
+                            </StackPanel>
+
+                            <StackPanel Grid.Row="1" Margin="0,0,0,14">
+                                <TextBlock Text="LOCAL PROXY PORT" Style="{StaticResource T.Eyebrow}" Margin="0,0,0,6" />
+                                <TextBox x:Name="LocalPort" MaxLength="5" />
+                            </StackPanel>
+                            <StackPanel Grid.Row="1" Grid.Column="2" Margin="0,0,0,14">
+                                <TextBlock Text="PHONE HELPER PORT" Style="{StaticResource T.Eyebrow}" Margin="0,0,0,6" />
+                                <TextBox x:Name="AgentPort" MaxLength="5" />
+                            </StackPanel>
+
+                            <StackPanel Grid.Row="2" Grid.ColumnSpan="3">
+                                <TextBlock Text="CUSTOM ADB PROGRAM" Style="{StaticResource T.Eyebrow}" Margin="0,0,0,6" />
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBox x:Name="AdbPath" Tag="Leave empty to use the built in one" />
+                                    <Button Grid.Column="1" Style="{StaticResource Btn.Secondary}" Content="Browse" Margin="8,0,0,0" Click="OnBrowseAdb" />
+                                </Grid>
+                            </StackPanel>
+                        </Grid>
+
+                        <Border Style="{StaticResource Divider}" />
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="&#xE8B7;" Style="{StaticResource T.Icon}" FontSize="14" Foreground="{StaticResource B.Text3}"
+                                       VerticalAlignment="Center" />
+                            <StackPanel Grid.Column="1" Margin="12,0,0,0">
+                                <TextBlock x:Name="DataDirText" Style="{StaticResource T.Small}" />
+                                <Button Style="{StaticResource Btn.Link}" Content="Open this folder" HorizontalAlignment="Left"
+                                        Margin="0,3,0,0" Click="OnOpenDataDir" />
+                            </StackPanel>
+                        </Grid>
+                    </StackPanel>
+                </Expander>
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- ============================ Save bar ============================ -->
+        <Border Grid.Row="1" BorderBrush="{StaticResource B.Line}" BorderThickness="0,1,0,0" Background="#CC070B0F" Padding="28,12">
+            <Grid>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock x:Name="SaveHint" Text="Changes save when you press Save" Style="{StaticResource T.Small}" VerticalAlignment="Center" />
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button Style="{StaticResource Btn.Ghost}" Content="Reset to defaults" Click="OnReset" />
+                    <Button Style="{StaticResource Btn.Secondary}" Content="Undo changes" Margin="8,0" Click="OnRevert" />
+                    <Button Style="{StaticResource Btn.Primary}" Tag="&#xE74E;" Content="Save" Click="OnSaveClick" />
+                </StackPanel>
+            </Grid>
+        </Border>
+    </Grid>
+</UserControl>

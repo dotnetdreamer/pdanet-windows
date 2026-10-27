@@ -25,7 +25,7 @@ public static class SystemProxy
         key.SetValue("ProxyServer", hostPort, RegistryValueKind.String);
         key.SetValue("ProxyOverride", BypassList, RegistryValueKind.String);
         NativeMethods.NotifyProxyChanged();
-        Logger.Instance.Ok($"System proxy set to {hostPort}");
+        Logger.Instance.Ok($"Windows proxy set to {hostPort}");
     }
 
     public static void ClearWinInet()
@@ -35,7 +35,7 @@ public static class SystemProxy
         key.SetValue("ProxyEnable", 0, RegistryValueKind.DWord);
         try { key.DeleteValue("ProxyServer", false); } catch { }
         NativeMethods.NotifyProxyChanged();
-        Logger.Instance.Info("System proxy cleared");
+        Logger.Instance.Info("Windows proxy cleared");
     }
 
     public static (bool enabled, string? server) GetWinInet()

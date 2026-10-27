@@ -1,0 +1,471 @@
+<UserControl x:Class="PdaNetPortable.Views.ConnectView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <UserControl.Resources>
+        <!-- A checklist or progress row: status icon (or spinner), title, optional detail -->
+        <DataTemplate x:Key="CheckRowTemplate">
+            <Grid Margin="0,0,0,13">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="30" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Grid Width="18" Height="18" VerticalAlignment="Top" HorizontalAlignment="Left" Margin="0,1,0,0">
+                    <TextBlock Text="{Binding Glyph}" FontFamily="{StaticResource F.Icon}" FontSize="16"
+                               Foreground="{Binding Brush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    <Path x:Name="Spinner" Stroke="{Binding Brush}" StrokeThickness="2" StrokeStartLineCap="Round"
+                          StrokeEndLineCap="Round" Data="M 9,1.5 A 7.5,7.5 0 1 1 1.5,9" Visibility="Collapsed"
+                          RenderTransformOrigin="0.5,0.5">
+                        <Path.RenderTransform>
+                            <RotateTransform />
+                        </Path.RenderTransform>
+                    </Path>
+                </Grid>
+                <StackPanel Grid.Column="1">
+                    <TextBlock Text="{Binding Title}" Foreground="{Binding TitleBrush}" FontSize="13"
+                               FontWeight="SemiBold" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding Detail}" Style="{StaticResource T.Small}" Margin="0,2,0,0"
+                               Visibility="{Binding DetailVisibility}" />
+                </StackPanel>
+            </Grid>
+            <DataTemplate.Triggers>
+                <DataTrigger Binding="{Binding Spin}" Value="True">
+                    <Setter TargetName="Spinner" Property="Visibility" Value="Visible" />
+                    <DataTrigger.EnterActions>
+                        <BeginStoryboard>
+                            <Storyboard>
+                                <DoubleAnimation Storyboard.TargetName="Spinner"
+                                                 Storyboard.TargetProperty="(UIElement.RenderTransform).(RotateTransform.Angle)"
+                                                 From="0" To="360" Duration="0:0:0.9" RepeatBehavior="Forever" />
+                            </Storyboard>
+                        </BeginStoryboard>
+                    </DataTrigger.EnterActions>
+                </DataTrigger>
+            </DataTemplate.Triggers>
+        </DataTemplate>
+
+        <Style x:Key="DetailLabel" TargetType="TextBlock" BasedOn="{StaticResource T.Small}">
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <Style x:Key="DetailValue" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="Foreground" Value="{StaticResource B.Text}" />
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <Style x:Key="MetricLabel" TargetType="TextBlock" BasedOn="{StaticResource T.Eyebrow}">
+            <Setter Property="Margin" Value="0,0,0,6" />
+        </Style>
+        <Style x:Key="Bar" TargetType="Rectangle">
+            <Setter Property="Width" Value="4" />
+            <Setter Property="RadiusX" Value="1" />
+            <Setter Property="RadiusY" Value="1" />
+            <Setter Property="Margin" Value="0,0,3,0" />
+            <Setter Property="VerticalAlignment" Value="Bottom" />
+            <Setter Property="Fill" Value="{StaticResource B.Line2}" />
+        </Style>
+        <Style x:Key="GuideLine" TargetType="Line">
+            <Setter Property="X1" Value="0" />
+            <Setter Property="X2" Value="1" />
+            <Setter Property="Stretch" Value="Fill" />
+            <Setter Property="Stroke" Value="{StaticResource B.Line}" />
+            <Setter Property="StrokeDashArray" Value="2 4" />
+            <Setter Property="VerticalAlignment" Value="Top" />
+        </Style>
+    </UserControl.Resources>
+
+    <ScrollViewer x:Name="Scroller" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                  Focusable="False" Padding="28,22,28,22">
+        <Grid x:Name="Layout" MinHeight="580" Height="{Binding ViewportHeight, ElementName=Scroller}">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition x:Name="LeftCol" Width="390" />
+                <ColumnDefinition Width="28" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <!-- ======================= Steps 01 and 02 ======================= -->
+            <Grid Grid.Column="0">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="01" Style="{StaticResource T.StepNo}" />
+                    <TextBlock x:Name="Step1Title" Text="Choose how to connect" Style="{StaticResource T.H2}" Margin="10,0,0,0" />
+                </StackPanel>
+
+                <StackPanel Grid.Row="1" Margin="0,12,0,0">
+                    <RadioButton x:Name="ModeAdb" Style="{StaticResource ModeCard}" Checked="OnModeChecked"
+                                 AutomationProperties.Name="Phone VPN, recommended">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Border Style="{StaticResource ModeIconTile}">
+                                <TextBlock Text="&#xE705;" Style="{StaticResource ModeIcon}" />
+                            </Border>
+                            <StackPanel Grid.Column="1" Margin="14,0,0,0" VerticalAlignment="Center">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="Phone VPN" FontSize="14" FontWeight="SemiBold" />
+                                    <Border Style="{StaticResource Badge}" Margin="8,0,0,0">
+                                        <TextBlock Text="RECOMMENDED" Style="{StaticResource T.Badge}" />
+                                    </Border>
+                                </StackPanel>
+                                <TextBlock Text="Your phone's internet and VPN, over USB" Style="{StaticResource T.Small}" Margin="0,3,0,0" />
+                            </StackPanel>
+                        </Grid>
+                    </RadioButton>
+
+                    <RadioButton x:Name="ModeUsb" Style="{StaticResource ModeCard}" Checked="OnModeChecked"
+                                 AutomationProperties.Name="USB cable">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Border Style="{StaticResource ModeIconTile}">
+                                <TextBlock Text="&#xE88E;" Style="{StaticResource ModeIcon}" />
+                            </Border>
+                            <StackPanel Grid.Column="1" Margin="14,0,0,0" VerticalAlignment="Center">
+                                <TextBlock Text="USB cable" FontSize="14" FontWeight="SemiBold" />
+                                <TextBlock Text="Share mobile data through the cable" Style="{StaticResource T.Small}" Margin="0,3,0,0" />
+                            </StackPanel>
+                        </Grid>
+                    </RadioButton>
+
+                    <RadioButton x:Name="ModeWifi" Style="{StaticResource ModeCard}" Checked="OnModeChecked"
+                                 AutomationProperties.Name="WiFi hotspot">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Border Style="{StaticResource ModeIconTile}">
+                                <TextBlock Text="&#xE701;" Style="{StaticResource ModeIcon}" />
+                            </Border>
+                            <StackPanel Grid.Column="1" Margin="14,0,0,0" VerticalAlignment="Center">
+                                <TextBlock Text="WiFi hotspot" FontSize="14" FontWeight="SemiBold" />
+                                <TextBlock Text="Join your Android phone's hotspot" Style="{StaticResource T.Small}" Margin="0,3,0,0" />
+                            </StackPanel>
+                        </Grid>
+                    </RadioButton>
+
+                    <RadioButton x:Name="ModeIphone" Style="{StaticResource ModeCard}" Checked="OnModeChecked"
+                                 AutomationProperties.Name="iPhone hotspot" Margin="0">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Border Style="{StaticResource ModeIconTile}">
+                                <TextBlock Text="&#xE8EA;" Style="{StaticResource ModeIcon}" />
+                            </Border>
+                            <StackPanel Grid.Column="1" Margin="14,0,0,0" VerticalAlignment="Center">
+                                <TextBlock Text="iPhone hotspot" FontSize="14" FontWeight="SemiBold" />
+                                <TextBlock Text="Join your iPhone's Personal Hotspot" Style="{StaticResource T.Small}" Margin="0,3,0,0" />
+                            </StackPanel>
+                        </Grid>
+                    </RadioButton>
+                </StackPanel>
+
+                <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,22,0,12">
+                    <TextBlock Text="02" Style="{StaticResource T.StepNo}" />
+                    <TextBlock x:Name="Step2Title" Text="Get your phone ready" Style="{StaticResource T.H2}" Margin="10,0,0,0" />
+                </StackPanel>
+
+                <Border Grid.Row="3" Style="{StaticResource Card}" Padding="18,16,8,6">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False" Padding="0,0,10,0">
+                        <Grid>
+                            <!-- Offline: live checklist for the chosen mode -->
+                            <StackPanel x:Name="ChecklistPanel">
+                                <ItemsControl x:Name="CheckList" ItemTemplate="{StaticResource CheckRowTemplate}" Focusable="False" />
+                                <Border x:Name="ReadyBanner" Background="{StaticResource B.AccentSoft}" BorderBrush="{StaticResource B.AccentLine}"
+                                        BorderThickness="1" CornerRadius="9" Padding="12,9" Margin="0,0,0,12" Visibility="Collapsed">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="&#xE73E;" Style="{StaticResource T.Icon}" FontSize="13" Foreground="{StaticResource B.Accent}" />
+                                        <TextBlock x:Name="ReadyText" Text="All set, press Connect" Foreground="{StaticResource B.Text}"
+                                                   FontSize="12.5" Margin="10,0,0,0" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                </Border>
+                                <Expander x:Name="HowTo" Style="{StaticResource Expander.Plain}" Header="Show me how" Margin="0,0,0,12">
+                                    <ItemsControl x:Name="HowToList" ItemTemplate="{StaticResource Tpl.Numbered}" Focusable="False" />
+                                </Expander>
+                            </StackPanel>
+
+                            <!-- Busy: step by step progress -->
+                            <StackPanel x:Name="ProgressPanel" Visibility="Collapsed">
+                                <ItemsControl x:Name="ProgressList" ItemTemplate="{StaticResource CheckRowTemplate}" Focusable="False" />
+                                <TextBlock x:Name="ProgressHint" Text="This usually takes a few seconds" Style="{StaticResource T.Small}" Margin="0,0,0,12" />
+                            </StackPanel>
+
+                            <!-- Online: what is going on, in plain words -->
+                            <StackPanel x:Name="DetailsPanel" Visibility="Collapsed">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="136" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="34" />
+                                        <RowDefinition Height="34" />
+                                        <RowDefinition Height="34" />
+                                        <RowDefinition Height="34" />
+                                    </Grid.RowDefinitions>
+                                    <TextBlock Text="Connected with" Style="{StaticResource DetailLabel}" />
+                                    <TextBlock x:Name="DetMode" Grid.Column="1" Grid.ColumnSpan="2" Style="{StaticResource DetailValue}" />
+
+                                    <TextBlock Grid.Row="1" Text="Network" Style="{StaticResource DetailLabel}" />
+                                    <TextBlock x:Name="DetNetwork" Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" Style="{StaticResource DetailValue}" />
+
+                                    <TextBlock Grid.Row="2" Text="Hidden from carrier" Style="{StaticResource DetailLabel}"
+                                               ToolTip="Stealth makes this PC's traffic look like normal phone traffic" />
+                                    <StackPanel Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" Orientation="Horizontal" VerticalAlignment="Center">
+                                        <Ellipse x:Name="DetStealthDot" Width="7" Height="7" Fill="{StaticResource B.Accent}" VerticalAlignment="Center" />
+                                        <TextBlock x:Name="DetStealth" Style="{StaticResource DetailValue}" Margin="8,0,0,0" />
+                                    </StackPanel>
+
+                                    <TextBlock Grid.Row="3" Text="Proxy address" Style="{StaticResource DetailLabel}"
+                                               ToolTip="If a browser or app ignores Windows settings, set its proxy to this address" />
+                                    <TextBlock x:Name="DetProxy" Grid.Row="3" Grid.Column="1" Style="{StaticResource DetailValue}"
+                                               FontFamily="{StaticResource F.Mono}" FontSize="12.5" />
+                                    <Button x:Name="CopyProxyBtn" Grid.Row="3" Grid.Column="2" Style="{StaticResource Btn.Icon}" Content="&#xE8C8;"
+                                            Width="30" Height="30" ToolTip="Copy the proxy address" Click="OnCopyProxy"
+                                            AutomationProperties.Name="Copy proxy address" />
+                                </Grid>
+                                <StackPanel Orientation="Horizontal" Margin="0,14,0,12">
+                                    <Button Style="{StaticResource Btn.Secondary}" Tag="&#xEC4A;" Content="Test speed" Click="OnSpeedTest" />
+                                    <Button Style="{StaticResource Btn.Danger}" Tag="&#xE7E8;" Content="Disconnect" Margin="8,0,0,0" Click="OnDisconnectClick" />
+                                </StackPanel>
+                            </StackPanel>
+
+                            <!-- Problem: what happened and how to fix it -->
+                            <StackPanel x:Name="ErrorPanel" Visibility="Collapsed">
+                                <Border Background="{StaticResource B.RedSoft}" BorderBrush="{StaticResource B.RedLine}" BorderThickness="1"
+                                        CornerRadius="9" Padding="12,10" Margin="0,0,0,14">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="&#xE783;" Style="{StaticResource T.Icon}" FontSize="15" Foreground="{StaticResource B.Red}"
+                                                   VerticalAlignment="Top" Margin="0,1,0,0" />
+                                        <TextBlock x:Name="ErrSummary" Grid.Column="1" Foreground="{StaticResource B.Text}" FontSize="12.5"
+                                                   TextWrapping="Wrap" Margin="10,0,0,0" />
+                                    </Grid>
+                                </Border>
+                                <ItemsControl x:Name="FixList" ItemTemplate="{StaticResource Tpl.Numbered}" Focusable="False" />
+                                <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                                    <Button Style="{StaticResource Btn.Primary}" Tag="&#xE72C;" Content="Try again" Click="OnRetry" />
+                                    <Button Style="{StaticResource Btn.Ghost}" Content="Dismiss" Margin="8,0,0,0" Click="OnDismiss" />
+                                </StackPanel>
+                                <Expander Style="{StaticResource Expander.Plain}" Header="Technical details" Margin="0,16,0,12">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBox x:Name="ErrRaw" IsReadOnly="True" TextWrapping="Wrap" FontFamily="{StaticResource F.Mono}"
+                                                 FontSize="11.5" Background="{StaticResource B.Terminal}" Foreground="{StaticResource B.Text2}"
+                                                 Padding="10,8" />
+                                        <Button Grid.Column="1" Style="{StaticResource Btn.Icon}" Content="&#xE8C8;" Margin="6,0,0,0"
+                                                VerticalAlignment="Top" ToolTip="Copy the details" Click="OnCopyError"
+                                                AutomationProperties.Name="Copy the details" />
+                                    </Grid>
+                                </Expander>
+                            </StackPanel>
+                        </Grid>
+                    </ScrollViewer>
+                </Border>
+            </Grid>
+
+            <!-- ===================== Step 03: the power orb ===================== -->
+            <Grid Grid.Column="2">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <Grid>
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="03" Style="{StaticResource T.StepNo}" />
+                        <TextBlock x:Name="Step3Title" Text="Connect" Style="{StaticResource T.H2}" Margin="10,0,0,0" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center"
+                                ToolTip="Keyboard shortcut to connect or disconnect">
+                        <Border Style="{StaticResource KeyCap}">
+                            <TextBlock Text="Ctrl" Style="{StaticResource T.Eyebrow}" FontSize="10.5" />
+                        </Border>
+                        <Border Style="{StaticResource KeyCap}" Margin="0">
+                            <TextBlock Text="Enter" Style="{StaticResource T.Eyebrow}" FontSize="10.5" />
+                        </Border>
+                    </StackPanel>
+                </Grid>
+
+                <StackPanel Grid.Row="1" VerticalAlignment="Center" HorizontalAlignment="Center" Margin="0,6">
+                    <Button x:Name="Orb" Style="{StaticResource Btn.Orb}" Click="OnOrbClick" Width="236" Height="236"
+                            HorizontalAlignment="Center" AutomationProperties.Name="Connect">
+                        <Grid Width="236" Height="236">
+                            <Ellipse x:Name="OrbGlow" IsHitTestVisible="False">
+                                <Ellipse.Fill>
+                                    <RadialGradientBrush>
+                                        <GradientStop x:Name="OrbGlowStop" Color="#262BF5A8" Offset="0.42" />
+                                        <GradientStop Color="#002BF5A8" Offset="1" />
+                                    </RadialGradientBrush>
+                                </Ellipse.Fill>
+                            </Ellipse>
+                            <!-- HUD corner brackets -->
+                            <Path Stroke="{StaticResource B.Line2}" StrokeThickness="1.5" IsHitTestVisible="False"
+                                  Data="M 14,44 L 14,14 L 44,14 M 192,14 L 222,14 L 222,44 M 222,192 L 222,222 L 192,222 M 44,222 L 14,222 L 14,192" />
+                            <Ellipse Width="204" Height="204" Stroke="{StaticResource B.Line2}" StrokeThickness="1"
+                                     StrokeDashArray="1 5" IsHitTestVisible="False" />
+                            <Ellipse x:Name="PulseRing" Width="168" Height="168" Stroke="{StaticResource B.Accent}"
+                                     StrokeThickness="1.5" Opacity="0" RenderTransformOrigin="0.5,0.5" IsHitTestVisible="False">
+                                <Ellipse.RenderTransform>
+                                    <ScaleTransform x:Name="PulseScale" />
+                                </Ellipse.RenderTransform>
+                            </Ellipse>
+                            <Ellipse Width="168" Height="168" Fill="Transparent" />
+                            <Ellipse x:Name="OrbTrack" Width="168" Height="168" Stroke="{StaticResource B.Line2}" StrokeThickness="3" />
+                            <Path x:Name="OrbArc" Width="168" Height="168" Stroke="{StaticResource B.Amber}" StrokeThickness="3"
+                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round" Visibility="Collapsed"
+                                  Data="M 84,1.5 A 82.5,82.5 0 0 1 166.5,84" RenderTransformOrigin="0.5,0.5" IsHitTestVisible="False">
+                                <Path.RenderTransform>
+                                    <RotateTransform x:Name="ArcRotate" />
+                                </Path.RenderTransform>
+                            </Path>
+                            <Ellipse x:Name="OrbCore" Width="140" Height="140" StrokeThickness="1" Stroke="{StaticResource B.AccentLine}">
+                                <Ellipse.Fill>
+                                    <RadialGradientBrush GradientOrigin="0.5,0.2" Center="0.5,0.35" RadiusX="0.8" RadiusY="0.8">
+                                        <GradientStop Color="#FF17212B" Offset="0" />
+                                        <GradientStop Color="#FF090D12" Offset="1" />
+                                    </RadialGradientBrush>
+                                </Ellipse.Fill>
+                            </Ellipse>
+                            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" IsHitTestVisible="False">
+                                <TextBlock x:Name="OrbIcon" Text="&#xE7E8;" FontFamily="{StaticResource F.Icon}" FontSize="40"
+                                           Foreground="{StaticResource B.Accent}" HorizontalAlignment="Center" />
+                                <TextBlock x:Name="OrbLabel" Text="CONNECT" FontFamily="{StaticResource F.Mono}" FontSize="11.5"
+                                           Foreground="{StaticResource B.Text}" HorizontalAlignment="Center" Margin="0,10,0,0" />
+                            </StackPanel>
+                        </Grid>
+                    </Button>
+
+                    <TextBlock x:Name="Headline" Text="You are not connected" Style="{StaticResource T.Display}"
+                               HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" Margin="0,12,0,0" />
+                    <TextBlock HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" MaxWidth="520" Margin="0,8,0,0"
+                               FontFamily="{StaticResource F.Mono}" FontSize="12.5" Foreground="{StaticResource B.Text2}"><Run Text="&#x203A; " Foreground="{StaticResource B.Accent}" /><Run x:Name="SubText" Text="Follow step 02, then press the button" /><Run Text=" &#x258C;"><Run.Foreground><SolidColorBrush x:Name="CaretBrush" Color="#FF2BF5A8" /></Run.Foreground></Run></TextBlock>
+                </StackPanel>
+
+                <!-- ======================= Live traffic ======================= -->
+                <Border Grid.Row="2" Style="{StaticResource Card}" Padding="20,16,20,16">
+                    <Grid>
+                        <Grid x:Name="LiveStandard">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <Grid>
+                                <TextBlock Text="LIVE TRAFFIC" Style="{StaticResource T.Eyebrow}" />
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                    <Ellipse Width="7" Height="7" Fill="{StaticResource B.Accent}" VerticalAlignment="Center" />
+                                    <TextBlock Text="Download" Style="{StaticResource T.Small}" Margin="6,0,14,0" VerticalAlignment="Center" />
+                                    <Ellipse Width="7" Height="7" Fill="{StaticResource B.Cyan}" VerticalAlignment="Center" />
+                                    <TextBlock Text="Upload" Style="{StaticResource T.Small}" Margin="6,0,0,0" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Grid>
+
+                            <Grid Grid.Row="1" Margin="0,14,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel>
+                                    <TextBlock Style="{StaticResource MetricLabel}"><Run Text="&#x2193; " Foreground="{StaticResource B.Accent}" /><Run Text="DOWNLOAD" /></TextBlock>
+                                    <TextBlock FontFamily="{StaticResource F.Mono}"><Run x:Name="DownValue" Text="0" FontSize="22" Foreground="{StaticResource B.Text}" /><Run x:Name="DownUnit" Text=" B/s" FontSize="12" Foreground="{StaticResource B.Text3}" /></TextBlock>
+                                </StackPanel>
+                                <StackPanel Grid.Column="1">
+                                    <TextBlock Style="{StaticResource MetricLabel}"><Run Text="&#x2191; " Foreground="{StaticResource B.Cyan}" /><Run Text="UPLOAD" /></TextBlock>
+                                    <TextBlock FontFamily="{StaticResource F.Mono}"><Run x:Name="UpValue" Text="0" FontSize="22" Foreground="{StaticResource B.Text}" /><Run x:Name="UpUnit" Text=" B/s" FontSize="12" Foreground="{StaticResource B.Text3}" /></TextBlock>
+                                </StackPanel>
+                                <StackPanel Grid.Column="2" Margin="0,0,18,0">
+                                    <TextBlock Text="DATA USED" Style="{StaticResource MetricLabel}" />
+                                    <TextBlock FontFamily="{StaticResource F.Mono}"><Run x:Name="DataValue" Text="0" FontSize="22" Foreground="{StaticResource B.Text}" /><Run x:Name="DataUnit" Text=" B" FontSize="12" Foreground="{StaticResource B.Text3}" /></TextBlock>
+                                    <ProgressBar x:Name="DataBar" Style="{StaticResource Bar.Thin}" Margin="0,8,0,0" />
+                                    <TextBlock x:Name="DataCaption" Text="Alert at 10 GB" Style="{StaticResource T.Small}" FontSize="11" Margin="0,5,0,0" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="3">
+                                    <TextBlock Text="SIGNAL" Style="{StaticResource MetricLabel}" />
+                                    <StackPanel Orientation="Horizontal">
+                                        <StackPanel x:Name="SignalBars" Orientation="Horizontal" VerticalAlignment="Bottom" Margin="0,0,10,6">
+                                            <Rectangle Style="{StaticResource Bar}" Height="6" />
+                                            <Rectangle Style="{StaticResource Bar}" Height="10" />
+                                            <Rectangle Style="{StaticResource Bar}" Height="14" />
+                                            <Rectangle Style="{StaticResource Bar}" Height="18" Margin="0" />
+                                        </StackPanel>
+                                        <TextBlock x:Name="SignalText" Text="Offline" FontFamily="{StaticResource F.Mono}" FontSize="20"
+                                                   Foreground="{StaticResource B.Text3}" />
+                                    </StackPanel>
+                                    <TextBlock x:Name="PingText" Text="Ping shows once online" Style="{StaticResource T.Small}" FontSize="11" Margin="0,5,0,0" />
+                                </StackPanel>
+                            </Grid>
+
+                            <Grid Grid.Row="2" Height="84" Margin="0,16,0,0">
+                                <Grid IsHitTestVisible="False">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="*" />
+                                        <RowDefinition Height="*" />
+                                        <RowDefinition Height="*" />
+                                        <RowDefinition Height="*" />
+                                    </Grid.RowDefinitions>
+                                    <Line Grid.Row="0" Style="{StaticResource GuideLine}" />
+                                    <Line Grid.Row="1" Style="{StaticResource GuideLine}" />
+                                    <Line Grid.Row="2" Style="{StaticResource GuideLine}" />
+                                    <Line Grid.Row="3" Style="{StaticResource GuideLine}" />
+                                    <Line Grid.Row="3" Style="{StaticResource GuideLine}" StrokeDashArray="{x:Null}"
+                                          Stroke="{StaticResource B.Line2}" VerticalAlignment="Bottom" />
+                                </Grid>
+                                <Canvas x:Name="Chart" ClipToBounds="True" SizeChanged="OnChartSizeChanged">
+                                    <Path x:Name="DownArea" Fill="{StaticResource B.ChartFill}" />
+                                    <Path x:Name="DownLine" Stroke="{StaticResource B.Accent}" StrokeThickness="1.8" StrokeLineJoin="Round" />
+                                    <Path x:Name="UpLine" Stroke="{StaticResource B.Cyan}" StrokeThickness="1.4" StrokeLineJoin="Round" />
+                                </Canvas>
+                                <TextBlock x:Name="ChartMax" Style="{StaticResource T.Eyebrow}" FontSize="10" Margin="0,3,0,0"
+                                           HorizontalAlignment="Right" VerticalAlignment="Top" />
+                                <TextBlock x:Name="ChartEmpty" Text="Live traffic shows up here once you are online"
+                                           Style="{StaticResource T.Small}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </Grid>
+                        </Grid>
+
+                        <!-- Phone VPN: the phone carries the traffic, so there are no PC side counters -->
+                        <Grid x:Name="LivePhone" Visibility="Collapsed">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <Border Style="{StaticResource IconTile}" Width="44" Height="44">
+                                <TextBlock Text="&#xE8EA;" Style="{StaticResource T.Icon}" FontSize="19"
+                                           Foreground="{StaticResource B.Accent}" HorizontalAlignment="Center" />
+                            </Border>
+                            <StackPanel Grid.Column="1" Margin="16,0" VerticalAlignment="Center">
+                                <TextBlock Text="Your phone is carrying the traffic" Style="{StaticResource T.H2}" />
+                                <TextBlock Text="Live speed is measured on the phone in this mode, run a speed test to see how fast it is"
+                                           Style="{StaticResource T.Small}" Margin="0,4,0,0" />
+                            </StackPanel>
+                            <Button Grid.Column="2" Style="{StaticResource Btn.Secondary}" Tag="&#xEC4A;" Content="Test speed"
+                                    Click="OnSpeedTest" VerticalAlignment="Center" />
+                        </Grid>
+                    </Grid>
+                </Border>
+            </Grid>
+        </Grid>
+    </ScrollViewer>
+</UserControl>

@@ -56,12 +56,12 @@ public static class ElevationHelper
         catch (Win32Exception w) when (w.NativeErrorCode == 1223)
         {
             // User declined the UAC prompt.
-            Logger.Instance.Warning("Elevation cancelled by user");
+            Logger.Instance.Warning("Admin approval was declined");
             return ElevationResult.Cancelled;
         }
         catch (Exception e)
         {
-            Logger.Instance.Error($"Elevation failed: {e.Message}");
+            Logger.Instance.Error($"Could not get admin approval: {e.Message}");
             return ElevationResult.Failed;
         }
     }

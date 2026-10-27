@@ -42,11 +42,11 @@ public static class ConnectionModeExtensions
 
     public static string Display(this ConnectionMode mode) => mode switch
     {
-        ConnectionMode.Usb => "USB TETHER",
-        ConnectionMode.Wifi => "WIFI HOTSPOT",
-        ConnectionMode.Iphone => "IPHONE HOTSPOT",
-        ConnectionMode.AdbAgent => "ADB AGENT",
-        _ => "WIFI HOTSPOT"
+        ConnectionMode.Usb => "USB cable",
+        ConnectionMode.Wifi => "WiFi hotspot",
+        ConnectionMode.Iphone => "iPhone hotspot",
+        ConnectionMode.AdbAgent => "Phone VPN",
+        _ => "WiFi hotspot"
     };
 }
 

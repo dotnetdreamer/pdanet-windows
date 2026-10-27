@@ -40,8 +40,8 @@ public static class Constants
     public const int GuiUpdateIntervalMs = 1000;
 
     // Window
-    public const int MainWindowWidth = 900;
-    public const int MainWindowHeight = 620;
+    public const int MainWindowWidth = 1120;
+    public const int MainWindowHeight = 760;
 
     // Stealth levels
     public const int StealthBasic = 1;      // TTL only

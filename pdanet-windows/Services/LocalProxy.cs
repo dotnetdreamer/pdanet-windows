@@ -49,8 +49,8 @@ public sealed class LocalProxy
         _listener = new TcpListener(IPAddress.Loopback, LocalPort);
         _listener.Start();
         Running = true;
-        var mode = _upstreamProxyHost != null ? $"chain->{_upstreamProxyHost}:{_upstreamProxyPort}" : "forward";
-        Logger.Instance.Ok($"Local proxy on 127.0.0.1:{LocalPort} ({mode}), outbound TTL={_ttl}");
+        var mode = _upstreamProxyHost != null ? $"through {_upstreamProxyHost}:{_upstreamProxyPort}" : "direct";
+        Logger.Instance.Ok($"Stealth proxy listening on 127.0.0.1:{LocalPort}, {mode}, TTL {_ttl}");
         _ = AcceptLoop(_cts.Token);
     }
 
@@ -61,7 +61,7 @@ public sealed class LocalProxy
         try { _cts?.Cancel(); } catch { }
         try { _listener?.Stop(); } catch { }
         _listener = null;
-        Logger.Instance.Info("Local proxy stopped");
+        Logger.Instance.Info("Stealth proxy stopped");
     }
 
     private async Task AcceptLoop(CancellationToken token)

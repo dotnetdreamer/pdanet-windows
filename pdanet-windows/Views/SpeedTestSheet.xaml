@@ -1,0 +1,53 @@
+<UserControl x:Class="PdaNetPortable.Views.SpeedTestSheet"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Width="440">
+    <Border Background="{StaticResource B.Bg1}" BorderBrush="{StaticResource B.Line2}" BorderThickness="1" CornerRadius="16">
+        <Border.Effect>
+            <DropShadowEffect BlurRadius="40" ShadowDepth="12" Opacity="0.55" Color="Black" />
+        </Border.Effect>
+        <StackPanel Margin="26,24,26,22">
+            <Grid>
+                <StackPanel Orientation="Horizontal">
+                    <Border Style="{StaticResource IconTile}">
+                        <TextBlock Text="&#xEC4A;" Style="{StaticResource T.Icon}" FontSize="18" Foreground="{StaticResource B.Accent}"
+                                   HorizontalAlignment="Center" />
+                    </Border>
+                    <StackPanel Margin="14,0,0,0" VerticalAlignment="Center">
+                        <TextBlock Text="Speed test" Style="{StaticResource T.H2}" FontSize="17" />
+                        <TextBlock Text="Checks the download speed through your phone" Style="{StaticResource T.Small}" Margin="0,2,0,0" />
+                    </StackPanel>
+                </StackPanel>
+                <Button Style="{StaticResource Btn.Icon}" Content="&#xE8BB;" HorizontalAlignment="Right" VerticalAlignment="Top"
+                        Click="OnClose" ToolTip="Close" AutomationProperties.Name="Close" />
+            </Grid>
+
+            <!-- Gauge -->
+            <Grid Width="260" Height="152" Margin="0,22,0,0">
+                <Path Stroke="{StaticResource B.Bg3}" StrokeThickness="14" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                      Data="M 20,140 A 110,110 0 0 1 240,140" />
+                <Path x:Name="GaugeArc" Stroke="{StaticResource B.Accent}" StrokeThickness="14" StrokeStartLineCap="Round"
+                      StrokeEndLineCap="Round" Data="M 20,140 A 110,110 0 0 1 240,140"
+                      StrokeDashArray="0 1000" StrokeDashOffset="0" Opacity="0" />
+                <StackPanel VerticalAlignment="Bottom" HorizontalAlignment="Center" Margin="0,0,0,2">
+                    <TextBlock FontFamily="{StaticResource F.Mono}" HorizontalAlignment="Center"><Run x:Name="ResultValue" Text="0.0" FontSize="42" Foreground="{StaticResource B.Text}" /><Run x:Name="ResultUnit" Text=" Mbps" FontSize="15" Foreground="{StaticResource B.Text3}" /></TextBlock>
+                    <TextBlock x:Name="StatusText" Text="Press Start when you are ready" Style="{StaticResource T.Small}"
+                               HorizontalAlignment="Center" Margin="0,2,0,0" />
+                </StackPanel>
+            </Grid>
+
+            <Border x:Name="VerdictBox" Background="{StaticResource B.AccentSoft}" BorderBrush="{StaticResource B.AccentLine}"
+                    BorderThickness="1" CornerRadius="9" Padding="12,9" Margin="0,18,0,0" Visibility="Collapsed">
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                    <TextBlock Text="&#xE9D9;" Style="{StaticResource T.Icon}" FontSize="13" Foreground="{StaticResource B.Accent}" />
+                    <TextBlock x:Name="VerdictText" Foreground="{StaticResource B.Text}" FontSize="12.5" Margin="10,0,0,0" VerticalAlignment="Center" />
+                </StackPanel>
+            </Border>
+
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,20,0,0">
+                <Button Style="{StaticResource Btn.Ghost}" Content="Close" Click="OnClose" />
+                <Button x:Name="StartBtn" Style="{StaticResource Btn.Primary}" Tag="&#xE768;" Content="Start" Margin="8,0,0,0" Click="OnStart" />
+            </StackPanel>
+        </StackPanel>
+    </Border>
+</UserControl>

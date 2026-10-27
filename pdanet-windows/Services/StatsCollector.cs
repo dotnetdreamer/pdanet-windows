@@ -176,6 +176,6 @@ public sealed class StatsCollector
             File.WriteAllText(AppPaths.ConnectionHistory,
                 JsonSerializer.Serialize(history, new JsonSerializerOptions { WriteIndented = true }));
         }
-        catch (Exception e) { Logger.Instance.Warning($"Failed to save session history: {e.Message}"); }
+        catch (Exception e) { Logger.Instance.Warning($"Could not save session history: {e.Message}"); }
     }
 }

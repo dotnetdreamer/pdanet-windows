@@ -1,0 +1,76 @@
+<UserControl x:Class="PdaNetPortable.Views.WifiSheet"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             MaxWidth="460">
+    <Border Background="{StaticResource B.Bg1}" BorderBrush="{StaticResource B.Line2}" BorderThickness="1" CornerRadius="16">
+        <Border.Effect>
+            <DropShadowEffect BlurRadius="40" ShadowDepth="12" Opacity="0.55" Color="Black" />
+        </Border.Effect>
+        <StackPanel Margin="26,24,26,22">
+            <Grid>
+                <StackPanel Orientation="Horizontal">
+                    <Border Style="{StaticResource IconTile}">
+                        <TextBlock x:Name="HeaderIcon" Text="&#xE701;" Style="{StaticResource T.Icon}" FontSize="18"
+                                   Foreground="{StaticResource B.Accent}" HorizontalAlignment="Center" />
+                    </Border>
+                    <StackPanel Margin="14,0,0,0" VerticalAlignment="Center">
+                        <TextBlock x:Name="Title" Text="Join your hotspot" Style="{StaticResource T.H2}" FontSize="17" />
+                        <TextBlock x:Name="Subtitle" Text="Keep the hotspot running on your phone" Style="{StaticResource T.Small}" Margin="0,2,0,0" />
+                    </StackPanel>
+                </StackPanel>
+                <Button Style="{StaticResource Btn.Icon}" Content="&#xE8BB;" HorizontalAlignment="Right" VerticalAlignment="Top"
+                        Click="OnCancel" ToolTip="Close" AutomationProperties.Name="Close" />
+            </Grid>
+
+            <TextBlock Text="HOTSPOT NAME" Style="{StaticResource T.Eyebrow}" Margin="0,22,0,6" />
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <ComboBox x:Name="SsidCombo" IsEditable="True" StaysOpenOnEdit="True" />
+                <Button x:Name="ScanBtn" Grid.Column="1" Style="{StaticResource Btn.Secondary}" Tag="&#xE72C;" Content="Scan"
+                        Margin="8,0,0,0" Click="OnScan" />
+            </Grid>
+
+            <TextBlock Text="PASSWORD" Style="{StaticResource T.Eyebrow}" Margin="0,16,0,6" />
+            <Grid>
+                <PasswordBox x:Name="Pwd" Padding="11,8,40,8" />
+                <TextBox x:Name="PwdPlain" Padding="11,8,40,8" Visibility="Collapsed" />
+                <ToggleButton x:Name="ShowPwd" Style="{StaticResource Btn.IconToggle}" Content="&#xE7B3;" HorizontalAlignment="Right"
+                              Width="32" Height="32" Margin="0,2,3,0" VerticalAlignment="Center" Click="OnTogglePassword"
+                              ToolTip="Show or hide the password" AutomationProperties.Name="Show password" />
+            </Grid>
+
+            <Grid Margin="0,14,0,0" Height="18">
+                <StackPanel x:Name="StatusPanel" Orientation="Horizontal" Visibility="Collapsed">
+                    <Path x:Name="ScanSpinner" Width="13" Height="13" Stroke="{StaticResource B.Accent}" StrokeThickness="2"
+                          StrokeStartLineCap="Round" Data="M 6.5,1 A 5.5,5.5 0 1 1 1,6.5" RenderTransformOrigin="0.5,0.5"
+                          Visibility="Collapsed" VerticalAlignment="Center">
+                        <Path.RenderTransform>
+                            <RotateTransform x:Name="SpinnerRotate" />
+                        </Path.RenderTransform>
+                    </Path>
+                    <TextBlock x:Name="StatusText" Style="{StaticResource T.Small}" VerticalAlignment="Center" Margin="0,0,0,0" />
+                </StackPanel>
+            </Grid>
+
+            <Grid Margin="0,18,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,12,0">
+                    <TextBlock Text="&#xE72E;" Style="{StaticResource T.Icon}" FontSize="12" Foreground="{StaticResource B.Text3}" />
+                    <TextBlock Text="Encrypted by Windows" Style="{StaticResource T.Small}"
+                               FontSize="11" Margin="7,0,0,0" VerticalAlignment="Center" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button Style="{StaticResource Btn.Ghost}" Content="Cancel" Click="OnCancel" />
+                    <Button x:Name="ConnectBtn" Style="{StaticResource Btn.Primary}" Tag="&#xE768;" Content="Connect"
+                            Margin="8,0,0,0" Click="OnConnect" />
+                </StackPanel>
+            </Grid>
+        </StackPanel>
+    </Border>
+</UserControl>

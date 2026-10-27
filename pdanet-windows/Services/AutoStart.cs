@@ -31,7 +31,7 @@ public static class AutoStart
             if (key != null && exe != null)
                 key.SetValue(ValueName, $"\"{exe}\" --start-minimized", RegistryValueKind.String);
         }
-        catch (Exception e) { Logger.Instance.Warning($"Enable autostart failed: {e.Message}"); }
+        catch (Exception e) { Logger.Instance.Warning($"Could not turn on start with Windows: {e.Message}"); }
     }
 
     public static void Disable()
@@ -41,6 +41,6 @@ public static class AutoStart
             using var key = Registry.CurrentUser.OpenSubKey(RunKey, writable: true);
             if (key?.GetValue(ValueName) != null) key.DeleteValue(ValueName, false);
         }
-        catch (Exception e) { Logger.Instance.Warning($"Disable autostart failed: {e.Message}"); }
+        catch (Exception e) { Logger.Instance.Warning($"Could not turn off start with Windows: {e.Message}"); }
     }
 }

@@ -34,6 +34,7 @@ public sealed class ConnectionManager
     public TetherInterface? CurrentInterface { get; private set; }
     public string? CurrentSsid { get; private set; }
     public bool BypassActive { get; private set; }
+    public bool SystemBypassActive => _systemBypassApplied;
     public bool AutoReconnectEnabled { get; set; }
     public string? LastError { get; private set; }
 
@@ -59,10 +60,10 @@ public sealed class ConnectionManager
             if (State == next) return;
             if (!StateMachine.CanTransition(State, next))
             {
-                _log.Warning($"Ignoring invalid transition {State} -> {next}");
+                _log.Warning($"Ignored a status change from {State} to {next}");
                 if (next != ConnectionState.Error) return;
             }
-            _log.Info($"State changed: {State} -> {next}");
+            _log.Info($"Status changed from {State} to {next}");
             State = next;
         }
         try { StateChanged?.Invoke(next); } catch { }
@@ -78,13 +79,13 @@ public sealed class ConnectionManager
     // ---- Public API ----
     public void Connect(ConnectionMode mode, string? ssid = null, string? password = null)
     {
-        if (_busy) { _log.Warning("Connect ignored: operation already in progress"); return; }
+        if (_busy) { _log.Warning("Connect skipped, another action is still running"); return; }
         Task.Run(() => ConnectWorker(mode, ssid, password));
     }
 
     public void Disconnect()
     {
-        if (_busy) { _log.Warning("Disconnect ignored: operation already in progress"); return; }
+        if (_busy) { _log.Warning("Disconnect skipped, another action is still running"); return; }
         Task.Run(() => DisconnectWorker(userInitiated: true));
     }
 
@@ -116,7 +117,7 @@ public sealed class ConnectionManager
             _stats.StartSession();
             SetState(ConnectionState.Connected);
             StartMonitor();
-            _log.Ok($"{Constants.AppName}: {mode.Display()} connection established");
+            _log.Ok($"Connected with {mode.Display()}");
         }
         catch (Exception e)
         {
@@ -128,44 +129,44 @@ public sealed class ConnectionManager
 
     private bool ConnectUsb()
     {
-        _log.Info("[1/5] Detecting USB tethering interface...");
+        _log.Info("[1/5] Finding the USB connection");
         var iface = InterfaceDetector.DetectUsbInterface();
         if (iface == null)
         {
-            RaiseError("No active USB tethering interface. On the phone, turn on PdaNet+ 'Activate USB Mode' " +
-                       "(or Settings > Connections > Mobile Hotspot and Tethering > USB tethering), keep mobile data on, then retry.");
+            RaiseError("No USB tethering found, turn on USB tethering on your phone " +
+                       "(Settings, Hotspot and tethering, USB tethering) or PdaNet+ USB mode, and keep mobile data on");
             return false;
         }
         CurrentInterface = iface;
         _stats.SetInterface(iface.Nic);
-        _log.Ok($"Interface: {iface.Alias} ({iface.Description})");
+        _log.Ok($"Found {iface.Alias} ({iface.Description})");
 
-        _log.Info("[2/5] Checking PdaNet proxy availability...");
+        _log.Info("[2/5] Checking for the PdaNet sharing service");
         bool proxyOk = InterfaceDetector.ProxyReachable(_cfg.ProxyIp, _cfg.ProxyPort, Constants.ProxyCheckTimeoutSeconds * 1000);
         if (proxyOk)
         {
-            _log.Ok($"PdaNet proxy reachable at {_cfg.ProxyIp}:{_cfg.ProxyPort}");
+            _log.Ok($"PdaNet sharing service found at {_cfg.ProxyIp}:{_cfg.ProxyPort}");
         }
         else
         {
             // Standard Android USB tethering (RNDIS) provides direct NAT internet with no proxy.
-            _log.Info("[3/5] PdaNet proxy not found; using direct USB tethering (no proxy)...");
+            _log.Info("[3/5] Choosing the best route, using direct USB tethering");
             if (!InterfaceDetector.InternetReachable())
             {
-                RaiseError($"USB interface '{iface.Alias}' is up but has no internet, and the PdaNet proxy " +
-                           $"({_cfg.ProxyIp}:{_cfg.ProxyPort}) is not reachable. Turn on PdaNet+ USB mode (or USB tethering) with mobile data enabled.");
+                RaiseError($"The USB connection {iface.Alias} has no internet and the PdaNet sharing service at " +
+                           $"{_cfg.ProxyIp}:{_cfg.ProxyPort} is not reachable, turn on mobile data and USB tethering on your phone");
                 return false;
             }
-            _log.Ok($"Direct USB tethering active on {iface.Alias}");
+            _log.Ok($"Direct USB tethering is working on {iface.Alias}");
         }
 
-        _log.Info("[4/5] Applying carrier bypass...");
+        _log.Info("[4/5] Turning on carrier stealth");
         if (!ApplyBypass(iface, usePdaProxy: proxyOk))
             return false;
 
-        _log.Info("[5/5] Verifying connectivity...");
+        _log.Info("[5/5] Checking the internet");
         if (!InterfaceDetector.InternetReachable())
-            _log.Warning("Connectivity check did not confirm internet (may still work)");
+            _log.Warning("Could not confirm internet yet, it may still work");
 
         CurrentSsid = null;
         return true;
@@ -173,26 +174,26 @@ public sealed class ConnectionManager
 
     private bool ConnectAdbAgent()
     {
-        _log.Info("[1/4] Checking ADB and device...");
+        _log.Info("[1/4] Looking for your phone");
         if (!AdbAgent.Init(_cfg.AdbPath, out var err)) { RaiseError(err); return false; }
-        _log.Ok($"ADB ready ({AdbAgent.AdbPath})");
+        _log.Ok($"Phone found, using adb at {AdbAgent.AdbPath}");
 
-        _log.Info("[2/4] Deploying + starting phone agent...");
+        _log.Info("[2/4] Starting the helper on your phone");
         if (!AdbAgent.Deploy(out err)) { RaiseError(err); return false; }
         if (!AdbAgent.StartAgent(_cfg.AgentPort, out err)) { RaiseError(err); return false; }
-        _log.Ok($"Agent running on phone port {_cfg.AgentPort}");
+        _log.Ok($"Phone helper is running on port {_cfg.AgentPort}");
 
-        _log.Info("[3/4] Forwarding PC port + setting system proxy...");
+        _log.Info("[3/4] Linking this PC to your phone");
         if (!AdbAgent.Forward(_cfg.LocalProxyPort, _cfg.AgentPort, out err)) { RaiseError(err); return false; }
         SystemProxy.SetWinInet($"127.0.0.1:{_cfg.LocalProxyPort}");
-        _log.Ok($"System proxy -> 127.0.0.1:{_cfg.LocalProxyPort} -> (adb) -> phone agent");
+        _log.Ok($"Windows proxy points at 127.0.0.1:{_cfg.LocalProxyPort}, linked to the phone helper");
 
-        _log.Info("[4/4] Verifying connectivity...");
+        _log.Info("[4/4] Checking the internet");
         if (!InterfaceDetector.InternetReachable())
-            _log.Warning("Connectivity not confirmed yet (continuing)");
+            _log.Warning("Could not confirm internet yet, continuing");
 
         // The agent re-originates on the phone, so the phone/VPN governs the exit (no PC-side TTL needed).
-        CurrentInterface = new TetherInterface("adb-agent", "ADB app_process agent (VPN pass-through)", null, null);
+        CurrentInterface = new TetherInterface("adb-agent", "Phone helper over USB", null, null);
         CurrentSsid = null;
         BypassActive = false;
         _stats.SetInterface(null);
@@ -201,18 +202,18 @@ public sealed class ConnectionManager
 
     private bool ConnectWifi(ConnectionMode mode, string? ssid, string? password)
     {
-        _log.Info("[1/4] Detecting WiFi interface...");
+        _log.Info("[1/4] Finding WiFi on this PC");
         var wifi = InterfaceDetector.DetectWifiInterface();            // .NET-based, no netsh dependency
         var wifiAlias = wifi?.Alias ?? WifiManager.GetWifiInterfaceAlias();
         if (wifiAlias == null)
         {
-            RaiseError("No WiFi interface found.");
+            RaiseError("No WiFi adapter found on this PC");
             return false;
         }
         bool alreadyUp = wifi?.Nic is { OperationalStatus: OperationalStatus.Up };
-        _log.Ok($"WiFi interface: {wifiAlias}");
+        _log.Ok($"WiFi adapter {wifiAlias}");
 
-        _log.Info("[2/4] Connecting to hotspot...");
+        _log.Info("[2/4] Joining your hotspot");
         var current = WifiManager.GetCurrentSsid();                    // best-effort; may be blocked on managed PCs
         if (!string.IsNullOrEmpty(ssid) && !string.Equals(current, ssid, StringComparison.Ordinal))
         {
@@ -223,35 +224,34 @@ public sealed class ConnectionManager
             }
             else if (alreadyUp)
             {
-                _log.Warning($"Could not switch to '{ssid}' automatically (WiFi control may need admin/Location). " +
-                             "Using the current WiFi connection instead.");
+                _log.Warning($"Could not switch to {ssid} automatically, WiFi control may need admin or Location access, " +
+                             "so the current WiFi connection is used instead");
             }
             else
             {
-                RaiseError($"Could not connect to WiFi '{ssid}'. Connect Windows to the hotspot from the taskbar, " +
-                           "then press CONNECT with WiFi mode selected.");
+                RaiseError($"Could not join the WiFi network {ssid}, join it from the Windows WiFi menu and press Connect again");
                 return false;
             }
         }
         else if (string.IsNullOrEmpty(current) && !alreadyUp)
         {
-            RaiseError("Not connected to any WiFi network. Connect to the phone hotspot first, then choose WiFi mode.");
+            RaiseError("This PC is not on any WiFi network, join your phone's hotspot first");
             return false;
         }
 
         CurrentSsid = current ?? ssid;
-        _log.Ok($"Using WiFi: {CurrentSsid ?? wifiAlias}");
+        _log.Ok($"Using WiFi {CurrentSsid ?? wifiAlias}");
 
         var nic = wifi?.Nic ?? InterfaceDetector.FindByAlias(wifiAlias);
         var gw = nic != null ? InterfaceDetector.GetGateway(nic) : null;
         CurrentInterface = new TetherInterface(wifiAlias, nic?.Description ?? "WiFi", gw, nic);
         if (nic != null) _stats.SetInterface(nic);
 
-        _log.Info("[3/4] Verifying internet connectivity...");
+        _log.Info("[3/4] Checking the internet");
         if (!InterfaceDetector.InternetReachable())
-            _log.Warning("Cannot confirm internet yet (continuing)");
+            _log.Warning("Could not confirm internet yet, continuing");
 
-        _log.Info("[4/4] Applying carrier bypass...");
+        _log.Info("[4/4] Turning on carrier stealth");
         if (!ApplyBypass(CurrentInterface, usePdaProxy: false))
             return false;
 
@@ -268,7 +268,7 @@ public sealed class ConnectionManager
             // No stealth requested. Still need the proxy data-path for PdaNet USB-proxy mode.
             if (usePdaProxy) StartProxy(usePdaProxy: true, ttl: 128);
             BypassActive = false;
-            _log.Info("Stealth mode disabled; TTL not normalized");
+            _log.Info("Carrier stealth is turned off in Settings");
             return true;
         }
 
@@ -276,9 +276,9 @@ public sealed class ConnectionManager
         {
             // DEFAULT PATH — no admin, no UAC. Per-socket TTL on the local proxy's upstream sockets.
             try { StartProxy(usePdaProxy, ttl); }
-            catch (Exception e) { RaiseError($"Failed to start local proxy: {e.Message}"); return false; }
+            catch (Exception e) { RaiseError($"Could not start the stealth proxy on port {_cfg.LocalProxyPort}: {e.Message}"); return false; }
             BypassActive = true;
-            _log.Ok($"Stealth active (no admin): outbound TTL={ttl} on traffic via 127.0.0.1:{_cfg.LocalProxyPort}");
+            _log.Ok($"Carrier stealth is on for apps using 127.0.0.1:{_cfg.LocalProxyPort}, TTL {ttl}");
             return true;
         }
 
@@ -294,26 +294,26 @@ public sealed class ConnectionManager
         {
             _systemBypassApplied = true;
             BypassActive = true;
-            _log.Ok($"System-wide carrier bypass active (level {level}, TTL {ttl})");
+            _log.Ok($"System wide carrier stealth is on, level {level}, TTL {ttl}");
             return true;
         }
 
         var why = res == ElevationHelper.ElevationResult.Cancelled
-            ? "administrator approval was declined" : "a privileged step failed";
+            ? "admin approval was declined" : "an admin step failed";
 
         if (_cfg.RequireBypass)
         {
-            RaiseError($"System bypass not applied ({why}); it is marked required in settings.");
+            RaiseError($"System wide stealth could not turn on because {why}, and Settings require it");
             RollbackUnprivileged();
             return false;
         }
 
         // Gracefully fall back to the no-admin TTL proxy so the user still gets stealth without UAC.
-        _log.Warning($"System bypass unavailable ({why}); falling back to the no-admin TTL proxy.");
+        _log.Warning($"System wide stealth is unavailable because {why}, using the stealth proxy instead");
         if (_relay == null)
         {
             try { StartProxy(usePdaProxy, ttl); }
-            catch (Exception e) { RaiseError($"Failed to start local proxy: {e.Message}"); return false; }
+            catch (Exception e) { RaiseError($"Could not start the stealth proxy on port {_cfg.LocalProxyPort}: {e.Message}"); return false; }
         }
         BypassActive = true;
         return true;
@@ -373,7 +373,7 @@ public sealed class ConnectionManager
         }
         catch (Exception e)
         {
-            RaiseError($"Disconnect error: {e.Message}");
+            RaiseError($"Problem while disconnecting: {e.Message}");
             SetState(ConnectionState.Disconnected);
         }
         finally { _busy = false; }
@@ -407,13 +407,13 @@ public sealed class ConnectionManager
                 bool alive = nic is { OperationalStatus: OperationalStatus.Up };
                 if (!alive)
                 {
-                    _log.Warning("Tether interface lost");
+                    _log.Warning("Lost the connection to your phone");
                     if (AutoReconnectEnabled) HandleDisconnectAndReconnect();
                     else Task.Run(() => DisconnectWorker(userInitiated: false));
                 }
             }
         }
-        catch (Exception e) { _log.Error($"Monitoring error: {e.Message}"); }
+        catch (Exception e) { _log.Error($"Monitor problem: {e.Message}"); }
     }
 
     private void HandleDisconnectAndReconnect()
@@ -422,14 +422,14 @@ public sealed class ConnectionManager
         int maxAttempts = Math.Clamp(_cfg.ReconnectAttempts, 1, 10);
         if (_reconnectAttempts >= maxAttempts)
         {
-            RaiseError($"Max reconnect attempts ({maxAttempts}) reached");
+            RaiseError($"Gave up after {maxAttempts} reconnect tries");
             Task.Run(() => DisconnectWorker(userInitiated: false));
             return;
         }
         _reconnectAttempts++;
         int baseDelay = Math.Clamp(_cfg.ReconnectDelay, 1, 300);
         int delay = Math.Min(baseDelay * (int)Math.Pow(2, _reconnectAttempts - 1), 60); // exp backoff, cap 60s
-        _log.Warning($"Reconnect attempt {_reconnectAttempts}/{maxAttempts} in {delay}s");
+        _log.Warning($"Reconnecting, try {_reconnectAttempts} of {maxAttempts} in {delay} seconds");
 
         Task.Run(async () =>
         {

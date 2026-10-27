@@ -23,10 +23,11 @@ public class AppConfig
     [JsonPropertyName("enable_logging")] public bool EnableLogging { get; set; } = true;
     [JsonPropertyName("log_level")] public string LogLevel { get; set; } = "INFO";
     [JsonPropertyName("theme")] public string Theme { get; set; } = "dark";
-    [JsonPropertyName("window_width")] public int WindowWidth { get; set; } = 900;
-    [JsonPropertyName("window_height")] public int WindowHeight { get; set; } = 620;
+    [JsonPropertyName("window_width")] public int WindowWidth { get; set; } = 1120;
+    [JsonPropertyName("window_height")] public int WindowHeight { get; set; } = 760;
     [JsonPropertyName("single_instance")] public bool SingleInstance { get; set; } = true;
-    [JsonPropertyName("connection_mode")] public string ConnectionMode { get; set; } = "wifi";
+    // New installs start on the recommended Phone VPN mode.
+    [JsonPropertyName("connection_mode")] public string ConnectionMode { get; set; } = "adb";
 
     // Windows-specific
     [JsonPropertyName("use_local_proxy")] public bool UseLocalProxy { get; set; } = true;

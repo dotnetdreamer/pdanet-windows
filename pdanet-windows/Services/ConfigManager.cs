@@ -48,7 +48,7 @@ public sealed class ConfigManager
         {
             // Back up the corrupted file and fall back to defaults.
             try { File.Move(AppPaths.Config, AppPaths.Config + ".corrupted", true); } catch { }
-            Logger.Instance.Error($"Error loading config, using defaults: {e.Message}");
+            Logger.Instance.Error($"Could not read settings, using defaults: {e.Message}");
         }
         return new AppConfig();
     }
@@ -83,7 +83,7 @@ public sealed class ConfigManager
                 return JsonSerializer.Deserialize<List<ConnectionProfile>>(json) ?? new();
             }
         }
-        catch (Exception e) { Logger.Instance.Error($"Error loading profiles: {e.Message}"); }
+        catch (Exception e) { Logger.Instance.Error($"Could not read profiles: {e.Message}"); }
         return new();
     }
 
@@ -145,7 +145,7 @@ public sealed class ConfigManager
         }
         catch (Exception e)
         {
-            Logger.Instance.Error($"Failed to write {Path.GetFileName(path)}: {e.Message}");
+            Logger.Instance.Error($"Could not save {Path.GetFileName(path)}: {e.Message}");
         }
     }
 }
