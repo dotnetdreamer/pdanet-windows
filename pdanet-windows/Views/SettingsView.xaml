@@ -1,6 +1,7 @@
 <UserControl x:Class="PdaNetPortable.Views.SettingsView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:v="clr-namespace:PdaNetPortable.Views">
     <UserControl.Resources>
         <Style x:Key="SectionIcon" TargetType="TextBlock" BasedOn="{StaticResource T.Icon}">
             <Setter Property="FontSize" Value="15" />
@@ -16,16 +17,28 @@
             <Setter Property="Margin" Value="0,0,28,0" />
             <Setter Property="VerticalAlignment" Value="Center" />
         </Style>
-        <Style x:Key="RowTitle" TargetType="TextBlock" BasedOn="{StaticResource T.RowTitle}" />
+        <Style x:Key="RowTitle" TargetType="TextBlock" BasedOn="{StaticResource T.RowTitle}">
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <Style x:Key="TitleRow" TargetType="StackPanel">
+            <Setter Property="Orientation" Value="Horizontal" />
+        </Style>
+        <Style x:Key="Info" TargetType="v:InfoTip">
+            <Setter Property="Margin" Value="8,1,0,0" />
+        </Style>
         <Style x:Key="RowHint" TargetType="TextBlock" BasedOn="{StaticResource T.Small}">
-            <Setter Property="Margin" Value="0,2,0,0" />
+            <Setter Property="Margin" Value="0,3,0,0" />
         </Style>
         <Style x:Key="Unit" TargetType="TextBlock" BasedOn="{StaticResource T.Small}">
             <Setter Property="VerticalAlignment" Value="Center" />
             <Setter Property="Margin" Value="10,0,0,0" />
         </Style>
         <Style x:Key="SettingRow" TargetType="Grid">
-            <Setter Property="Margin" Value="0,9" />
+            <Setter Property="Margin" Value="0,10" />
+        </Style>
+        <Style x:Key="FieldLabelRow" TargetType="StackPanel">
+            <Setter Property="Orientation" Value="Horizontal" />
+            <Setter Property="Margin" Value="0,0,0,6" />
         </Style>
     </UserControl.Resources>
 
@@ -38,7 +51,13 @@
         <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False" Padding="28,22,28,10">
             <StackPanel MaxWidth="880" HorizontalAlignment="Left">
                 <TextBlock Text="Settings" Style="{StaticResource T.H1}" />
-                <TextBlock Text="Everything works out of the box, change only what you need" Style="{StaticResource T.Body}" Margin="0,4,0,20" />
+                <StackPanel Orientation="Horizontal" Margin="0,4,0,20">
+                    <TextBlock Text="Everything works out of the box, change only what you need" Style="{StaticResource T.Body}" />
+                    <TextBlock Text="&#x2002;Hover the" Style="{StaticResource T.Small}" VerticalAlignment="Center" />
+                    <TextBlock Text="&#xE946;" FontFamily="{StaticResource F.Icon}" FontSize="13" Foreground="{StaticResource B.Accent}"
+                               VerticalAlignment="Center" Margin="4,0,4,0" />
+                    <TextBlock Text="on any option to learn what it does" Style="{StaticResource T.Small}" VerticalAlignment="Center" />
+                </StackPanel>
 
                 <!-- ============================ Privacy ============================ -->
                 <Border Style="{StaticResource Card}" Margin="0,0,0,14">
@@ -60,7 +79,12 @@
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <StackPanel Style="{StaticResource RowText}">
-                                <TextBlock Text="Turn on carrier stealth" Style="{StaticResource RowTitle}" />
+                                <StackPanel Style="{StaticResource TitleRow}">
+                                    <TextBlock Text="Turn on carrier stealth" Style="{StaticResource RowTitle}" />
+                                    <v:InfoTip Style="{StaticResource Info}" Heading="Carrier stealth"
+                                               Body="When a computer borrows your phone's internet, carriers can often tell. Stealth reshapes your computer's traffic so it blends in with your phone's own traffic and the sharing stays private"
+                                               Tip="Leave it on, turn it off only if a site or app stops loading" />
+                                </StackPanel>
                                 <TextBlock Text="On by default, works without admin rights" Style="{StaticResource RowHint}" />
                             </StackPanel>
                             <ToggleButton x:Name="Stealth" Grid.Column="1" Style="{StaticResource Switch}" Click="OnStealthToggled"
@@ -74,7 +98,12 @@
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <StackPanel Style="{StaticResource RowText}">
-                                    <TextBlock Text="How strong" Style="{StaticResource RowTitle}" />
+                                    <StackPanel Style="{StaticResource TitleRow}">
+                                        <TextBlock Text="How strong" Style="{StaticResource RowTitle}" />
+                                        <v:InfoTip Style="{StaticResource Info}" Heading="Stealth strength"
+                                                   Body="Light changes the single signal most carriers watch. Balanced also hides a second kind of address your computer gives off. Strong uses every method the app has"
+                                                   Tip="Stay on Strong, step down only if something stops working" />
+                                    </StackPanel>
                                     <TextBlock Text="Stronger also hides IPv6 and some system updates" Style="{StaticResource RowHint}" />
                                 </StackPanel>
                                 <Border Grid.Column="1" Style="{StaticResource Seg.Host}">
@@ -92,7 +121,12 @@
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <StackPanel Style="{StaticResource RowText}">
-                                    <TextBlock Text="Protect every app" Style="{StaticResource RowTitle}" />
+                                    <StackPanel Style="{StaticResource TitleRow}">
+                                        <TextBlock Text="Protect every app" Style="{StaticResource RowTitle}" />
+                                        <v:InfoTip Style="{StaticResource Info}" Heading="Protect every app"
+                                                   Body="Off, stealth covers apps that follow the Windows internet settings, which is nearly all browsers and apps. On, it covers the whole computer, even apps that go their own way, and Windows asks your permission once each time you connect"
+                                                   Tip="Turn on if you want nothing to slip past and the permission box is fine by you" />
+                                    </StackPanel>
                                     <TextBlock Text="Covers the whole PC, Windows will ask for admin once" Style="{StaticResource RowHint}" />
                                 </StackPanel>
                                 <ToggleButton x:Name="SystemBypass" Grid.Column="1" Style="{StaticResource Switch}"
@@ -105,7 +139,12 @@
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <StackPanel Style="{StaticResource RowText}">
-                                    <TextBlock Text="Only connect with stealth" Style="{StaticResource RowTitle}" />
+                                    <StackPanel Style="{StaticResource TitleRow}">
+                                        <TextBlock Text="Only connect with stealth" Style="{StaticResource RowTitle}" />
+                                        <v:InfoTip Style="{StaticResource Info}" Heading="Only connect with stealth"
+                                                   Body="Off, the app connects even if stealth cannot start, so you still get online. On, it refuses to connect without stealth, so your sharing is never shown by accident"
+                                                   Tip="Turn on if staying hidden matters more than always getting online" />
+                                    </StackPanel>
                                     <TextBlock Text="Stop the connection if stealth cannot turn on" Style="{StaticResource RowHint}" />
                                 </StackPanel>
                                 <ToggleButton x:Name="RequireBypass" Grid.Column="1" Style="{StaticResource Switch}"
@@ -135,7 +174,12 @@
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <StackPanel Style="{StaticResource RowText}">
-                                <TextBlock Text="Reconnect automatically" Style="{StaticResource RowTitle}" />
+                                <StackPanel Style="{StaticResource TitleRow}">
+                                    <TextBlock Text="Reconnect automatically" Style="{StaticResource RowTitle}" />
+                                    <v:InfoTip Style="{StaticResource Info}" Heading="Reconnect automatically"
+                                               Body="If the cable nudges loose or the hotspot blips, the app quietly brings the connection back instead of leaving you offline"
+                                               Tip="Useful for a loose cable or a phone in your pocket" />
+                                </StackPanel>
                                 <TextBlock Text="Get back online by itself if the connection drops" Style="{StaticResource RowHint}" />
                             </StackPanel>
                             <ToggleButton x:Name="AutoReconnect" Grid.Column="1" Style="{StaticResource Switch}" Click="OnAutoReconnectToggled"
@@ -148,7 +192,12 @@
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <StackPanel Style="{StaticResource RowText}">
-                                <TextBlock Text="How many times to try" Style="{StaticResource RowTitle}" />
+                                <StackPanel Style="{StaticResource TitleRow}">
+                                    <TextBlock Text="How many times to try" Style="{StaticResource RowTitle}" />
+                                    <v:InfoTip Style="{StaticResource Info}" Heading="Reconnect tries"
+                                               Body="How many times to rebuild a dropped connection before the app stops and waits for you. Each try waits a little longer than the one before"
+                                               Tip="3 fits most people, raise it if your link drops often" />
+                                </StackPanel>
                                 <TextBlock Text="Between 1 and 10 tries" Style="{StaticResource RowHint}" />
                             </StackPanel>
                             <StackPanel Grid.Column="1" Orientation="Horizontal">
@@ -163,8 +212,13 @@
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <StackPanel Style="{StaticResource RowText}">
-                                <TextBlock Text="Warn me after using" Style="{StaticResource RowTitle}" />
-                                <TextBlock Text="A gentle heads up so a session does not run away with your data" Style="{StaticResource RowHint}" />
+                                <StackPanel Style="{StaticResource TitleRow}">
+                                    <TextBlock Text="Warn me after using" Style="{StaticResource RowTitle}" />
+                                    <v:InfoTip Style="{StaticResource Info}" Heading="Data warning"
+                                               Body="Gives you a quiet heads up once one session reaches this much, so a big download does not eat into your plan unnoticed. 1024 MB equals 1 GB"
+                                               Tip="Pick a number that leaves room before your monthly limit" />
+                                </StackPanel>
+                                <TextBlock Text="A gentle heads up part way through a session" Style="{StaticResource RowHint}" />
                             </StackPanel>
                             <StackPanel Grid.Column="1" Orientation="Horizontal">
                                 <TextBox x:Name="DataWarning" Style="{StaticResource Input.Number}" MaxLength="7" />
@@ -178,7 +232,12 @@
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <StackPanel Style="{StaticResource RowText}">
-                                <TextBlock Text="Alert me after using" Style="{StaticResource RowTitle}" />
+                                <StackPanel Style="{StaticResource TitleRow}">
+                                    <TextBlock Text="Alert me after using" Style="{StaticResource RowTitle}" />
+                                    <v:InfoTip Style="{StaticResource Info}" Heading="Data limit"
+                                               Body="A louder alert at a higher amount, for when you are nearing a hard cap. It cannot be set below the warning above"
+                                               Tip="Set it close to your real plan limit" />
+                                </StackPanel>
                                 <TextBlock Text="A stronger alert at this amount" Style="{StaticResource RowHint}" />
                             </StackPanel>
                             <StackPanel Grid.Column="1" Orientation="Horizontal">
@@ -209,7 +268,12 @@
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <StackPanel Style="{StaticResource RowText}">
-                                <TextBlock Text="Start with Windows" Style="{StaticResource RowTitle}" />
+                                <StackPanel Style="{StaticResource TitleRow}">
+                                    <TextBlock Text="Start with Windows" Style="{StaticResource RowTitle}" />
+                                    <v:InfoTip Style="{StaticResource Info}" Heading="Start with Windows"
+                                               Body="Opens the app by itself each time you sign in, resting in the tray by the clock until you want it"
+                                               Tip="Turn on if you share your phone's internet most days" />
+                                </StackPanel>
                                 <TextBlock Text="Open quietly in the tray when you sign in" Style="{StaticResource RowHint}" />
                             </StackPanel>
                             <ToggleButton x:Name="StartWithWindows" Grid.Column="1" Style="{StaticResource Switch}"
@@ -222,7 +286,12 @@
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <StackPanel Style="{StaticResource RowText}">
-                                <TextBlock Text="Start minimized" Style="{StaticResource RowTitle}" />
+                                <StackPanel Style="{StaticResource TitleRow}">
+                                    <TextBlock Text="Start minimized" Style="{StaticResource RowTitle}" />
+                                    <v:InfoTip Style="{StaticResource Info}" Heading="Start minimized"
+                                               Body="Skips the window at launch and goes straight to the tray by the clock. Click the tray icon to bring the window up"
+                                               Tip="Works nicely together with Start with Windows" />
+                                </StackPanel>
                                 <TextBlock Text="Go straight to the tray instead of opening the window" Style="{StaticResource RowHint}" />
                             </StackPanel>
                             <ToggleButton x:Name="StartMinimized" Grid.Column="1" Style="{StaticResource Switch}"
@@ -235,7 +304,11 @@
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <StackPanel Style="{StaticResource RowText}">
-                                <TextBlock Text="Show desktop notifications" Style="{StaticResource RowTitle}" />
+                                <StackPanel Style="{StaticResource TitleRow}">
+                                    <TextBlock Text="Show desktop notifications" Style="{StaticResource RowTitle}" />
+                                    <v:InfoTip Style="{StaticResource Info}" Heading="Desktop notifications"
+                                               Body="Shows a small message in the corner when you go online, go offline, or get near your data limit, so you know what happened without opening the window" />
+                                </StackPanel>
                                 <TextBlock Text="Pop a message when you go online or offline" Style="{StaticResource RowHint}" />
                             </StackPanel>
                             <ToggleButton x:Name="Notifications" Grid.Column="1" Style="{StaticResource Switch}"
@@ -248,7 +321,11 @@
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <StackPanel Style="{StaticResource RowText}">
-                                <TextBlock Text="Allow only one window" Style="{StaticResource RowTitle}" />
+                                <StackPanel Style="{StaticResource TitleRow}">
+                                    <TextBlock Text="Allow only one window" Style="{StaticResource RowTitle}" />
+                                    <v:InfoTip Style="{StaticResource Info}" Heading="One window only"
+                                               Body="Blocks a second copy of the app from opening if you click it again by mistake, keeping your connection in one place" />
+                                </StackPanel>
                                 <TextBlock Text="Stop a second copy of the app from opening" Style="{StaticResource RowHint}" />
                             </StackPanel>
                             <ToggleButton x:Name="SingleInstance" Grid.Column="1" Style="{StaticResource Switch}"
@@ -291,25 +368,49 @@
                             </Grid.RowDefinitions>
 
                             <StackPanel Margin="0,0,0,14">
-                                <TextBlock Text="PHONE SHARING ADDRESS" Style="{StaticResource T.Eyebrow}" Margin="0,0,0,6" />
+                                <StackPanel Style="{StaticResource FieldLabelRow}">
+                                    <TextBlock Text="PHONE SHARING ADDRESS" Style="{StaticResource T.Eyebrow}" VerticalAlignment="Center" />
+                                    <v:InfoTip Margin="7,0,0,0" Heading="Phone sharing address"
+                                               Body="The address your phone uses to pass its internet to this computer over the USB cable. The built in value matches the usual setup"
+                                               Tip="Change it only if a phone app shows you a different address" />
+                                </StackPanel>
                                 <TextBox x:Name="ProxyIp" />
                             </StackPanel>
                             <StackPanel Grid.Column="2" Margin="0,0,0,14">
-                                <TextBlock Text="PHONE SHARING PORT" Style="{StaticResource T.Eyebrow}" Margin="0,0,0,6" />
+                                <StackPanel Style="{StaticResource FieldLabelRow}">
+                                    <TextBlock Text="PHONE SHARING PORT" Style="{StaticResource T.Eyebrow}" VerticalAlignment="Center" />
+                                    <v:InfoTip Margin="7,0,0,0" Heading="Phone sharing port"
+                                               Body="The numbered doorway at that address where the phone hands over its internet"
+                                               Tip="Change it only if your phone app lists another number" />
+                                </StackPanel>
                                 <TextBox x:Name="ProxyPort" MaxLength="5" />
                             </StackPanel>
 
                             <StackPanel Grid.Row="1" Margin="0,0,0,14">
-                                <TextBlock Text="LOCAL PROXY PORT" Style="{StaticResource T.Eyebrow}" Margin="0,0,0,6" />
+                                <StackPanel Style="{StaticResource FieldLabelRow}">
+                                    <TextBlock Text="LOCAL PROXY PORT" Style="{StaticResource T.Eyebrow}" VerticalAlignment="Center" />
+                                    <v:InfoTip Margin="7,0,0,0" Heading="Local proxy port"
+                                               Body="A private doorway on this computer that the app uses behind the scenes to carry your traffic"
+                                               Tip="If a connect fails saying the port is busy, pick any other number" />
+                                </StackPanel>
                                 <TextBox x:Name="LocalPort" MaxLength="5" />
                             </StackPanel>
                             <StackPanel Grid.Row="1" Grid.Column="2" Margin="0,0,0,14">
-                                <TextBlock Text="PHONE HELPER PORT" Style="{StaticResource T.Eyebrow}" Margin="0,0,0,6" />
+                                <StackPanel Style="{StaticResource FieldLabelRow}">
+                                    <TextBlock Text="PHONE HELPER PORT" Style="{StaticResource T.Eyebrow}" VerticalAlignment="Center" />
+                                    <v:InfoTip Margin="7,0,0,0" Heading="Phone helper port"
+                                               Body="The doorway the small helper listens on inside your phone during Phone VPN mode. The built in value works for nearly everyone" />
+                                </StackPanel>
                                 <TextBox x:Name="AgentPort" MaxLength="5" />
                             </StackPanel>
 
                             <StackPanel Grid.Row="2" Grid.ColumnSpan="3">
-                                <TextBlock Text="CUSTOM ADB PROGRAM" Style="{StaticResource T.Eyebrow}" Margin="0,0,0,6" />
+                                <StackPanel Style="{StaticResource FieldLabelRow}">
+                                    <TextBlock Text="CUSTOM ADB PROGRAM" Style="{StaticResource T.Eyebrow}" VerticalAlignment="Center" />
+                                    <v:InfoTip Margin="7,0,0,0" Heading="Custom adb program"
+                                               Body="Phone VPN mode uses a tool named adb to talk to your phone. The app brings its own copy, so this stays empty. Point it at your own adb only if you keep one you would rather use"
+                                               Tip="Most people never change this" />
+                                </StackPanel>
                                 <Grid>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />

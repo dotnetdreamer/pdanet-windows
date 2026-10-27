@@ -7,6 +7,10 @@ publish/
 *.suo
 *.binlog
 
+# Release packaging artifact (the release workflow builds this zip in CI;
+# this keeps a local test build of it out of git)
+PdaNetPortable-*.zip
+
 # ===== IDEs =====
 .vs/
 .vscode/

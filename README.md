@@ -39,9 +39,9 @@ Pick how to connect, follow the short checklist so your phone is ready, then pre
       <img src="docs/screenshots/fixit.png" alt="A friendly fix it guide">
     </td>
     <td width="50%" valign="top">
-      <b>Simple settings</b><br>
-      Everything already works out of the box
-      <img src="docs/screenshots/settings.png" alt="The settings page">
+      <b>Settings you understand</b><br>
+      Every option has a plain explanation, hover the info dot to read it
+      <img src="docs/screenshots/settings.png" alt="The settings page with an explanation open">
     </td>
   </tr>
   <tr>

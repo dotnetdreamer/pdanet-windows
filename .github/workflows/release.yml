@@ -1,9 +1,9 @@
 name: release
 
 # Manual only. Start it from the Actions tab (Run workflow). It builds the
-# portable exe and publishes it to GitHub Releases. By default it increases the
-# patch version automatically; you can also choose minor/major or type an exact
-# version when you run it.
+# portable exe, packages it in a zip, and publishes that zip to GitHub Releases.
+# By default it increases the patch version automatically; you can also choose
+# minor/major or type an exact version when you run it.
 
 on:
   workflow_dispatch:
@@ -79,10 +79,23 @@ jobs:
           -c Release -o dist
           -p:Version=${{ steps.ver.outputs.version }}
 
+      - name: Package portable zip
+        id: pack
+        shell: pwsh
+        run: |
+          $version = '${{ steps.ver.outputs.version }}'
+          if (-not (Test-Path dist/PdaNetPortable.exe)) { Write-Error 'build output dist/PdaNetPortable.exe not found'; exit 1 }
+          # Bundle the exe with the readme and licence so the download explains itself.
+          Copy-Item README.md, LICENSE -Destination dist
+          $zip = "PdaNetPortable-v$version-win-x64.zip"
+          Compress-Archive -Path dist/PdaNetPortable.exe, dist/README.md, dist/LICENSE -DestinationPath $zip -Force
+          "zip=$zip" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "Packaged $zip"
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.ver.outputs.version }}
           name: PdaNet Windows v${{ steps.ver.outputs.version }}
           generate_release_notes: true
-          files: dist/PdaNetPortable.exe
+          files: ${{ steps.pack.outputs.zip }}

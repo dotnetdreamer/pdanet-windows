@@ -1132,7 +1132,10 @@
             <Setter.Value>
                 <ControlTemplate TargetType="ToolTip">
                     <Border Background="{StaticResource B.Bg3}" BorderBrush="{StaticResource B.Line2}" BorderThickness="1"
-                            CornerRadius="8" Padding="10,7" MaxWidth="320">
+                            CornerRadius="9" Padding="13,10" MaxWidth="364">
+                        <Border.Effect>
+                            <DropShadowEffect BlurRadius="20" ShadowDepth="5" Opacity="0.5" Color="Black" />
+                        </Border.Effect>
                         <ContentPresenter>
                             <ContentPresenter.Resources>
                                 <Style TargetType="TextBlock">
