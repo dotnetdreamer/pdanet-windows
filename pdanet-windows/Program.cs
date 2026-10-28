@@ -25,6 +25,8 @@ public static class Program
             return SelfTest.Run();
         if (args.Length > 0 && args[0] == "--selftest-agent")
             return SelfTest.RunAgent();
+        if (args.Length > 0 && args[0] == "--selftest-monitor")
+            return SelfTest.RunMonitor();
 
         if (args.Length > 0 && (args[0] == "--version" || args[0] == "-v"))
         {

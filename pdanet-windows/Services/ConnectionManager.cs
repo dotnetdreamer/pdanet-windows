@@ -1,4 +1,6 @@
+using System.Net;
 using System.Net.NetworkInformation;
+using System.Net.Sockets;
 using System.Threading;
 using PdaNetPortable.Core;
 using PdaNetPortable.Models;
@@ -24,6 +26,7 @@ public sealed class ConnectionManager
     private readonly StatsCollector _stats = StatsCollector.Instance;
 
     private LocalProxy? _relay;
+    private int _forwardPort; // PC port adb forwards to the phone helper (Phone VPN mode)
     private System.Threading.Timer? _monitor;
     private int _reconnectAttempts;
     private volatile bool _busy;
@@ -37,6 +40,12 @@ public sealed class ConnectionManager
     public bool SystemBypassActive => _systemBypassApplied;
     public bool AutoReconnectEnabled { get; set; }
     public string? LastError { get; private set; }
+
+    /// <summary>True when app traffic passes through our relay and the Apps page can record it.</summary>
+    public bool WatchingApps => _cfg.WatchApps && _relay is { Running: true };
+
+    /// <summary>True when app traffic passes through our relay, so your block list applies.</summary>
+    public bool RelayActive => _relay is { Running: true };
 
     // Remembered for auto-reconnect.
     private string? _lastSsid;
@@ -113,6 +122,11 @@ public sealed class ConnectionManager
                 return;
             }
 
+            // USB or WiFi without the stealth proxy has no relay yet, add one so the Apps page can watch
+            // and your block list applies.
+            if (mode != ConnectionMode.AdbAgent && _relay == null && (_cfg.WatchApps || TrafficRules.Instance.Any))
+                StartWatchRelay();
+
             _reconnectAttempts = 0;
             _stats.StartSession();
             SetState(ConnectionState.Connected);
@@ -184,9 +198,11 @@ public sealed class ConnectionManager
         _log.Ok($"Phone helper is running on port {_cfg.AgentPort}");
 
         _log.Info("[3/4] Linking this PC to your phone");
-        if (!AdbAgent.Forward(_cfg.LocalProxyPort, _cfg.AgentPort, out err)) { RaiseError(err); return false; }
+        if (!LinkPhone(out err)) { RaiseError(err); return false; }
         SystemProxy.SetWinInet($"127.0.0.1:{_cfg.LocalProxyPort}");
-        _log.Ok($"Windows proxy points at 127.0.0.1:{_cfg.LocalProxyPort}, linked to the phone helper");
+        _log.Ok(_relay != null
+            ? $"Windows proxy points at 127.0.0.1:{_cfg.LocalProxyPort}, linked to the phone helper, app watch is on"
+            : $"Windows proxy points at 127.0.0.1:{_cfg.LocalProxyPort}, linked to the phone helper");
 
         _log.Info("[4/4] Checking the internet");
         if (!InterfaceDetector.InternetReachable())
@@ -321,11 +337,99 @@ public sealed class ConnectionManager
 
     private void StartProxy(bool usePdaProxy, int ttl)
     {
-        _relay = usePdaProxy
+        StartRelay(usePdaProxy
             ? new LocalProxy(_cfg.LocalProxyPort, ttl, _cfg.ProxyIp, _cfg.ProxyPort)
-            : new LocalProxy(_cfg.LocalProxyPort, ttl);
-        _relay.Start();
+            : new LocalProxy(_cfg.LocalProxyPort, ttl));
         SystemProxy.SetWinInet($"127.0.0.1:{_cfg.LocalProxyPort}");
+    }
+
+    /// <summary>Replaces the running relay, so a reconnect does not trip over the old one's port.</summary>
+    private void StartRelay(LocalProxy relay)
+    {
+        _relay?.Stop();
+        _relay = relay;
+        try { _relay.Start(); }
+        catch
+        {
+            _relay = null;
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// A plain relay for USB or WiFi without the stealth proxy, so the Apps page can see which
+    /// app sends what. It leaves the TTL at the Windows default, nothing else changes.
+    /// </summary>
+    private void StartWatchRelay()
+    {
+        // A proxy you set up yourself stays: the relay would replace it, and disconnecting would clear it.
+        var (on, server) = SystemProxy.GetWinInet();
+        if (on && !string.IsNullOrEmpty(server) && !server.Contains($"127.0.0.1:{_cfg.LocalProxyPort}"))
+        {
+            _log.Info($"App watch and blocking are off for this connection, Windows already uses the proxy {server}");
+            return;
+        }
+        try
+        {
+            StartRelay(new LocalProxy(_cfg.LocalProxyPort, Constants.TtlPhoneTraffic)
+            {
+                Label = "App watch",
+                ApplyTtl = false,
+            });
+            SystemProxy.SetWinInet($"127.0.0.1:{_cfg.LocalProxyPort}");
+        }
+        catch (Exception e)
+        {
+            _log.Warning($"App watch could not start on port {_cfg.LocalProxyPort}, the Apps page stays empty: {e.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Links the PC port Windows uses to the phone helper. With app watch on, a relay sits on that
+    /// port and passes everything to the adb link on a private port, so the Apps page can see which
+    /// app sent what. Without it, or if the relay cannot start, adb forwards the port straight to
+    /// the phone as before.
+    /// </summary>
+    private bool LinkPhone(out string error)
+    {
+        _forwardPort = _cfg.LocalProxyPort;
+        if (_cfg.WatchApps || TrafficRules.Instance.Any)
+        {
+            int linkPort = FreeLoopbackPort();
+            if (linkPort > 0 && AdbAgent.Forward(linkPort, _cfg.AgentPort, out _))
+            {
+                try
+                {
+                    StartRelay(new LocalProxy(_cfg.LocalProxyPort, Constants.TtlPhoneTraffic, "127.0.0.1", linkPort)
+                    {
+                        Label = "App watch",
+                        ApplyTtl = false,
+                    });
+                    _forwardPort = linkPort;
+                    error = "";
+                    return true;
+                }
+                catch (Exception e)
+                {
+                    _log.Warning($"App watch could not start on port {_cfg.LocalProxyPort}, linking without app watch: {e.Message}");
+                    AdbAgent.RemoveForward(linkPort);
+                }
+            }
+        }
+        return AdbAgent.Forward(_cfg.LocalProxyPort, _cfg.AgentPort, out error);
+    }
+
+    private static int FreeLoopbackPort()
+    {
+        try
+        {
+            var probe = new TcpListener(IPAddress.Loopback, 0);
+            probe.Start();
+            int port = ((IPEndPoint)probe.LocalEndpoint).Port;
+            probe.Stop();
+            return port;
+        }
+        catch { return 0; }
     }
 
     private void RollbackUnprivileged()
@@ -357,7 +461,7 @@ public sealed class ConnectionManager
 
             // Mode-specific teardown: stop the phone agent + remove the adb forward.
             if (CurrentMode == ConnectionMode.AdbAgent)
-                AdbAgent.Stop(_cfg.LocalProxyPort);
+                AdbAgent.Stop(_forwardPort > 0 ? _forwardPort : _cfg.LocalProxyPort);
 
             // Non-privileged teardown (always, no admin): drop the system proxy + stop the relay.
             BypassActive = false;

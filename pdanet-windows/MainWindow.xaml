@@ -92,12 +92,14 @@
                         <StackPanel>
                             <RadioButton x:Name="NavConnect" Style="{StaticResource NavItem}" Tag="&#xE7E8;" Content="Connect"
                                          IsChecked="True" Click="OnNav" ToolTip="Connect  (Ctrl+1)" />
+                            <RadioButton x:Name="NavApps" Style="{StaticResource NavItem}" Tag="&#xE8A9;" Content="Apps"
+                                         Click="OnNav" ToolTip="Apps  (Ctrl+2)" />
                             <RadioButton x:Name="NavActivity" Style="{StaticResource NavItem}" Tag="&#xE756;" Content="Activity"
-                                         Click="OnNav" ToolTip="Activity  (Ctrl+2)" />
+                                         Click="OnNav" ToolTip="Activity  (Ctrl+3)" />
                             <RadioButton x:Name="NavHistory" Style="{StaticResource NavItem}" Tag="&#xE81C;" Content="History"
-                                         Click="OnNav" ToolTip="History  (Ctrl+3)" />
+                                         Click="OnNav" ToolTip="History  (Ctrl+4)" />
                             <RadioButton x:Name="NavSettings" Style="{StaticResource NavItem}" Tag="&#xE713;" Content="Settings"
-                                         Click="OnNav" ToolTip="Settings  (Ctrl+4)" />
+                                         Click="OnNav" ToolTip="Settings  (Ctrl+5)" />
                             <RadioButton x:Name="NavHelp" Style="{StaticResource NavItem}" Tag="&#xE9CE;" Content="Help"
                                          Click="OnNav" ToolTip="Help  (F1)" />
                         </StackPanel>
@@ -106,6 +108,7 @@
 
                 <Grid x:Name="PageHost" Grid.Column="1">
                     <v:ConnectView x:Name="ConnectPage" />
+                    <v:AppsView x:Name="AppsPage" Visibility="Collapsed" />
                     <v:ActivityView x:Name="ActivityPage" Visibility="Collapsed" />
                     <v:HistoryView x:Name="HistoryPage" Visibility="Collapsed" />
                     <v:SettingsView x:Name="SettingsPage" Visibility="Collapsed" />

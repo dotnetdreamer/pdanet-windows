@@ -214,8 +214,13 @@ public static class AdbAgent
     {
         try { if (_agentProc is { HasExited: false }) _agentProc.Kill(true); } catch { }
         _agentProc = null;
-        try { Adb($"forward --remove tcp:{localPort}"); } catch { }
+        RemoveForward(localPort);
         KillRemote();
+    }
+
+    public static void RemoveForward(int localPort)
+    {
+        try { Adb($"forward --remove tcp:{localPort}"); } catch { }
     }
 
     /// <summary>Kill any lingering agent on the device (parse ps, avoid pkill/awk which vary).</summary>

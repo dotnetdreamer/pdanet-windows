@@ -475,40 +475,10 @@ public partial class ConnectView : UserControl, IPage
 
         double peak = Math.Max(_down.DefaultIfEmpty(0).Max(), _up.DefaultIfEmpty(0).Max());
         double max = Math.Max(48 * 1024, peak * 1.2);
-        DownLine.Data = Smooth(_down, w, h, max, area: false);
-        DownArea.Data = Smooth(_down, w, h, max, area: true);
-        UpLine.Data = Smooth(_up, w, h, max, area: false);
+        DownLine.Data = Ui.Smooth(_down, GraphPoints, w, h, max, area: false);
+        DownArea.Data = Ui.Smooth(_down, GraphPoints, w, h, max, area: true);
+        UpLine.Data = Ui.Smooth(_up, GraphPoints, w, h, max, area: false);
         ChartMax.Text = peak > 0 ? Fmt.Bandwidth(max) : "";
-    }
-
-    /// <summary>Catmull Rom style smoothing turned into Bezier segments, newest sample on the right.</summary>
-    private static Geometry Smooth(List<double> data, double w, double h, double max, bool area)
-    {
-        var g = new StreamGeometry();
-        if (data.Count < 2) return g;
-
-        double step = w / (GraphPoints - 1);
-        double x0 = w - (data.Count - 1) * step;
-        var pts = data.Select((v, i) => new Point(x0 + i * step, h - 2 - Math.Min(1, v / max) * (h - 6))).ToList();
-
-        using (var ctx = g.Open())
-        {
-            ctx.BeginFigure(area ? new Point(pts[0].X, h) : pts[0], area, area);
-            if (area) ctx.LineTo(pts[0], false, false);
-            for (int i = 0; i < pts.Count - 1; i++)
-            {
-                var p0 = i > 0 ? pts[i - 1] : pts[i];
-                var p1 = pts[i];
-                var p2 = pts[i + 1];
-                var p3 = i + 2 < pts.Count ? pts[i + 2] : p2;
-                var c1 = new Point(p1.X + (p2.X - p0.X) / 6, Math.Clamp(p1.Y + (p2.Y - p0.Y) / 6, 0, h));
-                var c2 = new Point(p2.X - (p3.X - p1.X) / 6, Math.Clamp(p2.Y - (p3.Y - p1.Y) / 6, 0, h));
-                ctx.BezierTo(c1, c2, p2, true, true);
-            }
-            if (area) ctx.LineTo(new Point(pts[^1].X, h), false, false);
-        }
-        g.Freeze();
-        return g;
     }
 
     // ============================= Actions ============================

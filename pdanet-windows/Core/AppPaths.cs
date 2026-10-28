@@ -54,4 +54,5 @@ public static class AppPaths
     public static string ConnectionHistory => Path.Combine(DataDir, "connection_history.json");
     public static string BypassState => Path.Combine(DataDir, "bypass_state.json");
     public static string LogFile => Path.Combine(DataDir, "pdanet.log");
+    public static string AppRules => Path.Combine(DataDir, "app_rules.json");
 }

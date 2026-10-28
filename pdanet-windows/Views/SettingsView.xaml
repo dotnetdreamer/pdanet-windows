@@ -248,6 +248,58 @@
                     </StackPanel>
                 </Border>
 
+                <!-- ============================== Apps ============================== -->
+                <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                    <StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <Border Style="{StaticResource SectionTile}">
+                                <TextBlock Text="&#xE8A9;" Style="{StaticResource SectionIcon}" />
+                            </Border>
+                            <StackPanel Margin="12,0,0,0" VerticalAlignment="Center">
+                                <TextBlock Text="Apps" Style="{StaticResource T.H2}" />
+                                <TextBlock Text="See and block the apps that use the internet" Style="{StaticResource T.Small}" Margin="0,2,0,0" />
+                            </StackPanel>
+                        </StackPanel>
+                        <Border Style="{StaticResource Divider}" />
+
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <StackPanel Style="{StaticResource TitleRow}">
+                                    <TextBlock Text="Watch which apps go online" Style="{StaticResource RowTitle}" />
+                                    <v:InfoTip Style="{StaticResource Info}" Heading="App watch"
+                                               Body="PdaNet notes which apps use the internet, the websites each app visits and the amount of data, and shows the list on the Apps page. For private websites PdaNet never reads the content, and nothing is saved or sent anywhere"
+                                               Tip="In Phone VPN mode a change takes effect the next time you connect" />
+                                </StackPanel>
+                                <TextBlock Text="Show every app and the data each app uses on the Apps page" Style="{StaticResource RowHint}" />
+                            </StackPanel>
+                            <ToggleButton x:Name="WatchApps" Grid.Column="1" Style="{StaticResource Switch}"
+                                          AutomationProperties.Name="Watch which apps go online" />
+                        </Grid>
+
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <StackPanel Style="{StaticResource TitleRow}">
+                                    <TextBlock Text="Blocked apps and websites" Style="{StaticResource RowTitle}" />
+                                    <v:InfoTip Style="{StaticResource Info}" Heading="Blocking"
+                                               Body="Right click a line on the Apps page to block an app or a website. Blocks need no admin rights and stay on every time you connect"
+                                               Tip="In Phone VPN mode blocks work for every app" />
+                                </StackPanel>
+                                <TextBlock x:Name="BlockedSummary" Text="Nothing is blocked" Style="{StaticResource RowHint}" />
+                            </StackPanel>
+                            <Button Grid.Column="1" Style="{StaticResource Btn.Secondary}" Tag="&#xE733;" Content="Manage"
+                                    Click="OnManageBlocked" VerticalAlignment="Center" />
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
                 <!-- ============================ Windows ============================ -->
                 <Border Style="{StaticResource Card}" Margin="0,0,0,14">
                     <StackPanel>

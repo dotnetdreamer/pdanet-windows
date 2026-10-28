@@ -81,6 +81,24 @@
                 </Expander>
 
                 <Expander Style="{StaticResource Accordion}">
+                    <Expander.Header><TextBlock Text="What does the Apps page show?" Style="{StaticResource Q}" /></Expander.Header>
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource A}" Text="Every app that uses the internet through PdaNet, the websites each app visits and the data each app uses, live, double click a line to see the details" />
+                        <TextBlock Style="{StaticResource A}" Margin="0,8,0,0" Text="Websites with an address that starts with https stay private, PdaNet sees only the website name and the amount of data, never the content, and nothing is saved or sent anywhere" />
+                        <TextBlock Style="{StaticResource A}" Margin="0,8,0,0" Text="A few apps go online without PdaNet and do not show up on the Apps page, to turn app watch off open Settings, then Apps" />
+                    </StackPanel>
+                </Expander>
+
+                <Expander Style="{StaticResource Accordion}">
+                    <Expander.Header><TextBlock Text="Can I stop an app from using my phone's data?" Style="{StaticResource Q}" /></Expander.Header>
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource A}" Text="Yes, right click a line on the Apps page, then block the app or the website, no admin rights needed, the block starts right away" />
+                        <TextBlock Style="{StaticResource A}" Margin="0,8,0,0" Text="Blocks stay on every time you connect, to see or remove blocks open Blocked on the Apps page, or Settings" />
+                        <TextBlock Style="{StaticResource A}" Margin="0,8,0,0" Text="In Phone VPN mode blocks work for every app, in USB and WiFi modes a few apps such as Windows Update go online without PdaNet, and blocks cannot stop those apps" />
+                    </StackPanel>
+                </Expander>
+
+                <Expander Style="{StaticResource Accordion}">
                     <Expander.Header><TextBlock Text="A website still shows my real location" Style="{StaticResource Q}" /></Expander.Header>
                     <StackPanel>
                         <TextBlock Style="{StaticResource A}" Text="Some work or school PCs force their own network proxy that overrides this app, in that case open the connection details on the Connect page, copy the proxy address, and set your browser to use it" />
@@ -119,7 +137,7 @@
                             <TextBlock Text="Go to a page" Style="{StaticResource T.Small}" Foreground="{StaticResource B.Text2}" VerticalAlignment="Center" />
                             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                                 <Border Style="{StaticResource KeyCap}"><TextBlock Text="Ctrl" Style="{StaticResource T.Eyebrow}" FontSize="10.5" /></Border>
-                                <Border Style="{StaticResource KeyCap}" Margin="0"><TextBlock Text="1 to 5" Style="{StaticResource T.Eyebrow}" FontSize="10.5" /></Border>
+                                <Border Style="{StaticResource KeyCap}" Margin="0"><TextBlock Text="1 to 6" Style="{StaticResource T.Eyebrow}" FontSize="10.5" /></Border>
                             </StackPanel>
                         </Grid>
                         <Grid Style="{StaticResource KeyRow}">

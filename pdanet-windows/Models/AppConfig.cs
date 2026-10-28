@@ -46,6 +46,9 @@ public class AppConfig
     [JsonPropertyName("adb_path")] public string AdbPath { get; set; } = "";       // optional explicit adb.exe path
     [JsonPropertyName("data_warning_mb")] public int DataWarningMb { get; set; } = 10240;   // 10 GB
     [JsonPropertyName("data_critical_mb")] public int DataCriticalMb { get; set; } = 20480; // 20 GB
+    // Record which apps go online through the local relay, for the Apps page. In Phone VPN mode
+    // this puts the relay in front of the adb link, so it takes effect on the next connect.
+    [JsonPropertyName("watch_apps")] public bool WatchApps { get; set; } = true;
 
     public AppConfig Clone() => (AppConfig)MemberwiseClone();
 }

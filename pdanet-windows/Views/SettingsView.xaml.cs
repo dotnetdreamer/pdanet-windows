@@ -51,6 +51,9 @@ public partial class SettingsView : UserControl, IPage
         DataCritical.Text = _cfg.DataCriticalMb.ToString();
         UpdateReconnectEnabled();
 
+        WatchApps.IsChecked = _cfg.WatchApps;
+        RefreshBlocked();
+
         StartWithWindows.IsChecked = AutoStart.IsEnabled();
         StartMinimized.IsChecked = _cfg.StartMinimized;
         Notifications.IsChecked = _cfg.EnableNotifications;
@@ -72,6 +75,21 @@ public partial class SettingsView : UserControl, IPage
 
     private void OnOpenLocation(object sender, RoutedEventArgs e) => _shell?.OpenLocation();
 
+    private void OnManageBlocked(object sender, RoutedEventArgs e) => _shell?.OpenBlocked();
+
+    // The block list changes on its own sheet, right away, not with the Save button.
+    public void RefreshBlocked()
+    {
+        var rules = TrafficRules.Instance.All;
+        int apps = rules.Count(r => r.Kind == BlockKind.App), sites = rules.Count - apps;
+        var parts = new List<string>();
+        if (apps > 0) parts.Add(apps == 1 ? "1 app" : $"{apps} apps");
+        if (sites > 0) parts.Add(sites == 1 ? "1 website" : $"{sites} websites");
+        BlockedSummary.Text = parts.Count == 0
+            ? "Nothing is blocked, right click a line on the Apps page to start"
+            : $"{string.Join(" and ", parts)} blocked";
+    }
+
     public void RefreshLocation()
     {
         var p = LocationMask.Find(LocationMask.ActiveCity);
@@ -92,6 +110,8 @@ public partial class SettingsView : UserControl, IPage
         _cfg.DataWarningMb = Clamp(DataWarning, _cfg.DataWarningMb, 1, 1_000_000);
         _cfg.DataCriticalMb = Clamp(DataCritical, _cfg.DataCriticalMb, 1, 1_000_000);
         if (_cfg.DataCriticalMb < _cfg.DataWarningMb) _cfg.DataCriticalMb = _cfg.DataWarningMb;
+
+        _cfg.WatchApps = WatchApps.IsChecked == true;
 
         _cfg.StartMinimized = StartMinimized.IsChecked == true;
         _cfg.EnableNotifications = Notifications.IsChecked == true;
@@ -136,6 +156,7 @@ public partial class SettingsView : UserControl, IPage
         ReconnectAttempts.Text = fresh.ReconnectAttempts.ToString();
         DataWarning.Text = fresh.DataWarningMb.ToString();
         DataCritical.Text = fresh.DataCriticalMb.ToString();
+        WatchApps.IsChecked = fresh.WatchApps;
         StartWithWindows.IsChecked = false;
         StartMinimized.IsChecked = fresh.StartMinimized;
         Notifications.IsChecked = fresh.EnableNotifications;

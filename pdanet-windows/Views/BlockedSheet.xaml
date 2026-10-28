@@ -1,0 +1,91 @@
+<UserControl x:Class="PdaNetPortable.Views.BlockedSheet"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Width="600">
+    <Border Background="{StaticResource B.Bg1}" BorderBrush="{StaticResource B.Line2}" BorderThickness="1" CornerRadius="16">
+        <Border.Effect>
+            <DropShadowEffect BlurRadius="40" ShadowDepth="12" Opacity="0.55" Color="Black" />
+        </Border.Effect>
+        <StackPanel Margin="26,24,26,22">
+            <Grid>
+                <StackPanel Orientation="Horizontal">
+                    <Border Style="{StaticResource IconTile}" Background="{StaticResource B.RedSoft}" BorderBrush="{StaticResource B.RedLine}">
+                        <TextBlock Text="&#xE733;" Style="{StaticResource T.Icon}" FontSize="18" Foreground="{StaticResource B.Red}"
+                                   HorizontalAlignment="Center" />
+                    </Border>
+                    <StackPanel Margin="14,0,0,0" VerticalAlignment="Center">
+                        <TextBlock Text="Blocked apps and websites" Style="{StaticResource T.H2}" FontSize="17" />
+                        <TextBlock Text="PdaNet stops every app and website on this list" Style="{StaticResource T.Small}" Margin="0,2,0,0" />
+                    </StackPanel>
+                </StackPanel>
+                <Button Style="{StaticResource Btn.Icon}" Content="&#xE8BB;" HorizontalAlignment="Right" VerticalAlignment="Top"
+                        Click="OnClose" ToolTip="Close" AutomationProperties.Name="Close" />
+            </Grid>
+
+            <ScrollViewer x:Name="Scroller" MaxHeight="330" Margin="0,20,0,0" VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled" Focusable="False">
+                <ItemsControl x:Name="Rules" Focusable="False">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Border Background="{StaticResource B.Bg2}" BorderBrush="{StaticResource B.Line}" BorderThickness="1"
+                                    CornerRadius="10" Padding="12,10" Margin="0,0,0,8">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <Grid Width="34" Height="34" VerticalAlignment="Center">
+                                        <Border CornerRadius="9" Background="{StaticResource B.Bg3}" BorderBrush="{StaticResource B.Line2}" BorderThickness="1" />
+                                        <Image Source="{Binding Icon}" Width="22" Height="22" RenderOptions.BitmapScalingMode="HighQuality"
+                                               Visibility="{Binding IconVisibility}" />
+                                        <TextBlock Text="{Binding Glyph}" FontFamily="{Binding GlyphFont}" FontSize="15" FontWeight="SemiBold"
+                                                   Foreground="{StaticResource B.Accent}" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                   Visibility="{Binding GlyphVisibility}" />
+                                    </Grid>
+                                    <StackPanel Grid.Column="1" Margin="12,0,12,0" VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding Title}" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource B.Text}"
+                                                   TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Text="{Binding Detail}" Style="{StaticResource T.Small}" Margin="0,2,0,0"
+                                                   TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding Hits}" Style="{StaticResource T.Mono}" FontSize="11"
+                                                   Foreground="{StaticResource B.Text3}" VerticalAlignment="Center" Margin="0,0,12,0" />
+                                        <Button Style="{StaticResource Btn.Secondary}" Tag="&#xE785;" Content="Unblock" Padding="12,5"
+                                                Click="OnUnblock" AutomationProperties.Name="{Binding UnblockName}" />
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+
+            <StackPanel x:Name="Empty" Margin="0,26,0,18" Visibility="Collapsed">
+                <TextBlock Text="&#xE733;" Style="{StaticResource T.Icon}" FontSize="28" Foreground="{StaticResource B.Line2}"
+                           HorizontalAlignment="Center" />
+                <TextBlock Text="Nothing is blocked" Style="{StaticResource T.H2}" HorizontalAlignment="Center" Margin="0,12,0,0" />
+                <TextBlock Text="Right click a line on the Apps page to block an app or a website"
+                           Style="{StaticResource T.Small}" TextAlignment="Center" HorizontalAlignment="Center" Margin="0,4,0,0" />
+            </StackPanel>
+
+            <Grid Margin="2,6,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="&#xE946;" FontFamily="{StaticResource F.Icon}" FontSize="13" Foreground="{StaticResource B.Text3}"
+                           VerticalAlignment="Top" Margin="0,1,0,0" />
+                <TextBlock Grid.Column="1" Style="{StaticResource T.Small}" Margin="10,0,0,0"
+                           Text="In Phone VPN mode blocks work for every app, in USB and WiFi modes a few apps go online without PdaNet and blocks cannot stop those apps" />
+            </Grid>
+
+            <DockPanel Margin="0,20,0,0">
+                <Button x:Name="ClearBtn" DockPanel.Dock="Left" Style="{StaticResource Btn.Danger}" Tag="&#xE74D;" Content="Unblock all"
+                        Click="OnClear" />
+                <Button x:Name="CloseBtn" Style="{StaticResource Btn.Primary}" Content="Close" HorizontalAlignment="Right" Click="OnClose" />
+            </DockPanel>
+        </StackPanel>
+    </Border>
+</UserControl>

@@ -1,9 +1,11 @@
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using System.Windows.Media.Imaging;
 using Application = System.Windows.Application;
 using Brush = System.Windows.Media.Brush;
 using Color = System.Windows.Media.Color;
+using Point = System.Windows.Point;
 
 namespace PdaNetPortable.Views;
 
@@ -53,6 +55,70 @@ internal static class Ui
         a.KeyFrames.Add(new DiscreteDoubleKeyFrame(0, KeyTime.FromTimeSpan(TimeSpan.FromSeconds(0.55))));
         Timeline.SetDesiredFrameRate(a, 4);
         return a;
+    }
+
+    /// <summary>
+    /// Catmull Rom style smoothing turned into Bezier segments, newest sample on the right.
+    /// <paramref name="capacity"/> is how many samples span the full width.
+    /// </summary>
+    public static Geometry Smooth(IReadOnlyList<double> data, int capacity, double w, double h, double max, bool area)
+    {
+        var g = new StreamGeometry();
+        if (data.Count < 2) return g;
+
+        double step = w / (capacity - 1);
+        double x0 = w - (data.Count - 1) * step;
+        var pts = data.Select((v, i) => new Point(x0 + i * step, h - 2 - Math.Min(1, v / max) * (h - 6))).ToList();
+
+        using (var ctx = g.Open())
+        {
+            ctx.BeginFigure(area ? new Point(pts[0].X, h) : pts[0], area, area);
+            if (area) ctx.LineTo(pts[0], false, false);
+            for (int i = 0; i < pts.Count - 1; i++)
+            {
+                var p0 = i > 0 ? pts[i - 1] : pts[i];
+                var p1 = pts[i];
+                var p2 = pts[i + 1];
+                var p3 = i + 2 < pts.Count ? pts[i + 2] : p2;
+                var c1 = new Point(p1.X + (p2.X - p0.X) / 6, Math.Clamp(p1.Y + (p2.Y - p0.Y) / 6, 0, h));
+                var c2 = new Point(p2.X - (p3.X - p1.X) / 6, Math.Clamp(p2.Y - (p3.Y - p1.Y) / 6, 0, h));
+                ctx.BezierTo(c1, c2, p2, true, true);
+            }
+            if (area) ctx.LineTo(new Point(pts[^1].X, h), false, false);
+        }
+        g.Freeze();
+        return g;
+    }
+}
+
+/// <summary>Program icons for the Apps page, read once per program file and shared.</summary>
+internal static class AppIcons
+{
+    private static readonly Dictionary<string, ImageSource?> Cache = new(StringComparer.OrdinalIgnoreCase);
+
+    public static ImageSource? For(string? path)
+    {
+        if (string.IsNullOrEmpty(path)) return null;
+        if (Cache.TryGetValue(path, out var hit)) return hit;
+
+        ImageSource? image = null;
+        try
+        {
+            if (System.IO.File.Exists(path))
+            {
+                using var icon = System.Drawing.Icon.ExtractAssociatedIcon(path);
+                if (icon != null)
+                {
+                    var source = System.Windows.Interop.Imaging.CreateBitmapSourceFromHIcon(
+                        icon.Handle, Int32Rect.Empty, BitmapSizeOptions.FromEmptyOptions());
+                    source.Freeze();
+                    image = source;
+                }
+            }
+        }
+        catch { /* no icon, the page shows the first letter instead */ }
+        Cache[path] = image;
+        return image;
     }
 }
 

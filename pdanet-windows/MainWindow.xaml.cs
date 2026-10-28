@@ -26,7 +26,7 @@ namespace PdaNetPortable;
 
 public enum ToastKind { Success, Info, Warning, Error }
 
-public enum AppPage { Connect, Activity, History, Settings, Help }
+public enum AppPage { Connect, Apps, Activity, History, Settings, Help }
 
 /// <summary>
 /// The app shell: custom title bar, navigation rail, page host, in window sheets, toasts,
@@ -60,6 +60,7 @@ public partial class MainWindow : Window
         VersionText.Text = $"v{Constants.AppVersion}";
 
         ConnectPage.Attach(this);
+        AppsPage.Attach(this);
         ActivityPage.Attach(this);
         HistoryPage.Attach(this);
         SettingsPage.Attach(this);
@@ -109,6 +110,7 @@ public partial class MainWindow : Window
     {
         FrameworkElement target = page switch
         {
+            AppPage.Apps => AppsPage,
             AppPage.Activity => ActivityPage,
             AppPage.History => HistoryPage,
             AppPage.Settings => SettingsPage,
@@ -117,6 +119,7 @@ public partial class MainWindow : Window
         };
         RadioButton nav = page switch
         {
+            AppPage.Apps => NavApps,
             AppPage.Activity => NavActivity,
             AppPage.History => NavHistory,
             AppPage.Settings => NavSettings,
@@ -134,7 +137,8 @@ public partial class MainWindow : Window
     }
 
     private void OnNav(object sender, RoutedEventArgs e) => Navigate(
-        sender == NavActivity ? AppPage.Activity
+        sender == NavApps ? AppPage.Apps
+        : sender == NavActivity ? AppPage.Activity
         : sender == NavHistory ? AppPage.History
         : sender == NavSettings ? AppPage.Settings
         : sender == NavHelp ? AppPage.Help
@@ -192,6 +196,18 @@ public partial class MainWindow : Window
         if (SheetOpen) return;
         var sheet = new LocationSheet();
         sheet.Closed += () => { CloseSheet(); SettingsPage.RefreshLocation(); };
+        ShowSheet(sheet);
+    }
+
+    public void OpenBlocked()
+    {
+        if (SheetOpen) return;
+        var sheet = new BlockedSheet();
+        sheet.Closed += () =>
+        {
+            CloseSheet();
+            SettingsPage.RefreshBlocked();
+        };
         ShowSheet(sheet);
     }
 
@@ -299,14 +315,23 @@ public partial class MainWindow : Window
     private void ApplyDemo()
     {
         var nav = Demo.Value("nav");
+        if (nav.Equals("apps", StringComparison.OrdinalIgnoreCase) && Demo.Value("seed") != "no")
+        {
+            TrafficMonitor.Instance.SeedDemo();
+            var pick = Demo.Value("app");
+            if (!string.IsNullOrEmpty(pick)) AppsPage.DemoSelect(pick);
+        }
         if (!string.IsNullOrEmpty(nav))
             Navigate(Enum.TryParse<AppPage>(nav, true, out var p) ? p : AppPage.Connect);
+        var record = Demo.Value("record");
+        if (!string.IsNullOrEmpty(record)) AppsPage.DemoRecord(record);
 
         var sheet = Demo.Value("sheet");
         if (sheet == "wifi") RequestConnectDemo(ConnectionMode.Wifi);
         else if (sheet == "iphone") RequestConnectDemo(ConnectionMode.Iphone);
         else if (sheet == "speed") OpenSpeedTest();
         else if (sheet == "location") OpenLocation();
+        else if (sheet == "blocked") OpenBlocked();
 
         var state = Demo.Value("state");
         if (!string.IsNullOrEmpty(state))
@@ -564,10 +589,11 @@ public partial class MainWindow : Window
         if (ctrl && e.Key == Key.Enter) ToggleConnection();
         else if (ctrl && e.Key == Key.D) RequestDisconnect();
         else if (ctrl && e.Key is Key.D1 or Key.NumPad1) Navigate(AppPage.Connect);
-        else if (ctrl && e.Key is Key.D2 or Key.NumPad2) Navigate(AppPage.Activity);
-        else if (ctrl && e.Key is Key.D3 or Key.NumPad3) Navigate(AppPage.History);
-        else if (ctrl && e.Key is Key.D4 or Key.NumPad4) Navigate(AppPage.Settings);
-        else if (ctrl && e.Key is Key.D5 or Key.NumPad5) Navigate(AppPage.Help);
+        else if (ctrl && e.Key is Key.D2 or Key.NumPad2) Navigate(AppPage.Apps);
+        else if (ctrl && e.Key is Key.D3 or Key.NumPad3) Navigate(AppPage.Activity);
+        else if (ctrl && e.Key is Key.D4 or Key.NumPad4) Navigate(AppPage.History);
+        else if (ctrl && e.Key is Key.D5 or Key.NumPad5) Navigate(AppPage.Settings);
+        else if (ctrl && e.Key is Key.D6 or Key.NumPad6) Navigate(AppPage.Help);
         else if (ctrl && e.Key == Key.S)
         {
             if (ReferenceEquals(_currentPage, SettingsPage)) SettingsPage.Save();

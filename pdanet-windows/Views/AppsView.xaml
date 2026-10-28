@@ -1,0 +1,557 @@
+<UserControl x:Class="PdaNetPortable.Views.AppsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:v="clr-namespace:PdaNetPortable.Views">
+    <UserControl.Resources>
+        <!-- App list row: soft accent fill and a bar on the left when picked, like the nav rail -->
+        <Style x:Key="AppItem" TargetType="ListBoxItem">
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                        <Grid Margin="8,2">
+                            <Border x:Name="Bd" CornerRadius="10" Background="Transparent" BorderBrush="Transparent"
+                                    BorderThickness="1" Padding="10,9">
+                                <ContentPresenter />
+                            </Border>
+                            <Border x:Name="Bar" Width="3" Height="22" CornerRadius="2" Background="{StaticResource B.Accent}"
+                                    HorizontalAlignment="Left" Margin="-8,0,0,0" Visibility="Collapsed" />
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource B.Hover}" />
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource B.AccentSoft}" />
+                                <Setter TargetName="Bar" Property="Visibility" Value="Visible" />
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource B.AccentLine}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="Cell" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="{StaticResource F.Mono}" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Foreground" Value="{StaticResource B.Text2}" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+        </Style>
+        <Style x:Key="StatLabel" TargetType="TextBlock" BasedOn="{StaticResource T.Eyebrow}">
+            <Setter Property="FontSize" Value="10.5" />
+            <Setter Property="Margin" Value="0,0,0,4" />
+        </Style>
+        <Style x:Key="StatValue" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="{StaticResource F.Mono}" />
+            <Setter Property="FontSize" Value="16" />
+            <Setter Property="Foreground" Value="{StaticResource B.Text}" />
+        </Style>
+        <Style x:Key="GuideLine" TargetType="Line">
+            <Setter Property="X1" Value="0" />
+            <Setter Property="X2" Value="1" />
+            <Setter Property="Stretch" Value="Fill" />
+            <Setter Property="Stroke" Value="{StaticResource B.Line}" />
+            <Setter Property="StrokeDashArray" Value="2 4" />
+            <Setter Property="VerticalAlignment" Value="Top" />
+        </Style>
+        <Style x:Key="Hint" TargetType="TextBlock" BasedOn="{StaticResource T.Small}">
+            <Setter Property="TextAlignment" Value="Center" />
+            <Setter Property="HorizontalAlignment" Value="Center" />
+            <Setter Property="Margin" Value="0,8,0,0" />
+        </Style>
+        <!-- "3 blocked" chip, red where the normal chip is green -->
+        <Style x:Key="BlockChip" TargetType="Button">
+            <Setter Property="FocusVisualStyle" Value="{StaticResource Focus.Neon}" />
+            <Setter Property="Foreground" Value="{StaticResource B.Text2}" />
+            <Setter Property="FontSize" Value="11.5" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" CornerRadius="12" Background="{StaticResource B.RedSoft}" BorderBrush="{StaticResource B.RedLine}"
+                                BorderThickness="1" Padding="8,2,10,3">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE733;" FontFamily="{StaticResource F.Icon}" FontSize="11" Foreground="{StaticResource B.Red}"
+                                           Margin="0,1,6,0" VerticalAlignment="Center" />
+                                <ContentPresenter VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource B.Red}" />
+                                <Setter Property="Foreground" Value="{StaticResource B.Text}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="MenuLine" TargetType="Separator">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Separator">
+                        <Border Height="1" Margin="8,4" Background="{StaticResource B.Line2}" />
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </UserControl.Resources>
+
+    <Grid Margin="28,22,28,22">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- ============================ Title ============================ -->
+        <DockPanel>
+            <Border x:Name="WatchPill" DockPanel.Dock="Right" CornerRadius="14" Padding="12,5,14,5" BorderThickness="1"
+                    VerticalAlignment="Center" Background="{StaticResource B.Bg2}" BorderBrush="{StaticResource B.Line2}">
+                <StackPanel Orientation="Horizontal">
+                    <Ellipse x:Name="WatchDot" Width="7" Height="7" Fill="{StaticResource B.Text3}" VerticalAlignment="Center" />
+                    <TextBlock x:Name="WatchText" Text="Not connected" FontSize="12" Margin="8,0,0,0" VerticalAlignment="Center" />
+                </StackPanel>
+            </Border>
+            <StackPanel>
+                <TextBlock Text="Apps" Style="{StaticResource T.H1}" />
+                <TextBlock Text="See which apps use the internet and how much data each app uses"
+                           Style="{StaticResource T.Body}" Margin="0,4,0,0" />
+            </StackPanel>
+        </DockPanel>
+
+        <!-- =========================== Toolbar =========================== -->
+        <DockPanel Grid.Row="1" Margin="0,18,0,12" LastChildFill="False">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                <Button Style="{StaticResource Btn.Secondary}" Tag="&#xE8C8;" Content="Copy" Click="OnCopy"
+                        ToolTip="Copy every line shown below" />
+                <Button Style="{StaticResource Btn.Secondary}" Tag="&#xEDE1;" Content="Save to file" Margin="8,0,0,0" Click="OnExport"
+                        ToolTip="Save the lines below as a file for Excel" />
+                <Button Style="{StaticResource Btn.Ghost}" Tag="&#xE74D;" Content="Clear" Margin="8,0,0,0" Click="OnClear"
+                        ToolTip="Remove every line from the list" />
+            </StackPanel>
+            <TextBox x:Name="Search" Style="{StaticResource Input.Search}" Tag="Search apps or websites" Width="250"
+                     TextChanged="OnFilterChanged" AutomationProperties.Name="Search apps or websites" />
+            <Border Style="{StaticResource Seg.Host}" Margin="10,0,0,0">
+                <StackPanel Orientation="Horizontal">
+                    <RadioButton x:Name="FilterAll" Style="{StaticResource Seg}" GroupName="AppsFilter" Content="Everything"
+                                 IsChecked="True" Checked="OnFilterChanged" />
+                    <RadioButton x:Name="FilterProblems" Style="{StaticResource Seg}" GroupName="AppsFilter" Content="Problems only"
+                                 Checked="OnFilterChanged" />
+                </StackPanel>
+            </Border>
+            <ToggleButton x:Name="Follow" Style="{StaticResource Switch}" IsChecked="True" Margin="18,0,0,0"
+                          ToolTip="Always show the newest lines" AutomationProperties.Name="Follow new lines" />
+            <TextBlock Text="Follow" Style="{StaticResource T.Small}" VerticalAlignment="Center" Margin="8,0,0,0" />
+        </DockPanel>
+
+        <Grid Grid.Row="2">
+            <Grid x:Name="Board">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="292" />
+                    <ColumnDefinition Width="14" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <!-- ========================== App list ========================== -->
+                <Border Style="{StaticResource Card}" Padding="0">
+                    <DockPanel>
+                        <Border DockPanel.Dock="Top" BorderBrush="{StaticResource B.Line}" BorderThickness="0,0,0,1" Padding="18,13,16,12">
+                            <Grid>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="APPS ONLINE" Style="{StaticResource T.Eyebrow}" VerticalAlignment="Center" />
+                                    <v:InfoTip Margin="8,0,0,0" Heading="Apps online"
+                                               Body="Every app on this PC that uses the internet through PdaNet. Pick an app to see the websites the app visits and the data the app uses. For private websites PdaNet sees only the website name and the amount of data, never the content"
+                                               Tip="A few apps go online without PdaNet, and those apps do not show up here" />
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                                    <Button x:Name="BlockedChip" Style="{StaticResource BlockChip}" Click="OnOpenBlocked" Visibility="Collapsed"
+                                            ToolTip="See every app and website you blocked" AutomationProperties.Name="Blocked apps and websites" />
+                                    <TextBlock x:Name="AppCount" Style="{StaticResource T.Eyebrow}" VerticalAlignment="Center" Margin="10,0,0,0" />
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+                        <ListBox x:Name="AppList" Background="Transparent" BorderThickness="0" Padding="0,6"
+                                 ItemContainerStyle="{StaticResource AppItem}" SelectionMode="Single"
+                                 SelectionChanged="OnAppSelected" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                 AutomationProperties.Name="Apps">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid ToolTip="{Binding Tip}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <Grid Width="34" Height="34" VerticalAlignment="Center">
+                                            <Border CornerRadius="9" Background="{StaticResource B.Bg3}" BorderBrush="{Binding TileBrush}" BorderThickness="1" />
+                                            <Image Source="{Binding Icon}" Width="22" Height="22" RenderOptions.BitmapScalingMode="HighQuality"
+                                                   Visibility="{Binding IconVisibility}" />
+                                            <TextBlock Text="&#xE8A9;" FontFamily="{StaticResource F.Icon}" FontSize="16" Foreground="{StaticResource B.Accent}"
+                                                       HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="{Binding AllVisibility}" />
+                                            <TextBlock Text="{Binding Monogram}" FontFamily="{StaticResource F.Display}" FontSize="15" FontWeight="SemiBold"
+                                                       Foreground="{StaticResource B.Accent}" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                       Visibility="{Binding MonogramVisibility}" />
+                                            <Ellipse Width="9" Height="9" Fill="{StaticResource B.Accent}" Stroke="{StaticResource B.Bg1}" StrokeThickness="2"
+                                                     HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,-2,-2,0"
+                                                     Visibility="{Binding LiveVisibility}" />
+                                        </Grid>
+                                        <StackPanel Grid.Column="1" Margin="11,0,0,0" VerticalAlignment="Center">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Text="{Binding Name}" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource B.Text}"
+                                                           TextTrimming="CharacterEllipsis" Margin="0,0,8,0" />
+                                                <TextBlock Grid.Column="1" Text="{Binding Total}" FontFamily="{StaticResource F.Mono}" FontSize="12"
+                                                           Foreground="{StaticResource B.Text}" VerticalAlignment="Center" />
+                                            </Grid>
+                                            <Grid Margin="0,3,0,0">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Text="{Binding Sub}" FontSize="11.5" Foreground="{StaticResource B.Text3}"
+                                                           TextTrimming="CharacterEllipsis" Margin="0,0,8,0" />
+                                                <TextBlock Grid.Column="1" Text="{Binding Rate}" FontFamily="{StaticResource F.Mono}" FontSize="10.5"
+                                                           Foreground="{Binding RateBrush}" VerticalAlignment="Center" />
+                                            </Grid>
+                                            <ProgressBar Style="{StaticResource Bar.Thin}" Height="2" Margin="0,7,0,0"
+                                                         Value="{Binding Share, Mode=OneWay}" Visibility="{Binding ShareVisibility}" />
+                                        </StackPanel>
+                                    </Grid>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </DockPanel>
+                </Border>
+
+                <!-- =========================== Details =========================== -->
+                <Border x:Name="DetailCard" Grid.Column="2" Style="{StaticResource Card}" Padding="0" SizeChanged="OnDetailSizeChanged">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+
+                        <!-- Who: icon, name, program file, totals -->
+                        <Grid Margin="20,16,20,14">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <Grid Width="46" Height="46" VerticalAlignment="Center">
+                                <Border CornerRadius="12" Background="{StaticResource B.Bg3}" BorderBrush="{StaticResource B.Line2}" BorderThickness="1" />
+                                <Image x:Name="DetIcon" Width="28" Height="28" RenderOptions.BitmapScalingMode="HighQuality" />
+                                <TextBlock x:Name="DetGlyph" Text="&#xE8A9;" FontFamily="{StaticResource F.Icon}" FontSize="20"
+                                           Foreground="{StaticResource B.Accent}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                <TextBlock x:Name="DetMono" FontFamily="{StaticResource F.Display}" FontSize="19" FontWeight="SemiBold"
+                                           Foreground="{StaticResource B.Accent}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </Grid>
+                            <StackPanel Grid.Column="1" Margin="14,0,16,0" VerticalAlignment="Center">
+                                <TextBlock x:Name="DetName" Text="All apps" Style="{StaticResource T.H2}" FontSize="17" TextTrimming="CharacterEllipsis" />
+                                <TextBlock x:Name="DetPath" Style="{StaticResource T.Mono}" FontSize="11" Foreground="{StaticResource B.Text3}"
+                                           TextTrimming="CharacterEllipsis" Margin="0,4,0,0" />
+                                <DockPanel Margin="0,3,0,0">
+                                    <Button x:Name="FolderBtn" DockPanel.Dock="Left" Style="{StaticResource Btn.Link}" FontSize="11.5"
+                                            Content="Show in folder" Margin="0,0,12,0" Click="OnShowInFolder" VerticalAlignment="Center"
+                                            ToolTip="Open the folder of this app" />
+                                    <Button x:Name="BlockAppBtn" DockPanel.Dock="Left" Style="{StaticResource Btn.Link}" FontSize="11.5"
+                                            Foreground="{StaticResource B.Red}" Content="Block this app" Margin="0,0,12,0" Click="OnBlockApp"
+                                            VerticalAlignment="Center" ToolTip="Stop this app from using the internet through PdaNet" />
+                                    <TextBlock x:Name="DetMeta" Style="{StaticResource T.Small}" FontSize="11.5" TextWrapping="NoWrap"
+                                               TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                </DockPanel>
+                            </StackPanel>
+                            <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                                <StackPanel MinWidth="74">
+                                    <TextBlock Style="{StaticResource StatLabel}"><Run Text="&#x2193; " Foreground="{StaticResource B.Accent}" /><Run Text="RECEIVED" /></TextBlock>
+                                    <TextBlock x:Name="DetDown" Text="0 B" Style="{StaticResource StatValue}" />
+                                </StackPanel>
+                                <StackPanel MinWidth="64" Margin="18,0,0,0">
+                                    <TextBlock Style="{StaticResource StatLabel}"><Run Text="&#x2191; " Foreground="{StaticResource B.Cyan}" /><Run Text="SENT" /></TextBlock>
+                                    <TextBlock x:Name="DetUp" Text="0 B" Style="{StaticResource StatValue}" />
+                                </StackPanel>
+                                <StackPanel x:Name="StatConn" MinWidth="70" Margin="18,0,0,0">
+                                    <TextBlock Text="CONNECTIONS" Style="{StaticResource StatLabel}" />
+                                    <TextBlock x:Name="DetConn" Text="0" Style="{StaticResource StatValue}" />
+                                </StackPanel>
+                                <StackPanel x:Name="StatSites" MinWidth="40" Margin="18,0,0,0">
+                                    <TextBlock Text="WEBSITES" Style="{StaticResource StatLabel}" />
+                                    <TextBlock x:Name="DetSites" Text="0" Style="{StaticResource StatValue}" />
+                                </StackPanel>
+                            </StackPanel>
+                        </Grid>
+
+                        <!-- Shown while the picked app is blocked -->
+                        <Border x:Name="BlockedBanner" Grid.Row="1" Margin="20,0,20,14" CornerRadius="10" Padding="13,9,10,9"
+                                Background="{StaticResource B.RedSoft}" BorderBrush="{StaticResource B.RedLine}" BorderThickness="1"
+                                Visibility="Collapsed">
+                            <DockPanel>
+                                <Button DockPanel.Dock="Right" Style="{StaticResource Btn.Secondary}" Tag="&#xE785;" Content="Unblock"
+                                        Padding="12,5" VerticalAlignment="Center" Click="OnUnblockApp" />
+                                <TextBlock DockPanel.Dock="Left" Text="&#xE733;" FontFamily="{StaticResource F.Icon}" FontSize="16"
+                                           Foreground="{StaticResource B.Red}" VerticalAlignment="Center" Margin="0,0,12,0" />
+                                <StackPanel VerticalAlignment="Center" Margin="0,0,12,0">
+                                    <TextBlock x:Name="BannerTitle" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource B.Text}"
+                                               TextTrimming="CharacterEllipsis" />
+                                    <TextBlock x:Name="BannerBody" Style="{StaticResource T.Small}" Margin="0,2,0,0" TextWrapping="NoWrap"
+                                               TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                            </DockPanel>
+                        </Border>
+
+                        <!-- Last minute chart and top sites -->
+                        <Grid Grid.Row="2" Margin="20,0,20,16" Height="104">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="22" />
+                                <ColumnDefinition x:Name="SitesCol" Width="230" />
+                            </Grid.ColumnDefinitions>
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                </Grid.RowDefinitions>
+                                <Grid>
+                                    <TextBlock Text="LAST MINUTE" Style="{StaticResource T.Eyebrow}" FontSize="10.5" />
+                                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                        <Ellipse Width="7" Height="7" Fill="{StaticResource B.Accent}" VerticalAlignment="Center" />
+                                        <TextBlock x:Name="LegendDown" Text="Received" Style="{StaticResource T.Small}" FontSize="11" Margin="6,0,12,0"
+                                                   VerticalAlignment="Center" />
+                                        <Ellipse Width="7" Height="7" Fill="{StaticResource B.Cyan}" VerticalAlignment="Center" />
+                                        <TextBlock x:Name="LegendUp" Text="Sent" Style="{StaticResource T.Small}" FontSize="11" Margin="6,0,0,0"
+                                                   VerticalAlignment="Center" />
+                                    </StackPanel>
+                                </Grid>
+                                <Grid Grid.Row="1" Margin="0,8,0,0">
+                                    <Grid IsHitTestVisible="False">
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="*" />
+                                            <RowDefinition Height="*" />
+                                            <RowDefinition Height="*" />
+                                        </Grid.RowDefinitions>
+                                        <Line Grid.Row="0" Style="{StaticResource GuideLine}" />
+                                        <Line Grid.Row="1" Style="{StaticResource GuideLine}" />
+                                        <Line Grid.Row="2" Style="{StaticResource GuideLine}" />
+                                        <Line Grid.Row="2" Style="{StaticResource GuideLine}" StrokeDashArray="{x:Null}"
+                                              Stroke="{StaticResource B.Line2}" VerticalAlignment="Bottom" />
+                                    </Grid>
+                                    <Canvas x:Name="Chart" ClipToBounds="True" SizeChanged="OnChartSizeChanged">
+                                        <Path x:Name="DownArea" Fill="{StaticResource B.ChartFill}" />
+                                        <Path x:Name="DownLine" Stroke="{StaticResource B.Accent}" StrokeThickness="1.8" StrokeLineJoin="Round" />
+                                        <Path x:Name="UpLine" Stroke="{StaticResource B.Cyan}" StrokeThickness="1.4" StrokeLineJoin="Round" />
+                                    </Canvas>
+                                    <TextBlock x:Name="ChartMax" Style="{StaticResource T.Eyebrow}" FontSize="10" Margin="0,3,0,0"
+                                               HorizontalAlignment="Right" VerticalAlignment="Top" />
+                                    <TextBlock x:Name="ChartEmpty" Text="No data in the last minute" Style="{StaticResource T.Small}"
+                                               HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                </Grid>
+                            </Grid>
+                            <StackPanel x:Name="SitesPanel" Grid.Column="2">
+                                <TextBlock Text="TOP WEBSITES" Style="{StaticResource T.Eyebrow}" FontSize="10.5" />
+                                <ItemsControl x:Name="TopSites" Margin="0,9,0,0" Focusable="False" ContextMenuOpening="OnSiteMenu">
+                                    <ItemsControl.ContextMenu>
+                                        <ContextMenu />
+                                    </ItemsControl.ContextMenu>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Margin="0,0,0,7" Background="Transparent" ToolTip="{Binding Tip}">
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="Auto" />
+                                                    <RowDefinition Height="Auto" />
+                                                </Grid.RowDefinitions>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Text="{Binding Host}" FontSize="12" Foreground="{StaticResource B.Text2}"
+                                                           TextTrimming="CharacterEllipsis" Margin="0,0,8,0" />
+                                                <TextBlock Grid.Column="1" Text="{Binding Size}" FontFamily="{StaticResource F.Mono}" FontSize="11"
+                                                           Foreground="{StaticResource B.Text3}" VerticalAlignment="Center" />
+                                                <ProgressBar Grid.Row="1" Grid.ColumnSpan="2" Style="{StaticResource Bar.Thin}" Height="2"
+                                                             Margin="0,4,0,0" Value="{Binding Share, Mode=OneWay}" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <TextBlock x:Name="TopSitesEmpty" Text="Websites show up here when apps go online" Style="{StaticResource T.Small}"
+                                           Margin="0,9,0,0" />
+                            </StackPanel>
+                        </Grid>
+
+                        <!-- Requests and connections, terminal style like the Activity page -->
+                        <Border Grid.Row="3" Background="{StaticResource B.Terminal}" CornerRadius="0,0,13,13"
+                                BorderBrush="{StaticResource B.Line}" BorderThickness="0,1,0,0">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <Border BorderBrush="{StaticResource B.Line}" BorderThickness="0,0,0,1" Padding="14,9,24,8">
+                                    <Grid TextElement.FontFamily="{StaticResource F.Mono}" TextElement.FontSize="10.5"
+                                          TextElement.Foreground="{StaticResource B.Text3}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="64" />
+                                            <ColumnDefinition x:Name="HeadAppCol" Width="24" />
+                                            <ColumnDefinition Width="60" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="104" />
+                                            <ColumnDefinition Width="64" />
+                                            <ColumnDefinition Width="72" />
+                                            <ColumnDefinition Width="62" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="TIME" />
+                                        <TextBlock Grid.Column="2" Text="PRIVACY" />
+                                        <TextBlock Grid.Column="3" Text="WEBSITE" />
+                                        <TextBlock Grid.Column="4" Text="RESULT" />
+                                        <TextBlock Grid.Column="5" Text="SENT" TextAlignment="Right" />
+                                        <TextBlock Grid.Column="6" Text="RECEIVED" TextAlignment="Right" />
+                                        <TextBlock Grid.Column="7" Text="TOOK" TextAlignment="Right" />
+                                    </Grid>
+                                </Border>
+
+                                <ListBox x:Name="FlowList" Grid.Row="1" Background="Transparent" BorderThickness="0" Padding="0,4"
+                                         ItemContainerStyle="{StaticResource Terminal.Item}" SelectionMode="Extended"
+                                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                         ScrollViewer.VerticalScrollBarVisibility="Visible"
+                                         VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
+                                         VirtualizingPanel.ScrollUnit="Pixel" Tag="{x:Static Visibility.Visible}"
+                                         MouseDoubleClick="OnFlowDoubleClick" KeyDown="OnFlowKeyDown" ContextMenuOpening="OnFlowMenu"
+                                         AutomationProperties.Name="Lines">
+                                    <ListBox.ContextMenu>
+                                        <ContextMenu />
+                                    </ListBox.ContextMenu>
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Margin="0,2">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="64" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="60" />
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="104" />
+                                                    <ColumnDefinition Width="64" />
+                                                    <ColumnDefinition Width="72" />
+                                                    <ColumnDefinition Width="62" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Text="{Binding Time}" Style="{StaticResource Cell}" Foreground="{StaticResource B.Text3}" />
+                                                <Grid Grid.Column="1" Width="16" Height="16" Margin="0,0,8,0" ToolTip="{Binding AppName}"
+                                                      Visibility="{Binding Tag, RelativeSource={RelativeSource AncestorType=ListBox}}">
+                                                    <Image Source="{Binding AppIcon}" RenderOptions.BitmapScalingMode="HighQuality" />
+                                                    <TextBlock Text="{Binding AppMonogram}" FontSize="10.5" FontWeight="SemiBold"
+                                                               Foreground="{StaticResource B.Accent}" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                               Visibility="{Binding AppMonogramVisibility}" />
+                                                </Grid>
+                                                <Border Grid.Column="2" CornerRadius="4" Background="{Binding BadgeBack}" Padding="5,1,5,2" ToolTip="{Binding BadgeTip}"
+                                                        HorizontalAlignment="Left" VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding Badge}" FontFamily="{StaticResource F.Mono}" FontSize="10" FontWeight="SemiBold"
+                                                               Foreground="{Binding BadgeBrush}" />
+                                                </Border>
+                                                <DockPanel Grid.Column="3" Margin="0,0,10,0">
+                                                    <TextBlock DockPanel.Dock="Left" Text="&#xE785;" FontFamily="{StaticResource F.Icon}" FontSize="11"
+                                                               Foreground="{StaticResource B.Amber}" Margin="0,0,6,0" VerticalAlignment="Center"
+                                                               Visibility="{Binding PlainVisibility}"
+                                                               ToolTip="Not private, people on the same network could read this data" />
+                                                    <TextBlock Style="{StaticResource Cell}"><Run Text="{Binding Host, Mode=OneWay}" Foreground="{StaticResource B.Text}" /><Run Text="{Binding Path, Mode=OneWay}" Foreground="{StaticResource B.Text3}" /></TextBlock>
+                                                </DockPanel>
+                                                <TextBlock Grid.Column="4" Text="{Binding Result}" Foreground="{Binding ResultBrush}"
+                                                           ToolTip="{Binding ResultTip}" Style="{StaticResource Cell}" Margin="0,0,8,0" />
+                                                <TextBlock Grid.Column="5" Text="{Binding Up}" Style="{StaticResource Cell}" TextAlignment="Right" />
+                                                <TextBlock Grid.Column="6" Text="{Binding Down}" Style="{StaticResource Cell}" TextAlignment="Right"
+                                                           Foreground="{StaticResource B.Text}" />
+                                                <TextBlock Grid.Column="7" Text="{Binding Took}" Style="{StaticResource Cell}" TextAlignment="Right" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+
+                                <StackPanel x:Name="NoMatch" Grid.Row="1" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed">
+                                    <TextBlock Text="&#xE71C;" Style="{StaticResource T.Icon}" FontSize="26" Foreground="{StaticResource B.Line2}"
+                                               HorizontalAlignment="Center" />
+                                    <TextBlock x:Name="NoMatchText" Text="No lines match your search" Style="{StaticResource T.Small}"
+                                               Margin="0,10,0,0" HorizontalAlignment="Center" />
+                                </StackPanel>
+
+                                <Border Grid.Row="2" BorderBrush="{StaticResource B.Line}" BorderThickness="0,1,0,0" Padding="16,9">
+                                    <Grid>
+                                        <TextBlock FontFamily="{StaticResource F.Mono}" FontSize="12" TextTrimming="CharacterEllipsis" Margin="0,0,110,0"><Run Text="pdanet" Foreground="{StaticResource B.Accent}" /><Run Text=" &#x203A; " Foreground="{StaticResource B.Text3}" /><Run x:Name="PromptText" Text="waiting for apps" Foreground="{StaticResource B.Text3}" /><Run Text=" &#x258C;"><Run.Foreground><SolidColorBrush x:Name="PromptCaret" Color="#FF2BF5A8" /></Run.Foreground></Run></TextBlock>
+                                        <TextBlock x:Name="CountText" Style="{StaticResource T.Mono}" FontSize="11" Foreground="{StaticResource B.Text3}"
+                                                   HorizontalAlignment="Right" VerticalAlignment="Center" />
+                                    </Grid>
+                                </Border>
+                            </Grid>
+                        </Border>
+                    </Grid>
+                </Border>
+            </Grid>
+
+            <!-- ==================== Nothing recorded yet ==================== -->
+            <Border x:Name="EmptyState" Style="{StaticResource Card}" Visibility="Collapsed">
+                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="520">
+                    <Grid Width="104" Height="104" HorizontalAlignment="Center">
+                        <Ellipse x:Name="RadarRing" Stroke="{StaticResource B.Accent}" StrokeThickness="1.5" Opacity="0"
+                                 RenderTransformOrigin="0.5,0.5" IsHitTestVisible="False">
+                            <Ellipse.RenderTransform>
+                                <ScaleTransform x:Name="RadarScale" />
+                            </Ellipse.RenderTransform>
+                        </Ellipse>
+                        <Ellipse Width="68" Height="68" Stroke="{StaticResource B.Line2}" StrokeThickness="1" StrokeDashArray="2 3" />
+                        <TextBlock x:Name="EmptyIcon" Text="&#xE8A9;" Style="{StaticResource T.Icon}" FontSize="26"
+                                   Foreground="{StaticResource B.Text3}" HorizontalAlignment="Center" />
+                    </Grid>
+                    <TextBlock x:Name="EmptyTitle" Text="Nothing to show yet" Style="{StaticResource T.H2}" FontSize="18"
+                               HorizontalAlignment="Center" Margin="0,14,0,0" />
+                    <TextBlock x:Name="EmptyBody" Style="{StaticResource T.Body}" TextAlignment="Center" HorizontalAlignment="Center"
+                               Margin="0,6,0,0" />
+                    <Button x:Name="EmptyAction" Style="{StaticResource Btn.Primary}" HorizontalAlignment="Center" Margin="0,18,0,0"
+                            Click="OnEmptyAction" />
+
+                    <Grid Margin="0,30,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Margin="6,0">
+                            <Border Style="{StaticResource IconTile}" Width="34" Height="34" CornerRadius="9" HorizontalAlignment="Center">
+                                <TextBlock Text="&#xE8A9;" Style="{StaticResource T.Icon}" FontSize="14" Foreground="{StaticResource B.Accent}"
+                                           HorizontalAlignment="Center" />
+                            </Border>
+                            <TextBlock Text="Every app by name" Style="{StaticResource Hint}" Foreground="{StaticResource B.Text2}" />
+                            <TextBlock Text="with the app icon" Style="{StaticResource Hint}" Margin="0,2,0,0" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Margin="6,0">
+                            <Border Style="{StaticResource IconTile}" Width="34" Height="34" CornerRadius="9" HorizontalAlignment="Center">
+                                <TextBlock Text="&#xE774;" Style="{StaticResource T.Icon}" FontSize="14" Foreground="{StaticResource B.Accent}"
+                                           HorizontalAlignment="Center" />
+                            </Border>
+                            <TextBlock Text="Every website" Style="{StaticResource Hint}" Foreground="{StaticResource B.Text2}" />
+                            <TextBlock Text="and the data used" Style="{StaticResource Hint}" Margin="0,2,0,0" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="2" Margin="6,0">
+                            <Border Style="{StaticResource IconTile}" Width="34" Height="34" CornerRadius="9" HorizontalAlignment="Center">
+                                <TextBlock Text="&#xE72E;" Style="{StaticResource T.Icon}" FontSize="14" Foreground="{StaticResource B.Accent}"
+                                           HorizontalAlignment="Center" />
+                            </Border>
+                            <TextBlock Text="Private" Style="{StaticResource Hint}" Foreground="{StaticResource B.Text2}" />
+                            <TextBlock Text="content is never read" Style="{StaticResource Hint}" Margin="0,2,0,0" />
+                        </StackPanel>
+                    </Grid>
+                </StackPanel>
+            </Border>
+        </Grid>
+    </Grid>
+</UserControl>
