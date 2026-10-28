@@ -32,6 +32,9 @@ public static class Program
             return 0;
         }
 
+        if (args.Length > 0 && args[0] == "--selftest-location")
+            return SelfTest.RunLocation(args.Length > 1 ? args[1] : "Eindhoven");
+
         StartMinimizedRequested = args.Any(a =>
             a.Equals("--start-minimized", StringComparison.OrdinalIgnoreCase));
 

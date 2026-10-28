@@ -45,7 +45,7 @@ public partial class MainWindow : Window
     private FrameworkElement _currentPage;
     private IInputElement? _focusBeforeSheet;
     private ConnectionState _lastState = ConnectionState.Disconnected;
-    private bool _reallyExit, _wasOnline, _dataWarned, _dataCritical, _trayHintShown;
+    private bool _reallyExit, _wasOnline, _dataWarned, _dataCritical, _trayHintShown, _locByConnect;
     private int _pingCounter;
 
     // Screenshot only demo state (see Demo), never set during normal use.
@@ -187,6 +187,14 @@ public partial class MainWindow : Window
         ShowSheet(sheet);
     }
 
+    public void OpenLocation()
+    {
+        if (SheetOpen) return;
+        var sheet = new LocationSheet();
+        sheet.Closed += () => { CloseSheet(); SettingsPage.RefreshLocation(); };
+        ShowSheet(sheet);
+    }
+
     public void OnModeChanged(ConnectionMode mode) => SbMode.Text = Friendly.ModeName(mode).ToUpperInvariant();
 
     public void OnSettingsSaved()
@@ -209,6 +217,11 @@ public partial class MainWindow : Window
                 Notify("You are online", $"Connected with {Friendly.ModeName(_cm.CurrentMode)}");
                 if (!ReferenceEquals(_currentPage, ConnectPage))
                     Toast($"You are online with {Friendly.ModeName(_cm.CurrentMode)}");
+                if (_config.LocationAutoOnConnect && !LocationMask.Active)
+                {
+                    _locByConnect = true;
+                    Task.Run(() => LocationMask.Apply(LocationMask.Default, _config.LocationMatchRegion, out _));
+                }
                 break;
 
             case ConnectionState.Disconnected:
@@ -217,6 +230,11 @@ public partial class MainWindow : Window
                 {
                     _wasOnline = false;
                     Notify("You are offline", "Your network settings are back to normal");
+                }
+                if (_locByConnect)
+                {
+                    _locByConnect = false;
+                    Task.Run(() => LocationMask.Restore());
                 }
                 break;
         }
@@ -288,6 +306,7 @@ public partial class MainWindow : Window
         if (sheet == "wifi") RequestConnectDemo(ConnectionMode.Wifi);
         else if (sheet == "iphone") RequestConnectDemo(ConnectionMode.Iphone);
         else if (sheet == "speed") OpenSpeedTest();
+        else if (sheet == "location") OpenLocation();
 
         var state = Demo.Value("state");
         if (!string.IsNullOrEmpty(state))

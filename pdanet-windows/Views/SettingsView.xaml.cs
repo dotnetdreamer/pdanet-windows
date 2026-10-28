@@ -66,6 +66,18 @@ public partial class SettingsView : UserControl, IPage
             ? $"Your settings live next to the app, in {AppPaths.DataDir}"
             : $"Your settings live in {AppPaths.DataDir}";
 
+        RefreshLocation();
+
+    }
+
+    private void OnOpenLocation(object sender, RoutedEventArgs e) => _shell?.OpenLocation();
+
+    public void RefreshLocation()
+    {
+        var p = LocationMask.Find(LocationMask.ActiveCity);
+        LocationStatus.Text = LocationMask.Active && p != null
+            ? $"On, appearing in {p.City}  {p.OffsetLabel}"
+            : "Off, using your real time zone";
     }
 
     public void Save()

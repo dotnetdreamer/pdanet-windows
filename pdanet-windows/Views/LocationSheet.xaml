@@ -1,0 +1,178 @@
+<UserControl x:Class="PdaNetPortable.Views.LocationSheet"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Width="480">
+    <UserControl.Resources>
+        <Storyboard x:Key="DotPulse" RepeatBehavior="Forever" AutoReverse="True">
+            <DoubleAnimation Storyboard.TargetProperty="Opacity" From="1" To="0.3" Duration="0:0:0.9" />
+        </Storyboard>
+
+        <Style x:Key="CityRow" TargetType="ListBoxItem">
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Margin" Value="0,1" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                        <Border x:Name="bd" CornerRadius="8" Padding="12,8" Background="Transparent"
+                                BorderBrush="Transparent" BorderThickness="1">
+                            <ContentPresenter />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="{StaticResource B.Bg2}" />
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="{StaticResource B.AccentSoft}" />
+                                <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource B.AccentLine}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </UserControl.Resources>
+
+    <Border Background="{StaticResource B.Bg1}" BorderBrush="{StaticResource B.Line2}" BorderThickness="1" CornerRadius="16">
+        <Border.Effect>
+            <DropShadowEffect BlurRadius="40" ShadowDepth="12" Opacity="0.55" Color="Black" />
+        </Border.Effect>
+        <DockPanel Margin="26,22,26,20">
+
+            <!-- Header (fixed) -->
+            <Grid DockPanel.Dock="Top">
+                <StackPanel Orientation="Horizontal">
+                    <Border Style="{StaticResource IconTile}">
+                        <TextBlock Text="&#xE774;" Style="{StaticResource T.Icon}" FontSize="18" Foreground="{StaticResource B.Accent}"
+                                   HorizontalAlignment="Center" />
+                    </Border>
+                    <StackPanel Margin="14,0,0,0" VerticalAlignment="Center">
+                        <TextBlock Text="Pretend you are elsewhere" Style="{StaticResource T.H2}" FontSize="17" />
+                        <TextBlock Text="Set your PC's time zone to another city, no admin needed" Style="{StaticResource T.Small}" Margin="0,2,0,0" />
+                    </StackPanel>
+                </StackPanel>
+                <Border x:Name="StatePill" CornerRadius="11" Padding="9,4" HorizontalAlignment="Right" VerticalAlignment="Top"
+                        Background="{StaticResource B.Bg2}" BorderBrush="{StaticResource B.Line2}" BorderThickness="1">
+                    <StackPanel Orientation="Horizontal">
+                        <Ellipse x:Name="StateDot" Width="7" Height="7" Fill="{StaticResource B.Text3}" VerticalAlignment="Center" />
+                        <TextBlock x:Name="StateText" Text="OFF" FontFamily="{StaticResource F.Mono}" FontSize="10.5" FontWeight="SemiBold"
+                                   Foreground="{StaticResource B.Text3}" Margin="7,0,0,0" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Border>
+            </Grid>
+
+            <!-- Footer (fixed) -->
+            <Grid DockPanel.Dock="Bottom" Margin="0,16,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,12,0">
+                    <TextBlock Text="&#xE72E;" Style="{StaticResource T.Icon}" FontSize="12" Foreground="{StaticResource B.Text3}" />
+                    <TextBlock Text="Reversible, no admin" Style="{StaticResource T.Small}" FontSize="11" Margin="7,0,0,0" VerticalAlignment="Center" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button Style="{StaticResource Btn.Ghost}" Content="Close" Click="OnClose" />
+                    <Button x:Name="ToggleBtn" Style="{StaticResource Btn.Primary}" Tag="&#xE774;" Content="Appear here"
+                            Margin="8,0,0,0" Click="OnToggle" />
+                </StackPanel>
+            </Grid>
+
+            <!-- Middle (scrolls if the window is short) -->
+            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False"
+                          Margin="0,18,0,0" Padding="0,0,2,0">
+                <StackPanel>
+                    <!-- Hero clock -->
+                    <Border x:Name="MaskCard" CornerRadius="12" Padding="18,15"
+                            Background="{StaticResource B.Bg2}" BorderBrush="{StaticResource B.Line2}" BorderThickness="1">
+                        <Border.Effect>
+                            <DropShadowEffect x:Name="MaskGlow" BlurRadius="26" ShadowDepth="0" Opacity="0" Color="#2BF5A8" />
+                        </Border.Effect>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel VerticalAlignment="Center">
+                                <TextBlock Text="APPEAR IN" Style="{StaticResource T.Eyebrow}" />
+                                <TextBlock x:Name="MaskCity" Text="Eindhoven" Style="{StaticResource T.H2}" FontSize="22" Margin="0,2,0,0" />
+                                <TextBlock x:Name="MaskZone" Text="Netherlands" Style="{StaticResource T.Small}" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center" HorizontalAlignment="Right">
+                                <TextBlock x:Name="MaskClock" Text="--:--:--" FontFamily="{StaticResource F.Mono}" FontSize="34"
+                                           Foreground="{StaticResource B.Accent}" HorizontalAlignment="Right" />
+                                <TextBlock x:Name="MaskOffset" Text="UTC+01:00" FontFamily="{StaticResource F.Mono}" FontSize="11"
+                                           Foreground="{StaticResource B.Text3}" HorizontalAlignment="Right" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <StackPanel Orientation="Horizontal" Margin="2,10,0,0">
+                        <TextBlock Text="Your real time" Style="{StaticResource T.Small}" VerticalAlignment="Center" />
+                        <TextBlock x:Name="RealClock" Text="--:--:--" FontFamily="{StaticResource F.Mono}" FontSize="12"
+                                   Foreground="{StaticResource B.Text2}" Margin="8,0,0,0" VerticalAlignment="Center" />
+                        <TextBlock x:Name="RealZone" Text="" Style="{StaticResource T.Small}" Margin="8,0,0,0" VerticalAlignment="Center" />
+                    </StackPanel>
+
+                    <!-- Picker -->
+                    <TextBlock Text="CHOOSE A PLACE" Style="{StaticResource T.Eyebrow}" Margin="0,18,0,8" />
+                    <WrapPanel Margin="0,0,0,8">
+                        <Button Content="Eindhoven" Style="{StaticResource Btn.Ghost}" Margin="0,0,6,6" Click="OnQuickPick" />
+                        <Button Content="London" Style="{StaticResource Btn.Ghost}" Margin="0,0,6,6" Click="OnQuickPick" />
+                        <Button Content="New York" Style="{StaticResource Btn.Ghost}" Margin="0,0,6,6" Click="OnQuickPick" />
+                        <Button Content="Tokyo" Style="{StaticResource Btn.Ghost}" Margin="0,0,6,6" Click="OnQuickPick" />
+                    </WrapPanel>
+                    <TextBox x:Name="Search" Tag="Search a city or country" Margin="0,0,0,8" TextChanged="OnSearchChanged" />
+                    <Border Background="{StaticResource B.Bg0}" BorderBrush="{StaticResource B.Line}" BorderThickness="1" CornerRadius="10" Padding="4">
+                        <ListBox x:Name="CityList" Height="150" Background="Transparent" BorderThickness="0"
+                                 ItemContainerStyle="{StaticResource CityRow}" SelectionChanged="OnCitySelected"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel>
+                                            <TextBlock Text="{Binding City}" Foreground="{StaticResource B.Text}" FontSize="13" FontWeight="SemiBold" />
+                                            <TextBlock Text="{Binding Country}" Style="{StaticResource T.Small}" />
+                                        </StackPanel>
+                                        <TextBlock Grid.Column="1" Text="{Binding OffsetLabel}" VerticalAlignment="Center"
+                                                   FontFamily="{StaticResource F.Mono}" FontSize="11" Foreground="{StaticResource B.Accent}" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </Border>
+
+                    <!-- Options -->
+                    <Grid Margin="0,16,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
+                            <TextBlock Text="Also match region and formats" Style="{StaticResource T.RowTitle}" />
+                            <TextBlock Text="Country, date and number formats follow the place too" Style="{StaticResource T.Small}" Margin="0,2,0,0" />
+                        </StackPanel>
+                        <ToggleButton x:Name="MatchRegion" Grid.Column="1" Style="{StaticResource Switch}"
+                                      AutomationProperties.Name="Also match region and formats" />
+                    </Grid>
+                    <Grid Margin="0,12,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
+                            <TextBlock Text="Turn on when I connect" Style="{StaticResource T.RowTitle}" />
+                            <TextBlock Text="Apply this place when you go online, and undo it when you disconnect" Style="{StaticResource T.Small}" Margin="0,2,0,0" />
+                        </StackPanel>
+                        <ToggleButton x:Name="AutoOnConnect" Grid.Column="1" Style="{StaticResource Switch}"
+                                      AutomationProperties.Name="Turn on when I connect" />
+                    </Grid>
+                </StackPanel>
+            </ScrollViewer>
+        </DockPanel>
+    </Border>
+</UserControl>

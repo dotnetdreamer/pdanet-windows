@@ -526,6 +526,7 @@ public partial class ConnectView : UserControl, IPage
     private void OnDismiss(object sender, RoutedEventArgs e) => _shell?.RequestDisconnect();
     private void OnDisconnectClick(object sender, RoutedEventArgs e) => _shell?.RequestDisconnect();
     private void OnSpeedTest(object sender, RoutedEventArgs e) => _shell?.OpenSpeedTest();
+    private void OnLocation(object sender, RoutedEventArgs e) => _shell?.OpenLocation();
 
     private void OnCopyProxy(object sender, RoutedEventArgs e) => CopyText(DetProxy.Text, "Proxy address copied");
     private void OnCopyError(object sender, RoutedEventArgs e) => CopyText(ErrRaw.Text, "Details copied");

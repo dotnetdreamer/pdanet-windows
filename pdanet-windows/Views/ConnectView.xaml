@@ -295,14 +295,19 @@
                         <TextBlock Text="03" Style="{StaticResource T.StepNo}" />
                         <TextBlock x:Name="Step3Title" Text="Connect" Style="{StaticResource T.H2}" Margin="10,0,0,0" />
                     </StackPanel>
-                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center"
-                                ToolTip="Keyboard shortcut to connect or disconnect">
-                        <Border Style="{StaticResource KeyCap}">
-                            <TextBlock Text="Ctrl" Style="{StaticResource T.Eyebrow}" FontSize="10.5" />
-                        </Border>
-                        <Border Style="{StaticResource KeyCap}" Margin="0">
-                            <TextBlock Text="Enter" Style="{StaticResource T.Eyebrow}" FontSize="10.5" />
-                        </Border>
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                        <Button Style="{StaticResource Btn.Icon}" Content="&#xE774;" Width="32" Height="32" Margin="0,0,12,0"
+                                Click="OnLocation" ToolTip="Pretend you are elsewhere, set your time zone to another city"
+                                AutomationProperties.Name="Pretend you are elsewhere" />
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center"
+                                    ToolTip="Keyboard shortcut to connect or disconnect">
+                            <Border Style="{StaticResource KeyCap}">
+                                <TextBlock Text="Ctrl" Style="{StaticResource T.Eyebrow}" FontSize="10.5" />
+                            </Border>
+                            <Border Style="{StaticResource KeyCap}" Margin="0">
+                                <TextBlock Text="Enter" Style="{StaticResource T.Eyebrow}" FontSize="10.5" />
+                            </Border>
+                        </StackPanel>
                     </StackPanel>
                 </Grid>
 

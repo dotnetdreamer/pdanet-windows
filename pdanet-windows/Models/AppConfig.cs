@@ -39,6 +39,9 @@ public class AppConfig
     // Bypass strategy. false (default) = NO-ADMIN per-socket TTL via the local proxy (no UAC).
     // true = system-wide bypass (global TTL / IPv6 / firewall / hosts) which needs admin/UAC.
     [JsonPropertyName("use_system_bypass")] public bool UseSystemBypass { get; set; } = false;
+    [JsonPropertyName("location_city")] public string LocationCity { get; set; } = "Eindhoven";
+    [JsonPropertyName("location_match_region")] public bool LocationMatchRegion { get; set; } = false;
+    [JsonPropertyName("location_auto_on_connect")] public bool LocationAutoOnConnect { get; set; } = false;
     [JsonPropertyName("agent_port")] public int AgentPort { get; set; } = 8899;   // phone-side agent listen port
     [JsonPropertyName("adb_path")] public string AdbPath { get; set; } = "";       // optional explicit adb.exe path
     [JsonPropertyName("data_warning_mb")] public int DataWarningMb { get; set; } = 10240;   // 10 GB

@@ -12,6 +12,7 @@ This is an independent project inspired by PdaNet. It is not made by, or connect
 - Help stop your mobile carrier from noticing that you are sharing (this is often called tethering)
 - Guide you with a step by step screen that checks your phone is ready before you connect
 - Show live speed, data used, signal strength, and a plain language activity log on a modern dark screen
+- Make your PC read as another city, time zone and region, with no admin
 
 ## What it looks like
 
@@ -104,6 +105,17 @@ Use this to share the phone's hotspot.
 Some mobile plans try to detect when you share your phone's internet with another device. The app can make your PC's traffic look more like normal phone traffic, which helps avoid this. It runs on its own and does not need administrator rights.
 
 This cannot be guaranteed on every network. The strongest option is the phone VPN mode above, because a VPN hides the traffic by encrypting it.
+
+## Pretend you are elsewhere
+
+The app can set your PC's time zone, and optionally its country and date and number formats, to match another city. It needs no admin, and it is undone the moment you turn it off. Open it from the globe button on the home screen, or from Settings.
+
+This changes what Windows and your apps read, such as the clock and the calendar. For what websites and online services see, which comes from your internet address, use Phone VPN mode with a VPN running on the phone. Together your PC reads as that place both on the desktop and online.
+
+- Pick a city, or search for one
+- Watch a live clock for that city next to your real time
+- Turn it on, or have it turn on by itself each time you connect
+- Turn it off to put your real time zone and region straight back
 
 ## Settings
 

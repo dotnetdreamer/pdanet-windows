@@ -334,6 +334,40 @@
                     </StackPanel>
                 </Border>
 
+                <!-- ============================ Location ============================ -->
+                <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                    <StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <Border Style="{StaticResource SectionTile}">
+                                <TextBlock Text="&#xE774;" Style="{StaticResource SectionIcon}" />
+                            </Border>
+                            <StackPanel Margin="12,0,0,0" VerticalAlignment="Center">
+                                <TextBlock Text="Pretend you are elsewhere" Style="{StaticResource T.H2}" />
+                                <TextBlock Text="Set your time zone and region to another city" Style="{StaticResource T.Small}" Margin="0,2,0,0" />
+                            </StackPanel>
+                        </StackPanel>
+                        <Border Style="{StaticResource Divider}" />
+
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <StackPanel Style="{StaticResource TitleRow}">
+                                    <TextBlock Text="Location mask" Style="{StaticResource RowTitle}" />
+                                    <v:InfoTip Style="{StaticResource Info}" Heading="Pretend you are elsewhere"
+                                               Body="Changes the time your PC shows, and optionally its country and formats, to match another city. It needs no admin and is undone the moment you turn it off. For what websites see, use Phone VPN mode with a VPN on the phone"
+                                               Tip="Pair it with Phone VPN for the time here and the location online" />
+                                </StackPanel>
+                                <TextBlock x:Name="LocationStatus" Text="Off, using your real time zone" Style="{StaticResource RowHint}" />
+                            </StackPanel>
+                            <Button Grid.Column="1" Style="{StaticResource Btn.Secondary}" Tag="&#xE774;" Content="Choose place"
+                                    Click="OnOpenLocation" VerticalAlignment="Center" />
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
                 <!-- =========================== Advanced ============================ -->
                 <Expander x:Name="AdvancedExpander" Style="{StaticResource Accordion}" Margin="0,0,0,8">
                     <Expander.Header>

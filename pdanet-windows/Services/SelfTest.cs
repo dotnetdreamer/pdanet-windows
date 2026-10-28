@@ -147,6 +147,35 @@ public static class SelfTest
         return pass ? 0 : 2;
     }
 
+    public static int RunLocation(string city)
+    {
+        Console.WriteLine("==== PdaNet Windows location-mask self-test ====");
+        var preset = LocationMask.Find(city) ?? LocationMask.Presets[0];
+        bool pass = true;
+
+        var before = LocationMask.CurrentTzId();
+        Console.WriteLine($"Before      : {before}");
+        Console.WriteLine($">> Applying : {preset.Display} ({preset.TzId})");
+
+        if (!LocationMask.Apply(preset, matchRegion: false, out var err))
+        {
+            Console.WriteLine($"FAIL: apply failed: {err}");
+            return 1;
+        }
+
+        var masked = LocationMask.CurrentTzId();
+        Report(ref pass, masked == preset.TzId, $"system zone is now '{masked}'");
+        Console.WriteLine($"Masked time : {LocationMask.NowIn(preset.TzId):yyyy-MM-dd HH:mm:ss} ({preset.OffsetLabel})");
+
+        Console.WriteLine(">> Restoring");
+        LocationMask.Restore();
+        var after = LocationMask.CurrentTzId();
+        Report(ref pass, after == before, $"restored to '{after}'");
+
+        Console.WriteLine(pass ? "==== LOCATION SELFTEST PASS ====" : "==== LOCATION SELFTEST FAIL ====");
+        return pass ? 0 : 2;
+    }
+
     private static void Report(ref bool pass, bool ok, string msg)
     {
         Console.WriteLine($"{(ok ? "OK  " : "FAIL")}: {msg}");
