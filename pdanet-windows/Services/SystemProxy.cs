@@ -36,7 +36,8 @@ public static class SystemProxy
         using var key = Registry.CurrentUser.OpenSubKey(RegPath, writable: true)
                          ?? Registry.CurrentUser.CreateSubKey(RegPath);
         if (key == null) return false;
-        if (!File.Exists(SavedFile) && !Save(key)) return false;
+        // Only a saved file that reads back counts. A missing or broken one is written afresh first.
+        if (Load() == null && !Save(key)) return false;
         key.SetValue("ProxyEnable", 1, RegistryValueKind.DWord);
         key.SetValue("ProxyServer", hostPort, RegistryValueKind.String);
         key.SetValue("ProxyOverride", BypassList, RegistryValueKind.String);
@@ -46,21 +47,32 @@ public static class SystemProxy
     }
 
     /// <summary>
-    /// Puts back the values saved before PdaNet pointed Windows at itself. With nothing saved,
-    /// PdaNet did not change the proxy, so nothing is touched.
+    /// Puts back the values saved before PdaNet pointed Windows at itself. With no saved file,
+    /// PdaNet did not change the proxy, so nothing is touched. A saved file that cannot be read
+    /// back only lets PdaNet turn off its own address, any other proxy stays as it is.
     /// </summary>
     public static void ClearWinInet()
     {
-        var saved = Load();
-        if (saved == null) return;
+        if (!File.Exists(SavedFile)) return;
         using var key = Registry.CurrentUser.OpenSubKey(RegPath, writable: true);
         if (key == null) return;
-        Put(key, "ProxyEnable", saved.Enable, RegistryValueKind.DWord);
-        Put(key, "ProxyServer", saved.Server, RegistryValueKind.String);
-        Put(key, "ProxyOverride", saved.Override, RegistryValueKind.String);
+
+        var saved = Load();
+        if (saved != null)
+        {
+            Put(key, "ProxyEnable", saved.Enable, RegistryValueKind.DWord);
+            Put(key, "ProxyServer", saved.Server, RegistryValueKind.String);
+            Put(key, "ProxyOverride", saved.Override, RegistryValueKind.String);
+            Logger.Instance.Info("Windows proxy put back as before");
+        }
+        else
+        {
+            if (IsOurLeftover(key)) TurnOff(key);
+            Logger.Instance.Warning("The saved Windows proxy settings could not be read, PdaNet only turned off its own address");
+        }
+        // Deleted only after the values are back, so a failure above leaves the file for the next start.
         try { File.Delete(SavedFile); } catch { }
         NativeMethods.NotifyProxyChanged();
-        Logger.Instance.Info("Windows proxy put back as before");
     }
 
     /// <summary>
@@ -81,13 +93,23 @@ public static class SystemProxy
 
         using var key = Registry.CurrentUser.OpenSubKey(RegPath, writable: true);
         if (key == null || !IsOurLeftover(key)) return;
-        key.SetValue("ProxyEnable", 0, RegistryValueKind.DWord);
-        try { key.DeleteValue("ProxyServer", false); } catch { }
-        try { key.DeleteValue("ProxyOverride", false); } catch { }
+        TurnOff(key);
         NativeMethods.NotifyProxyChanged();
         Logger.Instance.Info("Turned off a Windows proxy that an older PdaNet left behind");
     }
 
+    /// <summary>Turns off PdaNet's own address and removes PdaNet's bypass list.</summary>
+    private static void TurnOff(RegistryKey key)
+    {
+        key.SetValue("ProxyEnable", 0, RegistryValueKind.DWord);
+        try { key.DeleteValue("ProxyServer", false); } catch { }
+        try { key.DeleteValue("ProxyOverride", false); } catch { }
+    }
+
+    /// <summary>
+    /// Saves the values now in place. The file is written under a temp name and then swapped in,
+    /// so a failed write never leaves a broken file behind, and the saved file must read back.
+    /// </summary>
     private static bool Save(RegistryKey key)
     {
         // PdaNet's own leftover from an older build is not the user's setting, keep the proxy off afterwards.
@@ -95,27 +117,29 @@ public static class SystemProxy
             ? new Saved(0, null, null)
             : new Saved(key.GetValue("ProxyEnable") as int?, key.GetValue("ProxyServer") as string,
                         key.GetValue("ProxyOverride") as string);
+        var temp = SavedFile + ".tmp";
         try
         {
-            File.WriteAllText(SavedFile, JsonSerializer.Serialize(saved));
-            return true;
+            File.WriteAllText(temp, JsonSerializer.Serialize(saved));
+            File.Move(temp, SavedFile, overwrite: true);
+            if (Load() == saved) return true;
+            throw new IOException("the saved file did not read back the same");
         }
         catch (Exception e)
         {
-            Logger.Instance.Warning($"Could not write {SavedFile}: {e.Message}");
+            // Save only runs when no readable file was there, so any file left now came from this failed try.
+            try { File.Delete(temp); } catch { }
+            try { if (File.Exists(SavedFile)) File.Delete(SavedFile); } catch { }
+            Logger.Instance.Warning($"Could not save the Windows proxy settings to {SavedFile}: {e.Message}");
             return false;
         }
     }
 
+    /// <summary>The saved values, or null when there is no saved file or the file cannot be read.</summary>
     private static Saved? Load()
     {
         try { return File.Exists(SavedFile) ? JsonSerializer.Deserialize<Saved>(File.ReadAllText(SavedFile)) : null; }
-        catch
-        {
-            // An unreadable file cannot be put back, drop the file so the next connect saves afresh.
-            try { File.Delete(SavedFile); } catch { }
-            return null;
-        }
+        catch { return null; }
     }
 
     private static void Put(RegistryKey key, string name, object? value, RegistryValueKind kind)

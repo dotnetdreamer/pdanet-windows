@@ -513,6 +513,37 @@ public static class SelfTest
             SystemProxy.SavedFile = tempFile;
             Report(ref pass, !set && ReadProxy(key) == (1, corp, corpBypass), "when the save fails nothing changes and the connect stops");
 
+            // A broken saved file, such as a write cut short, is never trusted: connect saves afresh.
+            WriteProxy(key, 1, corp, corpBypass);
+            File.WriteAllText(tempFile, "{\"Enable\":1,\"Ser");
+            Report(ref pass, SystemProxy.SetWinInet(ours), "connect saves afresh over a broken saved file");
+            SystemProxy.ClearWinInet();
+            Report(ref pass, ReadProxy(key) == (1, corp, corpBypass), "and disconnect then puts the company proxy back");
+
+            // The saved file breaks while connected: disconnect turns off only PdaNet's own address.
+            WriteProxy(key, 1, corp, corpBypass);
+            SystemProxy.SetWinInet(ours);
+            File.WriteAllText(tempFile, "not json");
+            SystemProxy.ClearWinInet();
+            Report(ref pass, ReadProxy(key) == (0, null, null) && !File.Exists(tempFile),
+                "a broken file on disconnect turns off PdaNet's own address");
+
+            WriteProxy(key, 1, corp, corpBypass);
+            File.WriteAllText(tempFile, "not json");
+            SystemProxy.ClearWinInet();
+            Report(ref pass, ReadProxy(key) == (1, corp, corpBypass), "a broken file on disconnect leaves a proxy the user set");
+
+            // The swap into place fails (a folder holds the saved file's name): nothing changes, no temp file stays.
+            WriteProxy(key, 1, corp, corpBypass);
+            string folder = Path.Combine(Path.GetTempPath(), $"pdanet-proxy-folder-{Environment.ProcessId}");
+            Directory.CreateDirectory(folder);
+            SystemProxy.SavedFile = folder;
+            bool swapped = SystemProxy.SetWinInet(ours);
+            SystemProxy.SavedFile = tempFile;
+            Report(ref pass, !swapped && ReadProxy(key) == (1, corp, corpBypass) && !File.Exists(folder + ".tmp"),
+                "a failed swap changes nothing and leaves no temp file");
+            try { Directory.Delete(folder); } catch { }
+
             // The app stops without disconnecting, then starts again.
             WriteProxy(key, 1, corp, null);
             SystemProxy.SetWinInet(ours);

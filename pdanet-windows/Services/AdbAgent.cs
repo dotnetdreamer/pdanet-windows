@@ -260,7 +260,8 @@ public static class AdbAgent
     /// </summary>
     public static (bool Ok, string? Name, string Output) Pair(string? configured, string address, string code)
     {
-        if (Demo.Active) return (true, "adb-RFCY10FRKBK-Qm3x7T", "Successfully paired");
+        // Demo "pairname:none" acts like an adb that does not report which phone it paired.
+        if (Demo.Active) return (true, Demo.Value("pairname") == "none" ? null : "adb-RFCY10FRKBK-Qm3x7T", "Successfully paired");
         var adb = FindAdb(configured);
         if (adb == null) return (false, null, "The adb helper is missing");
         var all = ProcessRunner.Run(adb, $"pair {address} {code}", 20000).All;
@@ -456,11 +457,12 @@ public static class AdbAgent
         return true;
     }
 
+    /// <summary>Stops the phone helper and removes the adb link on localPort (0 when no link was made).</summary>
     public static void Stop(int localPort)
     {
         try { if (_agentProc is { HasExited: false }) _agentProc.Kill(true); } catch { }
         _agentProc = null;
-        RemoveForward(localPort);
+        if (localPort > 0) RemoveForward(localPort);
         KillRemote();
     }
 

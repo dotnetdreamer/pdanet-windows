@@ -188,6 +188,7 @@ public sealed class ConnectionManager
 
     private bool ConnectAdbAgent()
     {
+        _forwardPort = 0;
         _log.Info("[1/4] Looking for your phone");
         if (!AdbAgent.Init(_cfg.AdbPath, _cfg.PhoneLink, _cfg.PhoneSerial, out var err)) { RaiseError(err); return false; }
         var linkWords = Friendly.LinkWords(AdbAgent.Link!.Kind);
@@ -195,12 +196,12 @@ public sealed class ConnectionManager
 
         _log.Info("[2/4] Starting the helper on your phone");
         if (!AdbAgent.Deploy(out err)) { RaiseError(err); return false; }
-        if (!AdbAgent.StartAgent(_cfg.AgentPort, out err)) { RaiseError(err); return false; }
+        if (!AdbAgent.StartAgent(_cfg.AgentPort, out err)) { RaiseError(err); UndoPhone(); return false; }
         _log.Ok($"Phone helper is running on port {_cfg.AgentPort}");
 
         _log.Info("[3/4] Linking this PC to your phone");
-        if (!LinkPhone(out err)) { RaiseError(err); return false; }
-        if (!SystemProxy.SetWinInet($"127.0.0.1:{_cfg.LocalProxyPort}")) { RaiseError(ProxyNotSaved); return false; }
+        if (!LinkPhone(out err)) { RaiseError(err); UndoPhone(); return false; }
+        if (!SystemProxy.SetWinInet($"127.0.0.1:{_cfg.LocalProxyPort}")) { RaiseError(ProxyNotSaved); UndoPhone(); return false; }
         _log.Ok(_relay != null
             ? $"Windows proxy points at 127.0.0.1:{_cfg.LocalProxyPort}, linked to the phone helper, app watch is on"
             : $"Windows proxy points at 127.0.0.1:{_cfg.LocalProxyPort}, linked to the phone helper");
@@ -334,6 +335,19 @@ public sealed class ConnectionManager
         }
         BypassActive = true;
         return true;
+    }
+
+    /// <summary>
+    /// Undoes what a failed Phone VPN connect already started (the relay, the adb link and the phone
+    /// helper), so a failed attempt leaves nothing running. Windows was not pointed at PdaNet yet.
+    /// </summary>
+    private void UndoPhone()
+    {
+        try { _relay?.Stop(); } catch { }
+        _relay = null;
+        AdbAgent.Stop(_forwardPort);
+        _forwardPort = 0;
+        _log.Info("Stopped the phone helper and the link to the phone after the failed connect");
     }
 
     // Windows is only pointed at PdaNet once the user's own proxy values are saved (SystemProxy.SetWinInet).

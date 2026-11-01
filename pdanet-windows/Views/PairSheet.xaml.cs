@@ -148,7 +148,6 @@ public partial class PairSheet : UserControl, ISheet
         if (!AddressRx.IsMatch(address)) { Fail("Type the IP address and port shown under the code on the phone", Address); return; }
 
         Busy(true, "Pairing with the phone");
-        var before = AdbAgent.LastLinks.Select(l => l.Serial).ToHashSet();
         var (paired, name, output) = await Task.Run(() => AdbAgent.Pair(_adbPath, address, code));
         if (_closing.IsCancellationRequested) return;
         if (!paired)
@@ -161,7 +160,7 @@ public partial class PairSheet : UserControl, ISheet
         }
 
         SetStatus("Paired, linking over WiFi", "B.Text2", spin: true);
-        var (linkedAny, found) = await WaitForPairedAsync(name, before);
+        var (linkedAny, found) = await WaitForPairedAsync(name);
         if (linkedAny) { await DoneAsync(found); return; }
         if (_closing.IsCancellationRequested) return;
 
@@ -176,25 +175,26 @@ public partial class PairSheet : UserControl, ISheet
     /// <summary>
     /// After pairing, waits for the paired phone to link over WiFi and returns the phone's link.
     /// Only the phone adb just paired counts: the link name adb pair reported, the phone serial in
-    /// that name, or the address the phone announces under that name. Without a name from adb,
-    /// only a single new WiFi link counts. PdaNet links the announced address itself once, for a
-    /// phone adb does not link alone. Linked without a link means adb linked the address but does
-    /// not list the phone yet.
+    /// that name, or the address the phone announces under that name. PdaNet links the announced
+    /// address itself once, for a phone adb does not link alone. Without a name from adb, PdaNet
+    /// cannot tell which phone was paired, so no link is returned and the user picks the phone in
+    /// the list. Linked without a link means a phone got linked but PdaNet does not know which one.
     /// </summary>
-    private async Task<(bool Linked, PhoneLink? Link)> WaitForPairedAsync(string? name, HashSet<string> before)
+    private async Task<(bool Linked, PhoneLink? Link)> WaitForPairedAsync(string? name)
     {
         var serial = AdbAgent.SerialInWifiName(name);
         string? announced = null;
         bool linked = false;
         for (int i = 0; i < 12 && !_closing.IsCancellationRequested; i++)
         {
-            var wifi = (await Task.Run(() => AdbAgent.List(_adbPath).Links))
-                .Where(l => l.Kind == LinkKind.Wifi && l.Ready).ToList();
-            var hits = name != null
-                ? wifi.Where(l => l.Serial.StartsWith(name, StringComparison.Ordinal) || (serial != null && l.Key == serial)
-                                  || l.Serial == announced).ToList()
-                : wifi.Where(l => l.Serial == announced || !before.Contains(l.Serial)).ToList();
-            if (name != null ? hits.Count > 0 : hits.Count == 1) return (true, hits[0]);
+            if (name != null)
+            {
+                var hit = (await Task.Run(() => AdbAgent.List(_adbPath).Links)).FirstOrDefault(l =>
+                    l.Kind == LinkKind.Wifi && l.Ready
+                    && (l.Serial.StartsWith(name, StringComparison.Ordinal) || (serial != null && l.Key == serial) || l.Serial == announced));
+                if (hit != null) return (true, hit);
+            }
+            else if (linked) return (true, null);
 
             if (!linked)
             {
