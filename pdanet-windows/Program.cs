@@ -39,6 +39,13 @@ public static class Program
         if (args.Length > 0 && args[0] == "--selftest-location")
             return SelfTest.RunLocation(args.Length > 1 ? args[1] : "Eindhoven");
 
+        // MCP server mode: drive the PdaNet browser from an AI agent over stdio.
+        // "--hidden" runs the browser off-screen; "--mcp-smoke [--show]" runs the built-in check.
+        if (args.Length > 0 && args[0] == "--mcp")
+            return Mcp.McpHost.Run(visible: !args.Contains("--hidden"));
+        if (args.Length > 0 && args[0] == "--mcp-smoke")
+            return Mcp.McpHost.Smoke(visible: args.Contains("--show"));
+
         StartMinimizedRequested = args.Any(a =>
             a.Equals("--start-minimized", StringComparison.OrdinalIgnoreCase));
 

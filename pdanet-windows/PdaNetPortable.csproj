@@ -25,6 +25,10 @@
     <EmbeddedResource Include="Resources\proxy.dex">
       <LogicalName>PdaNetPortable.proxy.dex</LogicalName>
     </EmbeddedResource>
+    <!-- In-page helper for the MCP browser tools (accessibility snapshot + element resolver) -->
+    <EmbeddedResource Include="Mcp\snapshot.js">
+      <LogicalName>PdaNetPortable.snapshot.js</LogicalName>
+    </EmbeddedResource>
     <!-- Bundled Google platform-tools adb (portable: no separate adb install needed) -->
     <EmbeddedResource Include="Resources\adb\adb.exe">
       <LogicalName>PdaNetPortable.adb.adb.exe</LogicalName>

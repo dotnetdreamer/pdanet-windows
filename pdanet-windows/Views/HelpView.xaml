@@ -126,6 +126,15 @@
                 </Expander>
 
                 <Expander Style="{StaticResource Accordion}">
+                    <Expander.Header><TextBlock Text="Can an AI assistant use the browser for me?" Style="{StaticResource Q}" /></Expander.Header>
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource A}" Text="Yes. PdaNet has a built in server that lets an AI assistant drive the PdaNet browser, opening pages, reading them, filling in forms and clicking for you, in a window you can watch" />
+                        <TextBlock Style="{StaticResource A}" Margin="0,8,0,0" Text="Because it uses the real PdaNet browser, the assistant stays signed in to your websites, and while PdaNet is connected it browses through your phone" />
+                        <TextBlock Style="{StaticResource A}" Margin="0,8,0,0" Text="To switch it on, start PdaNet from a terminal with the --mcp option and point your assistant at it, the full steps are in docs/mcp.md" />
+                    </StackPanel>
+                </Expander>
+
+                <Expander Style="{StaticResource Accordion}">
                     <Expander.Header><TextBlock Text="A website still shows my real location" Style="{StaticResource Q}" /></Expander.Header>
                     <StackPanel>
                         <TextBlock Style="{StaticResource A}" Text="Some work or school PCs force their own network proxy that overrides this app, in that case open the connection details on the Connect page, copy the proxy address, and set your browser to use it" />

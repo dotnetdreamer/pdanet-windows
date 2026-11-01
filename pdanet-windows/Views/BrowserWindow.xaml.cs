@@ -52,7 +52,7 @@ public partial class BrowserWindow : Window
     private const StringComparison Ignore = StringComparison.OrdinalIgnoreCase;
     private static readonly double[] ZoomSteps = { 0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5 };
 
-    private readonly MainWindow _shell;
+    private readonly MainWindow? _shell;
     private readonly BrowserStore _store = BrowserStore.Instance;
     private readonly ConnectionManager _cm = ConnectionManager.Instance;
     private readonly ObservableCollection<BrowserTab> _tabs = new();
@@ -87,7 +87,7 @@ public partial class BrowserWindow : Window
     // Downloads of this window
     private int _downloads, _downloading;
 
-    public BrowserWindow(MainWindow shell)
+    public BrowserWindow(MainWindow? shell)
     {
         _shell = shell;
         InitializeComponent();
@@ -2163,6 +2163,7 @@ public partial class BrowserWindow : Window
     /// <summary>Brings PdaNet forward: the Apps page while online, where the browser shows up, else the Connect page.</summary>
     private void OpenPdaNet()
     {
+        if (_shell == null) return; // MCP mode runs the browser without the main window
         _shell.ShowFromTray();
         _shell.Navigate(_cm.IsConnected ? AppPage.Apps : AppPage.Connect);
     }

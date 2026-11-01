@@ -17,6 +17,7 @@ This is an independent project inspired by PdaNet. It is not made by, or connect
 - Block an app or a website to save phone data, with no admin
 - Make your PC read as another city, time zone and region, with no admin
 - Browse the web in the PdaNet browser on the Launchpad, with tabs and your web apps one click away
+- Let an AI agent drive that browser for you, through your phone's connection, with a built in MCP server
 
 ## What it looks like
 
@@ -250,6 +251,26 @@ The Launchpad holds apps running right inside PdaNet. The first app is the PdaNe
 - A new tab can bring back the tabs from last time
 - The bar at the bottom of the browser shows how the browser goes online. While PdaNet is connected and app watch is on, the bar says Through PdaNet once PdaNet sees the browser go online. On some company PCs, network settings of the company win over PdaNet, the bar then says Not seen by PdaNet
 - Sign ins, history and website data stay in the data folder next to PdaNet, apart from Edge and Chrome. Clear browsing data in the menu removes the sign ins, history and website data
+
+</details>
+
+<details>
+<summary><h2>Let an AI agent drive the browser</h2></summary>
+
+PdaNet has a built in MCP (Model Context Protocol) server, so an AI agent can drive the PdaNet browser for you: open pages, read them, fill forms, click buttons and take screenshots. Because it drives the real PdaNet browser, the agent stays signed in to your websites and, while PdaNet is connected, browses through your phone's connection.
+
+Start it from a terminal, or point your MCP client at it:
+
+```
+PdaNetPortable.exe --mcp
+```
+
+- It talks to the agent over stdio and opens a real browser window you can watch
+- The agent sees each page as a list of elements it can click and type into, and acts on them with trusted clicks and keystrokes, so it works on modern websites
+- It offers a full set of browser tools: navigate, tabs, snapshot, read, screenshot, click, type, press key, hover, select, scroll, drag, wait, run JavaScript, read the console, and check whether traffic is going through PdaNet
+- Add `--hidden` to keep the window off screen for unattended runs, or run `PdaNetPortable.exe --mcp-smoke` for a quick built in self check
+
+For client setup (Claude Desktop, Claude Code, or any MCP client), the full tool list and the safety notes, see [docs/mcp.md](docs/mcp.md).
 
 </details>
 
