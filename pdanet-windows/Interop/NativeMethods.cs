@@ -96,6 +96,14 @@ internal static class NativeMethods
         finally { CloseHandle(h); }
     }
 
+    // ---- Keyboard state, read from the keyboard itself, so a key held inside a web page counts too ----
+    private const int VK_CONTROL = 0x11;
+
+    [DllImport("user32.dll")]
+    private static extern short GetAsyncKeyState(int vKey);
+
+    public static bool CtrlDown() => (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
+
     // ---- Desktop Window Manager: dark non client area + rounded corners (Windows 10/11) ----
     private const int DWMWA_USE_IMMERSIVE_DARK_MODE = 20;
     private const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;

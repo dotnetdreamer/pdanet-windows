@@ -55,4 +55,9 @@ public static class AppPaths
     public static string BypassState => Path.Combine(DataDir, "bypass_state.json");
     public static string LogFile => Path.Combine(DataDir, "pdanet.log");
     public static string AppRules => Path.Combine(DataDir, "app_rules.json");
+
+    // The PdaNet browser: web apps, recent websites and settings, and the WebView2 data folder
+    // (sign ins, cookies and cache), kept apart from Edge and Chrome.
+    public static string Browser => Path.Combine(DataDir, "browser.json");
+    public static string BrowserDir => Path.Combine(DataDir, "browser");
 }

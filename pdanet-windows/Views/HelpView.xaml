@@ -108,6 +108,24 @@
                 </Expander>
 
                 <Expander Style="{StaticResource Accordion}">
+                    <Expander.Header><TextBlock Text="What is the Launchpad?" Style="{StaticResource Q}" /></Expander.Header>
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource A}" Text="The Launchpad holds apps running right inside PdaNet, the first app is the PdaNet browser, a browser with tabs in a separate window" />
+                        <TextBlock Style="{StaticResource A}" Margin="0,8,0,0" Text="Type a web address or a search on the Launchpad and press Enter, the browser opens straight on the page" />
+                        <TextBlock Style="{StaticResource A}" Margin="0,8,0,0" Text="Pin the websites you use every day as web apps, with Add web app or with the star in the address bar of the browser, each web app then opens in one click from the Launchpad and from every new tab" />
+                    </StackPanel>
+                </Expander>
+
+                <Expander Style="{StaticResource Accordion}">
+                    <Expander.Header><TextBlock Text="Does the PdaNet browser go online through my phone?" Style="{StaticResource Q}" /></Expander.Header>
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource A}" Text="While PdaNet is connected, the browser goes online the same way as other apps on this PC, the bar at the bottom of the browser says Through PdaNet as soon as PdaNet sees the browser go online" />
+                        <TextBlock Style="{StaticResource A}" Margin="0,8,0,0" Text="On some company PCs, network settings of the company win over PdaNet, the bar then says Not seen by PdaNet, app watch needs to be on for the check" />
+                        <TextBlock Style="{StaticResource A}" Margin="0,8,0,0" Text="Sign ins, history and website data of the browser stay in the data folder of PdaNet, apart from Edge and Chrome, to remove the data open the browser menu, then Clear browsing data" />
+                    </StackPanel>
+                </Expander>
+
+                <Expander Style="{StaticResource Accordion}">
                     <Expander.Header><TextBlock Text="A website still shows my real location" Style="{StaticResource Q}" /></Expander.Header>
                     <StackPanel>
                         <TextBlock Style="{StaticResource A}" Text="Some work or school PCs force their own network proxy that overrides this app, in that case open the connection details on the Connect page, copy the proxy address, and set your browser to use it" />
@@ -146,7 +164,7 @@
                             <TextBlock Text="Go to a page" Style="{StaticResource T.Small}" Foreground="{StaticResource B.Text2}" VerticalAlignment="Center" />
                             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                                 <Border Style="{StaticResource KeyCap}"><TextBlock Text="Ctrl" Style="{StaticResource T.Eyebrow}" FontSize="10.5" /></Border>
-                                <Border Style="{StaticResource KeyCap}" Margin="0"><TextBlock Text="1 to 6" Style="{StaticResource T.Eyebrow}" FontSize="10.5" /></Border>
+                                <Border Style="{StaticResource KeyCap}" Margin="0"><TextBlock Text="1 to 7" Style="{StaticResource T.Eyebrow}" FontSize="10.5" /></Border>
                             </StackPanel>
                         </Grid>
                         <Grid Style="{StaticResource KeyRow}">

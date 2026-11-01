@@ -26,7 +26,7 @@ namespace PdaNetPortable;
 
 public enum ToastKind { Success, Info, Warning, Error }
 
-public enum AppPage { Connect, Apps, Activity, History, Settings, Help }
+public enum AppPage { Connect, Apps, Launchpad, Activity, History, Settings, Help }
 
 /// <summary>
 /// The app shell: custom title bar, navigation rail, page host, in window sheets, toasts,
@@ -44,6 +44,7 @@ public partial class MainWindow : Window
     private Drawing.Icon? _iconOff, _iconBusy, _iconOn, _iconError;
     private FrameworkElement _currentPage;
     private IInputElement? _focusBeforeSheet;
+    private BrowserWindow? _browser;
     private ConnectionState _lastState = ConnectionState.Disconnected;
     private bool _reallyExit, _wasOnline, _dataWarned, _dataCritical, _trayHintShown, _locByConnect;
     private int _pingCounter;
@@ -61,6 +62,7 @@ public partial class MainWindow : Window
 
         ConnectPage.Attach(this);
         AppsPage.Attach(this);
+        LaunchpadPage.Attach(this);
         ActivityPage.Attach(this);
         HistoryPage.Attach(this);
         SettingsPage.Attach(this);
@@ -111,6 +113,7 @@ public partial class MainWindow : Window
         FrameworkElement target = page switch
         {
             AppPage.Apps => AppsPage,
+            AppPage.Launchpad => LaunchpadPage,
             AppPage.Activity => ActivityPage,
             AppPage.History => HistoryPage,
             AppPage.Settings => SettingsPage,
@@ -120,6 +123,7 @@ public partial class MainWindow : Window
         RadioButton nav = page switch
         {
             AppPage.Apps => NavApps,
+            AppPage.Launchpad => NavLaunchpad,
             AppPage.Activity => NavActivity,
             AppPage.History => NavHistory,
             AppPage.Settings => NavSettings,
@@ -138,6 +142,7 @@ public partial class MainWindow : Window
 
     private void OnNav(object sender, RoutedEventArgs e) => Navigate(
         sender == NavApps ? AppPage.Apps
+        : sender == NavLaunchpad ? AppPage.Launchpad
         : sender == NavActivity ? AppPage.Activity
         : sender == NavHistory ? AppPage.History
         : sender == NavSettings ? AppPage.Settings
@@ -238,6 +243,41 @@ public partial class MainWindow : Window
             CloseSheet();
             SettingsPage.RefreshBlocked();
         };
+        ShowSheet(sheet);
+    }
+
+    // ============================ Launchpad ============================
+    /// <summary>The PdaNet browser while the browser window is open.</summary>
+    public BrowserWindow? Browser => _browser;
+
+    /// <summary>
+    /// Opens the PdaNet browser, or brings the browser forward, and opens the address when one is
+    /// given. With <paramref name="reuse"/> a web app that is open already gets picked instead.
+    /// </summary>
+    public void OpenBrowser(string? url = null, bool reuse = false, string? plain = null)
+    {
+        if (_browser == null)
+        {
+            _browser = new BrowserWindow(this);
+            _browser.Closed += (_, _) =>
+            {
+                _browser = null;
+                LaunchpadPage.UpdateStatus();
+            };
+            _browser.Show();
+            _browser.Activate();
+        }
+        else _browser.Reveal();
+        if (!string.IsNullOrEmpty(url)) _browser.Open(url, reuse, plain);
+        LaunchpadPage.UpdateStatus();
+    }
+
+    /// <summary>Adds a web app, or edits the web app given.</summary>
+    public void OpenWebAppSheet(WebApp? app, string? url = null, string? name = null)
+    {
+        if (SheetOpen) return;
+        var sheet = new WebAppSheet(app, url, name);
+        sheet.Closed += CloseSheet;
         ShowSheet(sheet);
     }
 
@@ -351,6 +391,9 @@ public partial class MainWindow : Window
             var pick = Demo.Value("app");
             if (!string.IsNullOrEmpty(pick)) AppsPage.DemoSelect(pick);
         }
+        var browser = Demo.Value("browser");
+        if ((nav.Equals("launchpad", StringComparison.OrdinalIgnoreCase) || browser.Length > 0) && Demo.Value("pins") != "no")
+            BrowserStore.Instance.SeedDemo();
         if (!string.IsNullOrEmpty(nav))
             Navigate(Enum.TryParse<AppPage>(nav, true, out var p) ? p : AppPage.Connect);
         var record = Demo.Value("record");
@@ -364,6 +407,15 @@ public partial class MainWindow : Window
         else if (sheet == "blocked") OpenBlocked();
         else if (sheet == "phones") OpenPhones();
         else if (sheet == "pair") OpenPair();
+        else if (sheet == "webapp") OpenWebAppSheet(null);
+
+        // "browser:open" opens the browser on the start page, "browser:a|b" opens the addresses a and b in tabs.
+        if (browser.Length > 0)
+        {
+            OpenBrowser();
+            if (browser != "open")
+                foreach (var url in browser.Split('|', StringSplitOptions.RemoveEmptyEntries)) _browser?.Open(url);
+        }
 
         var state = Demo.Value("state");
         if (!string.IsNullOrEmpty(state))
@@ -622,10 +674,11 @@ public partial class MainWindow : Window
         else if (ctrl && e.Key == Key.D) RequestDisconnect();
         else if (ctrl && e.Key is Key.D1 or Key.NumPad1) Navigate(AppPage.Connect);
         else if (ctrl && e.Key is Key.D2 or Key.NumPad2) Navigate(AppPage.Apps);
-        else if (ctrl && e.Key is Key.D3 or Key.NumPad3) Navigate(AppPage.Activity);
-        else if (ctrl && e.Key is Key.D4 or Key.NumPad4) Navigate(AppPage.History);
-        else if (ctrl && e.Key is Key.D5 or Key.NumPad5) Navigate(AppPage.Settings);
-        else if (ctrl && e.Key is Key.D6 or Key.NumPad6) Navigate(AppPage.Help);
+        else if (ctrl && e.Key is Key.D3 or Key.NumPad3) Navigate(AppPage.Launchpad);
+        else if (ctrl && e.Key is Key.D4 or Key.NumPad4) Navigate(AppPage.Activity);
+        else if (ctrl && e.Key is Key.D5 or Key.NumPad5) Navigate(AppPage.History);
+        else if (ctrl && e.Key is Key.D6 or Key.NumPad6) Navigate(AppPage.Settings);
+        else if (ctrl && e.Key is Key.D7 or Key.NumPad7) Navigate(AppPage.Help);
         else if (ctrl && e.Key == Key.S)
         {
             if (ReferenceEquals(_currentPage, SettingsPage)) SettingsPage.Save();
@@ -694,10 +747,19 @@ public partial class MainWindow : Window
             RequestConnect();
         });
         var disconnect = new WinForms.ToolStripMenuItem("Disconnect", null, (_, _) => RequestDisconnect());
+        var browser = new WinForms.ToolStripMenuItem("Open browser", null, (_, _) =>
+        {
+            if (WebRuntime.Version() != null) OpenBrowser();
+            else
+            {
+                ShowFromTray();
+                Navigate(AppPage.Launchpad);
+            }
+        });
         var quit = new WinForms.ToolStripMenuItem("Quit", null, (_, _) => ExitApp());
         menu.Items.AddRange(new WinForms.ToolStripItem[]
         {
-            open, new WinForms.ToolStripSeparator(), connect, disconnect, new WinForms.ToolStripSeparator(), quit,
+            open, browser, new WinForms.ToolStripSeparator(), connect, disconnect, new WinForms.ToolStripSeparator(), quit,
         });
         foreach (WinForms.ToolStripItem item in menu.Items)
         {
@@ -805,6 +867,9 @@ public partial class MainWindow : Window
             HideToTray();
             return;
         }
+
+        // The browser closes first, so the browser keeps its tabs for next time.
+        try { _browser?.Close(); } catch { }
 
         // Real shutdown: restore the system proxy (unprivileged) so browsing is not left broken.
         try { SystemProxy.ClearWinInet(); } catch { }

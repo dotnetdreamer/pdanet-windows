@@ -1,0 +1,355 @@
+<UserControl x:Class="PdaNetPortable.Views.LaunchpadView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:v="clr-namespace:PdaNetPortable.Views">
+    <UserControl.Resources>
+        <!-- A web app tile: icon, name and website, glows on hover and shows an open arrow -->
+        <Style x:Key="AppTile" TargetType="Button">
+            <Setter Property="FocusVisualStyle" Value="{StaticResource Focus.Neon}" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Width" Value="168" />
+            <Setter Property="Height" Value="118" />
+            <Setter Property="Margin" Value="0,0,12,12" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Grid>
+                            <Border x:Name="Glow" CornerRadius="14" Background="{StaticResource B.Accent}" Opacity="0" Margin="10">
+                                <Border.Effect>
+                                    <BlurEffect Radius="26" />
+                                </Border.Effect>
+                            </Border>
+                            <Border x:Name="Bd" CornerRadius="14" Background="{StaticResource B.Card}" BorderBrush="{StaticResource B.Line}"
+                                    BorderThickness="1" Padding="16,14">
+                                <Grid>
+                                    <ContentPresenter />
+                                    <TextBlock x:Name="Arrow" Text="&#xE8A7;" FontFamily="{StaticResource F.Icon}" FontSize="12"
+                                               Foreground="{StaticResource B.Accent}" HorizontalAlignment="Right" VerticalAlignment="Top"
+                                               Margin="0,2,0,0" Opacity="0" />
+                                </Grid>
+                            </Border>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource B.AccentLine}" />
+                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource B.Bg2}" />
+                                <Setter TargetName="Glow" Property="Opacity" Value="0.09" />
+                                <Setter TargetName="Arrow" Property="Opacity" Value="1" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource B.Bg1}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- A recent website: icon, title, website and when -->
+        <Style x:Key="RecentRow" TargetType="Button">
+            <Setter Property="FocusVisualStyle" Value="{StaticResource Focus.Neon}" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" CornerRadius="10" Background="Transparent" Padding="10,8">
+                            <ContentPresenter />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource B.Hover}" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource B.AccentSoft}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="MenuLine" TargetType="Separator">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Separator">
+                        <Border Height="1" Margin="8,4" Background="{StaticResource B.Line2}" />
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="Orbit" TargetType="Ellipse">
+            <Setter Property="Stroke" Value="{StaticResource B.AccentLine}" />
+            <Setter Property="StrokeThickness" Value="1" />
+            <Setter Property="StrokeDashArray" Value="1 5" />
+            <Setter Property="HorizontalAlignment" Value="Center" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="IsHitTestVisible" Value="False" />
+        </Style>
+    </UserControl.Resources>
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False">
+        <Grid Margin="28,22,28,26">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <!-- ============================ Title ============================ -->
+            <DockPanel>
+                <Border x:Name="RoutePill" DockPanel.Dock="Right" CornerRadius="14" Padding="12,5,14,5" BorderThickness="1"
+                        VerticalAlignment="Center" Background="{StaticResource B.Bg2}" BorderBrush="{StaticResource B.Line2}">
+                    <StackPanel Orientation="Horizontal">
+                        <Ellipse x:Name="RouteDot" Width="7" Height="7" Fill="{StaticResource B.Text3}" VerticalAlignment="Center" />
+                        <TextBlock x:Name="RouteText" Text="PdaNet offline" FontSize="12" Margin="8,0,0,0" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Border>
+                <StackPanel>
+                    <TextBlock Text="Launchpad" Style="{StaticResource T.H1}" />
+                    <TextBlock Text="Apps running right inside PdaNet, starting with the PdaNet browser"
+                               Style="{StaticResource T.Body}" Margin="0,4,0,0" />
+                </StackPanel>
+            </DockPanel>
+
+            <!-- ======================= The PdaNet browser ======================= -->
+            <Border Grid.Row="1" Style="{StaticResource Card}" Padding="0" Margin="0,20,0,0" ClipToBounds="True">
+                <Grid>
+                    <Border CornerRadius="13" Background="{StaticResource B.AccentWash}" IsHitTestVisible="False" />
+                    <Rectangle IsHitTestVisible="False" RadiusX="13" RadiusY="13">
+                        <Rectangle.Fill>
+                            <RadialGradientBrush Center="0.9,0.35" GradientOrigin="0.9,0.35" RadiusX="0.45" RadiusY="0.9">
+                                <GradientStop Color="#1A2BF5A8" Offset="0" />
+                                <GradientStop Color="#002BF5A8" Offset="1" />
+                            </RadialGradientBrush>
+                        </Rectangle.Fill>
+                    </Rectangle>
+
+                    <!-- Orbit rings around the bottom right corner, two satellite dots turn while the page is on screen.
+                         A zero size canvas keeps the rings out of the layout, the card clips the rest -->
+                    <Canvas Width="0" Height="0" HorizontalAlignment="Right" VerticalAlignment="Bottom" IsHitTestVisible="False">
+                        <Grid Width="300" Height="300" Canvas.Left="-140" Canvas.Top="-170" Opacity="0.9">
+                            <Ellipse Style="{StaticResource Orbit}" Width="300" Height="300" Opacity="0.45" />
+                            <Ellipse Style="{StaticResource Orbit}" Width="210" Height="210" Opacity="0.7" />
+                            <Ellipse Style="{StaticResource Orbit}" Width="120" Height="120" StrokeDashArray="{x:Null}" Stroke="{StaticResource B.Line2}" />
+                            <Grid Width="300" Height="300" RenderTransformOrigin="0.5,0.5">
+                                <Grid.RenderTransform>
+                                    <RotateTransform x:Name="SatelliteTurn" Angle="-38" />
+                                </Grid.RenderTransform>
+                                <Ellipse Width="9" Height="9" Fill="{StaticResource B.Accent}" HorizontalAlignment="Center" VerticalAlignment="Top"
+                                         Margin="0,41,0,0">
+                                    <Ellipse.Effect>
+                                        <DropShadowEffect Color="#FF2BF5A8" BlurRadius="14" ShadowDepth="0" Opacity="1" />
+                                    </Ellipse.Effect>
+                                </Ellipse>
+                                <Ellipse Width="6" Height="6" Fill="{StaticResource B.Cyan}" HorizontalAlignment="Left" VerticalAlignment="Center"
+                                         Margin="-3,0,0,0">
+                                    <Ellipse.Effect>
+                                        <DropShadowEffect Color="#FF46D7F8" BlurRadius="10" ShadowDepth="0" Opacity="1" />
+                                    </Ellipse.Effect>
+                                </Ellipse>
+                            </Grid>
+                        </Grid>
+                    </Canvas>
+
+                    <Grid Margin="26,24,26,22">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <!-- Globe orb with a ring that breathes while the browser is open -->
+                        <Grid Width="72" Height="72" VerticalAlignment="Top">
+                            <Ellipse x:Name="OrbRing" Stroke="{StaticResource B.Accent}" StrokeThickness="1.2" Opacity="0"
+                                     RenderTransformOrigin="0.5,0.5">
+                                <Ellipse.RenderTransform>
+                                    <ScaleTransform x:Name="OrbScale" />
+                                </Ellipse.RenderTransform>
+                            </Ellipse>
+                            <Border Width="64" Height="64" CornerRadius="20" Background="{StaticResource B.AccentSoft}"
+                                    BorderBrush="{StaticResource B.AccentLine}" BorderThickness="1">
+                                <TextBlock Text="&#xE774;" Style="{StaticResource T.Icon}" FontSize="30" Foreground="{StaticResource B.Accent}"
+                                           HorizontalAlignment="Center" />
+                            </Border>
+                        </Grid>
+
+                        <StackPanel Grid.Column="1" Margin="20,4,20,0">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="PdaNet Browser" Style="{StaticResource T.H2}" FontSize="21" FontFamily="{StaticResource F.Display}" />
+                                <Border x:Name="StateBadge" Style="{StaticResource Badge}" Margin="12,2,0,0">
+                                    <TextBlock x:Name="StateText" Text="READY" Style="{StaticResource T.Badge}" />
+                                </Border>
+                            </StackPanel>
+                            <TextBlock x:Name="HeroBody" Style="{StaticResource T.Body}" Margin="0,7,0,0" MaxWidth="540" HorizontalAlignment="Left"
+                                       Text="Browse the web in a separate window with tabs, your web apps one click away, and sign ins kept apart from Edge and Chrome" />
+                        </StackPanel>
+
+                        <Button x:Name="OpenBtn" Grid.Column="2" Style="{StaticResource Btn.Primary}" Tag="&#xE8A7;" Content="Open browser"
+                                Padding="18,10" VerticalAlignment="Top" Margin="0,4,0,0" Click="OnOpenBrowser"
+                                ToolTip="Open the PdaNet browser" />
+
+                        <!-- Type and go -->
+                        <Grid Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" Margin="20,20,0,0" MaxWidth="720" HorizontalAlignment="Stretch">
+                            <!-- No top/bottom padding: the Segoe UI Variable line box is tall, padding here would
+                                 squeeze it and clip the text. The text centers in the full height instead -->
+                            <TextBox x:Name="GoBox" Style="{StaticResource Input.Search}" Tag="Search the web or type a web address"
+                                     Height="44" FontSize="14" Padding="36,0,86,0" KeyDown="OnGoKey"
+                                     AutomationProperties.Name="Search the web or type a web address" />
+                            <Border Style="{StaticResource KeyCap}" HorizontalAlignment="Right" Margin="0,0,10,0" IsHitTestVisible="False">
+                                <TextBlock Text="Enter" Style="{StaticResource T.Eyebrow}" FontSize="10.5" />
+                            </Border>
+                        </Grid>
+
+                        <StackPanel Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" Orientation="Horizontal" Margin="22,12,0,0">
+                            <Ellipse x:Name="LiveDot" Width="6" Height="6" Fill="{StaticResource B.Text3}" VerticalAlignment="Center" />
+                            <TextBlock x:Name="LiveText" Style="{StaticResource T.Small}" Margin="8,0,0,0" VerticalAlignment="Center" />
+                            <TextBlock Text="&#x2502;" Style="{StaticResource T.Small}" Foreground="{StaticResource B.Line2}" Margin="12,0"
+                                       VerticalAlignment="Center" />
+                            <TextBlock x:Name="EngineText" Style="{StaticResource T.Small}" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Grid>
+                </Grid>
+            </Border>
+
+            <!-- =================== Web apps and recent websites =================== -->
+            <Grid Grid.Row="2" Margin="0,26,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="24" />
+                    <ColumnDefinition Width="340" />
+                </Grid.ColumnDefinitions>
+
+                <StackPanel>
+                    <DockPanel Margin="2,0,0,12">
+                        <Button DockPanel.Dock="Right" Style="{StaticResource Btn.Secondary}" Tag="&#xE710;" Content="Add web app"
+                                Padding="12,6" Click="OnAddWebApp" />
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <TextBlock Text="WEB APPS" Style="{StaticResource T.Eyebrow}" VerticalAlignment="Center" />
+                            <v:InfoTip Margin="8,0,0,0" Heading="Web apps"
+                                       Body="Websites you use every day, pinned here and on every new tab in the browser. Each web app opens in the PdaNet browser in one click, in the tab where the web app is already open"
+                                       Tip="In the browser, press the star in the address bar to pin the website you are on" />
+                            <TextBlock x:Name="AppCount" Style="{StaticResource T.Eyebrow}" VerticalAlignment="Center" Margin="10,0,0,0" />
+                        </StackPanel>
+                    </DockPanel>
+
+                    <ItemsControl x:Name="AppTiles" Focusable="False">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Button Style="{StaticResource AppTile}" Click="OnOpenWebApp" ToolTip="{Binding Tip}"
+                                        AutomationProperties.Name="{Binding Name}" ContextMenuOpening="OnWebAppMenu">
+                                    <Button.ContextMenu>
+                                        <ContextMenu />
+                                    </Button.ContextMenu>
+                                    <StackPanel>
+                                        <Grid Width="40" Height="40" HorizontalAlignment="Left">
+                                            <Border CornerRadius="11" Background="{StaticResource B.Bg3}" BorderBrush="{StaticResource B.Line2}" BorderThickness="1" />
+                                            <Image Source="{Binding Icon}" Width="22" Height="22" RenderOptions.BitmapScalingMode="HighQuality"
+                                                   Visibility="{Binding IconVisibility}" />
+                                            <TextBlock Text="{Binding Monogram}" FontFamily="{StaticResource F.Display}" FontSize="17" FontWeight="SemiBold"
+                                                       Foreground="{StaticResource B.Accent}" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                       Visibility="{Binding MonogramVisibility}" />
+                                        </Grid>
+                                        <TextBlock Text="{Binding Name}" FontSize="13.5" FontWeight="SemiBold" Foreground="{StaticResource B.Text}"
+                                                   Margin="0,14,0,0" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Text="{Binding Detail}" Style="{StaticResource T.Mono}" FontSize="11" Foreground="{StaticResource B.Text3}"
+                                                   Margin="0,3,0,0" TextTrimming="CharacterEllipsis" />
+                                    </StackPanel>
+                                </Button>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <!-- No web apps yet -->
+                    <Grid x:Name="AppsEmpty" Visibility="Collapsed" Margin="0,0,12,0">
+                        <Rectangle RadiusX="14" RadiusY="14" Stroke="{StaticResource B.Line2}" StrokeThickness="1.2" StrokeDashArray="3 4"
+                                   IsHitTestVisible="False" />
+                        <Grid Margin="22,20,22,20">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Border Style="{StaticResource IconTile}" VerticalAlignment="Top">
+                                <TextBlock Text="&#xE74C;" Style="{StaticResource T.Icon}" FontSize="17" Foreground="{StaticResource B.Accent}"
+                                           HorizontalAlignment="Center" />
+                            </Border>
+                            <StackPanel Grid.Column="1" Margin="16,0,0,0">
+                                <TextBlock Text="Pin the websites you use every day" Style="{StaticResource T.RowTitle}" FontSize="14" />
+                                <TextBlock Style="{StaticResource T.Body}" Margin="0,5,0,0"
+                                           Text="Each web app opens in the PdaNet browser in one click, from here and from every new tab" />
+                                <TextBlock Style="{StaticResource T.Small}" Margin="0,8,0,0"
+                                           Text="In the browser, press the star in the address bar to pin the website you are on" />
+                                <Button Style="{StaticResource Btn.Primary}" Tag="&#xE710;" Content="Add web app" HorizontalAlignment="Left"
+                                        Margin="0,16,0,0" Click="OnAddWebApp" />
+                            </StackPanel>
+                        </Grid>
+                    </Grid>
+                </StackPanel>
+
+                <StackPanel Grid.Column="2">
+                    <DockPanel Margin="2,0,0,12" MinHeight="31">
+                        <Button x:Name="ClearRecentBtn" DockPanel.Dock="Right" Style="{StaticResource Btn.Ghost}" Tag="&#xE74D;" Content="Clear"
+                                Padding="10,5" Click="OnClearRecent" ToolTip="Clear the list of recent websites" />
+                        <TextBlock Text="RECENT WEBSITES" Style="{StaticResource T.Eyebrow}" VerticalAlignment="Center" />
+                    </DockPanel>
+                    <Border Style="{StaticResource Card}" Padding="6">
+                        <Grid>
+                            <ItemsControl x:Name="RecentList" Focusable="False">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Button Style="{StaticResource RecentRow}" Click="OnOpenRecent" ToolTip="{Binding Tip}"
+                                                AutomationProperties.Name="{Binding Name}" ContextMenuOpening="OnRecentMenu">
+                                            <Button.ContextMenu>
+                                                <ContextMenu />
+                                            </Button.ContextMenu>
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <Grid Width="30" Height="30" VerticalAlignment="Center">
+                                                    <Border CornerRadius="8" Background="{StaticResource B.Bg3}" BorderBrush="{StaticResource B.Line2}" BorderThickness="1" />
+                                                    <Image Source="{Binding Icon}" Width="16" Height="16" RenderOptions.BitmapScalingMode="HighQuality"
+                                                           Visibility="{Binding IconVisibility}" />
+                                                    <TextBlock Text="{Binding Monogram}" FontFamily="{StaticResource F.Display}" FontSize="13" FontWeight="SemiBold"
+                                                               Foreground="{StaticResource B.Accent}" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                               Visibility="{Binding MonogramVisibility}" />
+                                                </Grid>
+                                                <StackPanel Grid.Column="1" Margin="11,0,10,0" VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding Name}" FontSize="12.5" FontWeight="SemiBold" Foreground="{StaticResource B.Text}"
+                                                               TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Text="{Binding Detail}" Style="{StaticResource T.Mono}" FontSize="10.5"
+                                                               Foreground="{StaticResource B.Text3}" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" />
+                                                </StackPanel>
+                                                <TextBlock Grid.Column="2" Text="{Binding When}" Style="{StaticResource T.Mono}" FontSize="10.5"
+                                                           Foreground="{StaticResource B.Text3}" VerticalAlignment="Center" />
+                                            </Grid>
+                                        </Button>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <StackPanel x:Name="RecentEmpty" Margin="14,22,14,24" Visibility="Collapsed">
+                                <TextBlock Text="&#xE81C;" Style="{StaticResource T.Icon}" FontSize="22" Foreground="{StaticResource B.Line2}"
+                                           HorizontalAlignment="Center" />
+                                <TextBlock Text="Websites you open in the PdaNet browser show up here" Style="{StaticResource T.Small}"
+                                           TextAlignment="Center" HorizontalAlignment="Center" Margin="0,10,0,0" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+                </StackPanel>
+            </Grid>
+        </Grid>
+    </ScrollViewer>
+</UserControl>

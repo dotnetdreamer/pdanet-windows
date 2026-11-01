@@ -16,6 +16,7 @@ This is an independent project inspired by PdaNet. It is not made by, or connect
 - Show which apps use the internet, the websites each app visits and the data each app uses, live
 - Block an app or a website to save phone data, with no admin
 - Make your PC read as another city, time zone and region, with no admin
+- Browse the web in the PdaNet browser on the Launchpad, with tabs and your web apps one click away
 
 ## What it looks like
 
@@ -96,6 +97,27 @@ Pick how to connect, follow the short checklist so your phone is ready, then pre
       <img src="docs/screenshots/apps-blocked-list.png" alt="The list of blocked apps and websites">
     </td>
   </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <b>The Launchpad</b><br>
+      Apps running right inside PdaNet, starting with a browser
+      <img src="docs/screenshots/launchpad.png" alt="The Launchpad with the PdaNet browser, web apps and recent websites">
+    </td>
+    <td width="50%" valign="top">
+      <b>A separate browser</b><br>
+      Tabs, a search box and your web apps on every new tab
+      <img src="docs/screenshots/browser.png" alt="The start page of the PdaNet browser">
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <b>Find on page and more</b><br>
+      The bar at the bottom shows how the browser goes online
+      <img src="docs/screenshots/browser-find.png" alt="A web page in the PdaNet browser with find on page">
+    </td>
+    <td width="50%" valign="top">
+    </td>
+  </tr>
 </table>
 
 ## What you need
@@ -105,6 +127,7 @@ Pick how to connect, follow the short checklist so your phone is ready, then pre
 - A USB cable
 - USB debugging turned on in the phone's Developer options (only for the phone VPN mode)
 - For the phone VPN mode over WiFi, Android 11 or later with Wireless debugging turned on
+- For the PdaNet browser, Microsoft Edge WebView2, which comes with Windows 11, when WebView2 is missing the browser offers the free download from Microsoft
 
 ## Getting the app
 
@@ -211,6 +234,22 @@ Right click a line on the Apps page to block the app or the website, for one app
 - In USB and WiFi modes most apps go online through PdaNet, but a few apps, such as Windows Update, go online without PdaNet, and blocks cannot stop those apps without admin rights
 
 </details>
+
+</details>
+
+<details>
+<summary><h2>The Launchpad and the PdaNet browser</h2></summary>
+
+The Launchpad holds apps running right inside PdaNet. The first app is the PdaNet browser, a browser with tabs in a separate window, built on Microsoft Edge WebView2.
+
+- Open the Launchpad from the bar on the left, or right click the tray icon and choose Open browser
+- Type a web address or a search on the Launchpad and press Enter, the browser opens straight on the page
+- Pin the websites you use every day as web apps, with Add web app on the Launchpad or with the star in the address bar. A web app opens in one click from the Launchpad and from every new tab, in the tab where the web app is already open
+- As you type, the address bar suggests your web apps and the websites you opened before
+- Find on page, zoom, print, downloads, full screen and the search engine are in the menu, with the usual keys such as Ctrl and T for a new tab and Ctrl and F to find
+- A new tab can bring back the tabs from last time
+- The bar at the bottom of the browser shows how the browser goes online. While PdaNet is connected and app watch is on, the bar says Through PdaNet once PdaNet sees the browser go online. On some company PCs, network settings of the company win over PdaNet, the bar then says Not seen by PdaNet
+- Sign ins, history and website data stay in the data folder next to PdaNet, apart from Edge and Chrome. Clear browsing data in the menu removes the sign ins, history and website data
 
 </details>
 

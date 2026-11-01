@@ -1,0 +1,776 @@
+<Window x:Class="PdaNetPortable.Views.BrowserWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="PdaNet Browser" Width="1280" Height="840" MinWidth="640" MinHeight="420"
+        WindowStartupLocation="Manual" ResizeMode="CanResize"
+        Background="{StaticResource B.Bg0}" Foreground="{StaticResource B.Text}"
+        FontFamily="{StaticResource F.Ui}" FontSize="13"
+        UseLayoutRounding="True" SnapsToDevicePixels="True"
+        Icon="pack://application:,,,/Resources/app.ico">
+
+    <WindowChrome.WindowChrome>
+        <WindowChrome CaptionHeight="42" ResizeBorderThickness="6" GlassFrameThickness="0"
+                      CornerRadius="0" UseAeroCaptionButtons="False" />
+    </WindowChrome.WindowChrome>
+
+    <Window.Resources>
+        <!-- Small round button inside a tab: close, or the sound of the tab -->
+        <Style x:Key="TabClose" TargetType="Button">
+            <Setter Property="Width" Value="22" />
+            <Setter Property="Height" Value="22" />
+            <Setter Property="Foreground" Value="{StaticResource B.Text3}" />
+            <Setter Property="FontFamily" Value="{StaticResource F.Icon}" />
+            <Setter Property="FontSize" Value="9" />
+            <Setter Property="Content" Value="&#xE711;" />
+            <Setter Property="Focusable" Value="False" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" CornerRadius="7" Background="Transparent">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#1FFFFFFF" />
+                                <Setter Property="Foreground" Value="{StaticResource B.Text}" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#12FFFFFF" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- A tab: icon, title, sound and close. The picked tab takes the toolbar color and a neon line on top -->
+        <Style x:Key="TabItem" TargetType="ListBoxItem">
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="ToolTip" Value="{Binding Tip}" />
+            <Setter Property="AutomationProperties.Name" Value="{Binding Title}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                        <Grid x:Name="Root" Height="34" Margin="0,8,0,0" Background="Transparent"
+                              Width="{Binding TabWidth, RelativeSource={RelativeSource AncestorType=Window}}">
+                            <Border x:Name="Bd" CornerRadius="10,10,0,0" Background="Transparent" />
+                            <Border x:Name="Neon" Height="2" CornerRadius="1" VerticalAlignment="Top" Margin="14,0"
+                                    Background="{StaticResource B.Accent}" Opacity="0">
+                                <Border.Effect>
+                                    <DropShadowEffect Color="#FF2BF5A8" BlurRadius="9" ShadowDepth="0" Opacity="0.9" />
+                                </Border.Effect>
+                            </Border>
+                            <Border x:Name="Sep" Width="1" Height="16" HorizontalAlignment="Right" VerticalAlignment="Center"
+                                    Background="{StaticResource B.Line2}" />
+                            <DockPanel x:Name="Row" Margin="12,0,6,0">
+                                <Grid DockPanel.Dock="Left" Width="16" Height="16" VerticalAlignment="Center">
+                                    <TextBlock x:Name="Globe" Text="&#xE774;" FontFamily="{StaticResource F.Icon}" FontSize="13"
+                                               Foreground="{StaticResource B.Text3}" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                               Visibility="Collapsed" />
+                                    <Image x:Name="Fav" Source="{Binding Icon}" Width="16" Height="16" RenderOptions.BitmapScalingMode="HighQuality" />
+                                    <Path x:Name="Spin" Data="M 8,1.5 A 6.5,6.5 0 1 1 1.5,8" Stroke="{StaticResource B.Accent}" StrokeThickness="2"
+                                          StrokeStartLineCap="Round" StrokeEndLineCap="Round" Visibility="Collapsed"
+                                          RenderTransformOrigin="0.5,0.5">
+                                        <Path.RenderTransform>
+                                            <RotateTransform />
+                                        </Path.RenderTransform>
+                                    </Path>
+                                </Grid>
+                                <Button x:Name="Close" DockPanel.Dock="Right" Style="{StaticResource TabClose}" Click="OnCloseTabClick"
+                                        Visibility="Hidden" ToolTip="Close tab  (Ctrl+W)" AutomationProperties.Name="Close tab" />
+                                <Button DockPanel.Dock="Right" Style="{StaticResource TabClose}" Content="{Binding AudioGlyph}" FontSize="11"
+                                        Click="OnMuteClick" Visibility="{Binding AudioVisibility}" ToolTip="{Binding AudioTip}"
+                                        AutomationProperties.Name="{Binding AudioTip}" />
+                                <TextBlock x:Name="Label" Text="{Binding Title}" FontSize="12.5" Foreground="{StaticResource B.Text3}"
+                                           TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="9,0,4,1" />
+                            </DockPanel>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <DataTrigger Binding="{Binding Icon}" Value="{x:Null}">
+                                <Setter TargetName="Fav" Property="Visibility" Value="Collapsed" />
+                                <Setter TargetName="Globe" Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding Loading}" Value="True">
+                                <Setter TargetName="Spin" Property="Visibility" Value="Visible" />
+                                <Setter TargetName="Fav" Property="Visibility" Value="Hidden" />
+                                <Setter TargetName="Globe" Property="Visibility" Value="Hidden" />
+                                <DataTrigger.EnterActions>
+                                    <BeginStoryboard x:Name="SpinStory">
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetName="Spin"
+                                                             Storyboard.TargetProperty="(UIElement.RenderTransform).(RotateTransform.Angle)"
+                                                             From="0" To="360" Duration="0:0:0.9" RepeatBehavior="Forever"
+                                                             Timeline.DesiredFrameRate="40" />
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </DataTrigger.EnterActions>
+                                <DataTrigger.ExitActions>
+                                    <StopStoryboard BeginStoryboardName="SpinStory" />
+                                </DataTrigger.ExitActions>
+                            </DataTrigger>
+                            <!-- Narrow tabs keep the icon, the close button shows only on the picked or hovered tab.
+                                 The two triggers below come later, so they win for the close button -->
+                            <DataTrigger Binding="{Binding TabsCompact, RelativeSource={RelativeSource AncestorType=Window}}" Value="True">
+                                <Setter TargetName="Label" Property="Visibility" Value="Collapsed" />
+                                <Setter TargetName="Row" Property="Margin" Value="8,0,4,0" />
+                                <Setter TargetName="Close" Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource B.Hover}" />
+                                <Setter TargetName="Label" Property="Foreground" Value="{StaticResource B.Text2}" />
+                                <Setter TargetName="Close" Property="Visibility" Value="Visible" />
+                                <Setter TargetName="Sep" Property="Visibility" Value="Hidden" />
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource B.Bg1}" />
+                                <Setter TargetName="Neon" Property="Opacity" Value="1" />
+                                <Setter TargetName="Label" Property="Foreground" Value="{StaticResource B.Text}" />
+                                <Setter TargetName="Close" Property="Visibility" Value="Visible" />
+                                <Setter TargetName="Sep" Property="Visibility" Value="Hidden" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Toolbar button, a little smaller than the icon buttons on the pages -->
+        <Style x:Key="ToolBtn" TargetType="Button" BasedOn="{StaticResource Btn.Icon}">
+            <Setter Property="Width" Value="32" />
+            <Setter Property="Height" Value="32" />
+            <Setter Property="FontSize" Value="14" />
+        </Style>
+
+        <!-- Borderless text box for the address bar, the find box and the start page -->
+        <Style x:Key="Input.Bare" TargetType="TextBox">
+            <Setter Property="Foreground" Value="{StaticResource B.Text}" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="FontSize" Value="13.5" />
+            <Setter Property="CaretBrush" Value="{StaticResource B.Accent}" />
+            <Setter Property="SelectionBrush" Value="{StaticResource B.Accent}" />
+            <Setter Property="SelectionOpacity" Value="0.35" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TextBox">
+                        <Grid Background="Transparent">
+                            <TextBlock x:Name="Ph" Text="{Binding Tag, RelativeSource={RelativeSource TemplatedParent}}"
+                                       Foreground="{StaticResource B.Text3}" Visibility="Collapsed" IsHitTestVisible="False"
+                                       VerticalAlignment="Center" Margin="2,0,0,0" TextTrimming="CharacterEllipsis" />
+                            <ScrollViewer x:Name="PART_ContentHost" Focusable="False" VerticalAlignment="Center"
+                                          HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Hidden" />
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="Text" Value="">
+                                <Setter TargetName="Ph" Property="Visibility" Value="Visible" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- A line under the address bar -->
+        <Style x:Key="SuggestItem" TargetType="ListBoxItem">
+            <Setter Property="Focusable" Value="False" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                        <Grid>
+                            <Border x:Name="Bd" CornerRadius="9" Background="Transparent" Padding="10,7">
+                                <ContentPresenter />
+                            </Border>
+                            <Border x:Name="Bar" Width="3" Height="18" CornerRadius="2" Background="{StaticResource B.Accent}"
+                                    HorizontalAlignment="Left" Margin="-3,0,0,0" Visibility="Collapsed" />
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource B.Hover}" />
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource B.AccentSoft}" />
+                                <Setter TargetName="Bar" Property="Visibility" Value="Visible" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Web app tile on the start page -->
+        <Style x:Key="StartTile" TargetType="Button">
+            <Setter Property="FocusVisualStyle" Value="{StaticResource Focus.Neon}" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Width" Value="100" />
+            <Setter Property="Height" Value="100" />
+            <Setter Property="Margin" Value="0,0,8,8" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Grid>
+                            <Border x:Name="Glow" CornerRadius="14" Background="{StaticResource B.Accent}" Opacity="0" Margin="10">
+                                <Border.Effect>
+                                    <BlurEffect Radius="22" />
+                                </Border.Effect>
+                            </Border>
+                            <Border x:Name="Bd" CornerRadius="14" Background="#B30A0E13" BorderBrush="{StaticResource B.Line}"
+                                    BorderThickness="1" Padding="8,14,8,10">
+                                <ContentPresenter />
+                            </Border>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource B.AccentLine}" />
+                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource B.Bg2}" />
+                                <Setter TargetName="Glow" Property="Opacity" Value="0.1" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource B.Bg1}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Recent website row on the start page -->
+        <Style x:Key="StartRow" TargetType="Button">
+            <Setter Property="FocusVisualStyle" Value="{StaticResource Focus.Neon}" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" CornerRadius="10" Background="Transparent" Padding="10,8">
+                            <ContentPresenter />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource B.Hover}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="MenuLine" TargetType="Separator">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Separator">
+                        <Border Height="1" Margin="8,4" Background="{StaticResource B.Line2}" />
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="StripSep" TargetType="TextBlock">
+            <Setter Property="Text" Value="&#x2502;" />
+            <Setter Property="Margin" Value="12,0" />
+            <Setter Property="Foreground" Value="{StaticResource B.Line2}" />
+        </Style>
+    </Window.Resources>
+
+    <Border x:Name="Frame" BorderBrush="{StaticResource B.Line2}" BorderThickness="1">
+        <Grid x:Name="Root">
+            <Grid.RowDefinitions>
+                <RowDefinition x:Name="TabRow" Height="42" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <!-- ======================== Tabs and window buttons ======================== -->
+            <Grid x:Name="TabBar" Grid.Row="0">
+                <Rectangle Fill="{StaticResource B.DotGrid}" IsHitTestVisible="False" />
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <Grid Width="26" Height="26" Margin="12,4,8,0" VerticalAlignment="Center" ToolTip="PdaNet Browser">
+                        <Border CornerRadius="8" Background="{StaticResource B.AccentSoft}" BorderBrush="{StaticResource B.AccentLine}" BorderThickness="1" />
+                        <TextBlock Text="&#xE774;" FontFamily="{StaticResource F.Icon}" FontSize="13" Foreground="{StaticResource B.Accent}"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Grid>
+
+                    <Grid x:Name="TabArea" Grid.Column="1" SizeChanged="OnTabAreaSize">
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
+                            <ListBox x:Name="TabStrip" Background="Transparent" BorderThickness="0" Padding="0"
+                                     ItemContainerStyle="{StaticResource TabItem}" SelectionMode="Single" FocusVisualStyle="{x:Null}"
+                                     ScrollViewer.HorizontalScrollBarVisibility="Hidden" ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                                     ScrollViewer.CanContentScroll="False" KeyboardNavigation.DirectionalNavigation="Cycle"
+                                     SelectionChanged="OnTabSelected" PreviewMouseDown="OnTabMouseDown" PreviewMouseMove="OnTabDrag"
+                                     PreviewMouseUp="OnTabMouseUp" MouseLeave="OnTabStripLeave" PreviewMouseWheel="OnTabWheel"
+                                     ContextMenuOpening="OnTabMenu" WindowChrome.IsHitTestVisibleInChrome="True"
+                                     AutomationProperties.Name="Tabs">
+                                <ListBox.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <StackPanel Orientation="Horizontal" />
+                                    </ItemsPanelTemplate>
+                                </ListBox.ItemsPanel>
+                                <ListBox.ContextMenu>
+                                    <ContextMenu />
+                                </ListBox.ContextMenu>
+                            </ListBox>
+                            <Button x:Name="NewTabBtn" Style="{StaticResource ToolBtn}" Content="&#xE710;" Margin="4,8,0,0" Click="OnNewTab"
+                                    ToolTip="New tab  (Ctrl+T)" AutomationProperties.Name="New tab"
+                                    WindowChrome.IsHitTestVisibleInChrome="True" />
+                        </StackPanel>
+                    </Grid>
+
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" WindowChrome.IsHitTestVisibleInChrome="True">
+                        <Button Style="{StaticResource Btn.Chrome}" Content="&#xE921;" Click="OnMinimize" ToolTip="Minimize"
+                                WindowChrome.IsHitTestVisibleInChrome="True" AutomationProperties.Name="Minimize" />
+                        <Button x:Name="MaxBtn" Style="{StaticResource Btn.Chrome}" Content="&#xE922;" Click="OnMaximize" ToolTip="Maximize"
+                                WindowChrome.IsHitTestVisibleInChrome="True" AutomationProperties.Name="Maximize" />
+                        <Button Style="{StaticResource Btn.ChromeClose}" Content="&#xE8BB;" Click="OnCloseClick" ToolTip="Close the browser"
+                                WindowChrome.IsHitTestVisibleInChrome="True" AutomationProperties.Name="Close the browser" />
+                    </StackPanel>
+                </Grid>
+            </Grid>
+
+            <!-- ================================ Toolbar ================================ -->
+            <Border x:Name="Bar" Grid.Row="1" Background="{StaticResource B.Bg1}" BorderBrush="{StaticResource B.Line}" BorderThickness="0,0,0,1">
+                <Grid>
+                    <Grid Margin="8,7,8,7">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Orientation="Horizontal">
+                            <Button x:Name="BackBtn" Style="{StaticResource ToolBtn}" Content="&#xE72B;" Click="OnBack"
+                                    ToolTip="Back  (Alt+Left)" AutomationProperties.Name="Back" />
+                            <Button x:Name="ForwardBtn" Style="{StaticResource ToolBtn}" Content="&#xE72A;" Click="OnForward" Margin="2,0,0,0"
+                                    ToolTip="Forward  (Alt+Right)" AutomationProperties.Name="Forward" />
+                            <Button x:Name="ReloadBtn" Style="{StaticResource ToolBtn}" Content="&#xE72C;" Click="OnReload" Margin="2,0,0,0"
+                                    ToolTip="Reload  (F5)" AutomationProperties.Name="Reload" />
+                        </StackPanel>
+
+                        <!-- Address bar: what the tab shows, a privacy badge, zoom and the pin star -->
+                        <Grid x:Name="AddressArea" Grid.Column="1" Margin="8,0,8,0" Height="34">
+                            <Border x:Name="AddressFrame" CornerRadius="10" Background="{StaticResource B.Bg0}"
+                                    BorderBrush="{StaticResource B.Line2}" BorderThickness="1" />
+                            <DockPanel Margin="5,0,4,0">
+                                <Border x:Name="Badge" DockPanel.Dock="Left" CornerRadius="7" Padding="8,3,9,3" Margin="0,0,8,0"
+                                        VerticalAlignment="Center" Background="{StaticResource B.CyanSoft}">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock x:Name="BadgeIcon" Text="&#xE72E;" FontFamily="{StaticResource F.Icon}" FontSize="11"
+                                                   Foreground="{StaticResource B.Cyan}" VerticalAlignment="Center" />
+                                        <TextBlock x:Name="BadgeText" Text="Private" FontSize="11.5" FontWeight="SemiBold"
+                                                   Foreground="{StaticResource B.Cyan}" Margin="6,0,0,1" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                </Border>
+                                <TextBlock x:Name="SearchGlyph" DockPanel.Dock="Left" Text="&#xE721;" FontFamily="{StaticResource F.Icon}" FontSize="13"
+                                           Foreground="{StaticResource B.Text3}" VerticalAlignment="Center" Margin="7,0,10,0" Visibility="Collapsed" />
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                                    <Button x:Name="ZoomPill" Click="OnZoomReset" Visibility="Collapsed" Cursor="Hand" Focusable="False"
+                                            ToolTip="Back to 100%" AutomationProperties.Name="Zoom, back to 100%">
+                                        <Button.Template>
+                                            <ControlTemplate TargetType="Button">
+                                                <Border x:Name="Bd" CornerRadius="7" Padding="7,2,8,3" Margin="0,0,4,0" Background="{StaticResource B.Bg3}"
+                                                        BorderBrush="{StaticResource B.Line2}" BorderThickness="1">
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <TextBlock Text="&#xE71E;" FontFamily="{StaticResource F.Icon}" FontSize="10"
+                                                                   Foreground="{StaticResource B.Text2}" VerticalAlignment="Center" />
+                                                        <ContentPresenter Margin="5,0,0,0" VerticalAlignment="Center"
+                                                                          TextElement.FontFamily="{StaticResource F.Mono}" TextElement.FontSize="11"
+                                                                          TextElement.Foreground="{StaticResource B.Text}" />
+                                                    </StackPanel>
+                                                </Border>
+                                                <ControlTemplate.Triggers>
+                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                        <Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource B.AccentLine}" />
+                                                    </Trigger>
+                                                </ControlTemplate.Triggers>
+                                            </ControlTemplate>
+                                        </Button.Template>
+                                    </Button>
+                                    <Button x:Name="StarBtn" Style="{StaticResource ToolBtn}" Width="28" Height="28" FontSize="13" Content="&#xE734;"
+                                            Click="OnStar" ToolTip="Pin this website to your web apps  (Ctrl+D)"
+                                            AutomationProperties.Name="Pin this website" />
+                                </StackPanel>
+                                <Grid>
+                                    <TextBox x:Name="Address" Style="{StaticResource Input.Bare}" Tag="Search the web or type a web address"
+                                             GotKeyboardFocus="OnAddressFocus" LostKeyboardFocus="OnAddressBlur"
+                                             PreviewMouseLeftButtonDown="OnAddressMouseDown" PreviewKeyDown="OnInputKey"
+                                             TextChanged="OnInputChanged" AutomationProperties.Name="Address and search bar" />
+                                    <TextBlock x:Name="AddressShown" IsHitTestVisible="False" VerticalAlignment="Center" FontSize="13.5"
+                                               TextTrimming="CharacterEllipsis" Margin="2,0,0,1"><Run x:Name="ShownHost" Foreground="{StaticResource B.Text}" /><Run x:Name="ShownRest" Foreground="{StaticResource B.Text3}" /></TextBlock>
+                                </Grid>
+                            </DockPanel>
+                        </Grid>
+
+                        <StackPanel Grid.Column="2" Orientation="Horizontal">
+                            <!-- Find on page slides in here, so the page itself never moves -->
+                            <Border x:Name="FindBox" Width="0" Height="34" Margin="0,0,6,0" CornerRadius="10" Visibility="Collapsed"
+                                    Background="{StaticResource B.Bg0}" BorderBrush="{StaticResource B.AccentLine}" BorderThickness="1"
+                                    ClipToBounds="True">
+                                <DockPanel Margin="10,0,3,0" Width="292" HorizontalAlignment="Left">
+                                    <TextBlock DockPanel.Dock="Left" Text="&#xE721;" FontFamily="{StaticResource F.Icon}" FontSize="12"
+                                               Foreground="{StaticResource B.Accent}" VerticalAlignment="Center" Margin="0,0,8,0" />
+                                    <Button DockPanel.Dock="Right" Style="{StaticResource TabClose}" Width="26" Height="26" Click="OnFindClose"
+                                            ToolTip="Close  (Esc)" AutomationProperties.Name="Close find" />
+                                    <Button DockPanel.Dock="Right" Style="{StaticResource TabClose}" Width="26" Height="26" FontSize="10"
+                                            Content="&#xE70D;" Click="OnFindNext" ToolTip="Next  (Enter)" AutomationProperties.Name="Next match" />
+                                    <Button DockPanel.Dock="Right" Style="{StaticResource TabClose}" Width="26" Height="26" FontSize="10"
+                                            Content="&#xE70E;" Click="OnFindPrevious" ToolTip="Previous  (Shift+Enter)"
+                                            AutomationProperties.Name="Previous match" />
+                                    <TextBlock x:Name="FindCount" DockPanel.Dock="Right" FontFamily="{StaticResource F.Mono}" FontSize="11"
+                                               Foreground="{StaticResource B.Text3}" VerticalAlignment="Center" Margin="6,0,6,0" />
+                                    <TextBox x:Name="FindText" Style="{StaticResource Input.Bare}" FontSize="13" Tag="Find on page"
+                                             TextChanged="OnFindChanged" PreviewKeyDown="OnFindKey" AutomationProperties.Name="Find on page" />
+                                </DockPanel>
+                            </Border>
+
+                            <Grid>
+                                <Button x:Name="DownloadsBtn" Style="{StaticResource ToolBtn}" Content="&#xE896;" Click="OnDownloads"
+                                        Visibility="Collapsed" ToolTip="Downloads  (Ctrl+J)" AutomationProperties.Name="Downloads" />
+                                <Ellipse x:Name="DownloadDot" Width="7" Height="7" Fill="{StaticResource B.Accent}" HorizontalAlignment="Right"
+                                         VerticalAlignment="Top" Margin="0,5,5,0" Visibility="Collapsed" IsHitTestVisible="False" />
+                            </Grid>
+                            <Button x:Name="MenuBtn" Style="{StaticResource ToolBtn}" Content="&#xE712;" Click="OnMenu" Margin="2,0,0,0"
+                                    ToolTip="Menu" AutomationProperties.Name="Menu" ContextMenuService.IsEnabled="False">
+                                <Button.ContextMenu>
+                                    <ContextMenu x:Name="Menu" Closed="OnMenuClosed" />
+                                </Button.ContextMenu>
+                            </Button>
+                        </StackPanel>
+                    </Grid>
+
+                    <!-- Loading line, a neon trace along the bottom of the toolbar -->
+                    <Border x:Name="Progress" Height="2" VerticalAlignment="Bottom" Margin="0,0,0,-1" Background="{StaticResource B.Accent}"
+                            Opacity="0" RenderTransformOrigin="0,0.5" IsHitTestVisible="False">
+                        <Border.RenderTransform>
+                            <ScaleTransform x:Name="ProgressScale" ScaleX="0" />
+                        </Border.RenderTransform>
+                        <Border.Effect>
+                            <DropShadowEffect Color="#FF2BF5A8" BlurRadius="10" ShadowDepth="0" Opacity="0.85" />
+                        </Border.Effect>
+                    </Border>
+                </Grid>
+            </Border>
+
+            <!-- ================================ Pages ================================ -->
+            <Grid x:Name="Pages" Grid.Row="2" Background="{StaticResource B.Bg0}" Focusable="True" FocusVisualStyle="{x:Null}">
+                <!-- Web views of the tabs go in here, behind the start page and the problem panel -->
+
+                <ScrollViewer x:Name="StartPage" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False">
+                    <Grid>
+                        <Rectangle Fill="{StaticResource B.DotGrid}" IsHitTestVisible="False" />
+                        <Rectangle IsHitTestVisible="False">
+                            <Rectangle.Fill>
+                                <RadialGradientBrush Center="0.5,0" GradientOrigin="0.5,0" RadiusX="0.6" RadiusY="0.55">
+                                    <GradientStop x:Name="StartGlow" Color="#162BF5A8" Offset="0" />
+                                    <GradientStop Color="#002BF5A8" Offset="1" />
+                                </RadialGradientBrush>
+                            </Rectangle.Fill>
+                        </Rectangle>
+
+                        <StackPanel MaxWidth="760" Margin="32,0,32,40">
+                            <StackPanel x:Name="StartHead" Margin="0,46,0,0" HorizontalAlignment="Center">
+                                <Grid Width="64" Height="64" HorizontalAlignment="Center">
+                                    <Ellipse Stroke="{StaticResource B.AccentLine}" StrokeThickness="1" StrokeDashArray="1 4" />
+                                    <Border Width="46" Height="46" CornerRadius="14" Background="{StaticResource B.AccentSoft}"
+                                            BorderBrush="{StaticResource B.AccentLine}" BorderThickness="1">
+                                        <TextBlock Text="&#xE774;" FontFamily="{StaticResource F.Icon}" FontSize="22"
+                                                   Foreground="{StaticResource B.Accent}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                    </Border>
+                                </Grid>
+                                <TextBlock x:Name="Greeting" Text="Good morning" Style="{StaticResource T.Display}" HorizontalAlignment="Center"
+                                           Margin="0,16,0,0" />
+                                <TextBlock Text="Search the web, open a web app, or pick up where you left off" Style="{StaticResource T.Body}"
+                                           HorizontalAlignment="Center" Margin="0,6,0,0" />
+                            </StackPanel>
+
+                            <!-- The big search box, in the terminal prompt style of PdaNet -->
+                            <Grid x:Name="StartSearchArea" Margin="0,28,0,0" Height="54">
+                                <Border x:Name="StartSearchGlow" CornerRadius="15" Background="{StaticResource B.Accent}" Opacity="0" Margin="6">
+                                    <Border.Effect>
+                                        <BlurEffect Radius="24" />
+                                    </Border.Effect>
+                                </Border>
+                                <Border x:Name="StartSearchFrame" CornerRadius="15" Background="{StaticResource B.Bg1}"
+                                        BorderBrush="{StaticResource B.Line2}" BorderThickness="1" />
+                                <DockPanel Margin="18,0,12,0">
+                                    <TextBlock DockPanel.Dock="Left" FontFamily="{StaticResource F.Mono}" FontSize="14" VerticalAlignment="Center"
+                                               Margin="0,0,10,1"><Run Text="pdanet" Foreground="{StaticResource B.Accent}" /><Run Text=" &#x203A;" Foreground="{StaticResource B.Text3}" /></TextBlock>
+                                    <Border DockPanel.Dock="Right" Style="{StaticResource KeyCap}" Margin="0" IsHitTestVisible="False">
+                                        <TextBlock Text="Enter" Style="{StaticResource T.Eyebrow}" FontSize="10.5" />
+                                    </Border>
+                                    <TextBox x:Name="StartSearch" Style="{StaticResource Input.Bare}" FontSize="15"
+                                             Tag="search the web or type a web address" Margin="0,0,10,0"
+                                             GotKeyboardFocus="OnStartFocus" LostKeyboardFocus="OnStartBlur" PreviewKeyDown="OnInputKey"
+                                             TextChanged="OnInputChanged" AutomationProperties.Name="Search the web or type a web address" />
+                                </DockPanel>
+                            </Grid>
+
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,12,0,0">
+                                <TextBlock x:Name="EngineLine" Style="{StaticResource T.Small}" VerticalAlignment="Center" />
+                                <Button x:Name="EngineBtn" Style="{StaticResource Btn.Link}" FontSize="12" Content="Change" Margin="8,0,0,0"
+                                        VerticalAlignment="Center" Click="OnEngineMenu" ToolTip="Pick the search engine"
+                                        ContextMenuService.IsEnabled="False">
+                                    <Button.ContextMenu>
+                                        <ContextMenu />
+                                    </Button.ContextMenu>
+                                </Button>
+                            </StackPanel>
+
+                            <Button x:Name="RestoreChip" Style="{StaticResource Btn.Chip}" Tag="&#xE7A7;" HorizontalAlignment="Center"
+                                    Margin="0,16,0,0" Click="OnRestore" Visibility="Collapsed" />
+
+                            <!-- Web apps -->
+                            <TextBlock Text="YOUR WEB APPS" Style="{StaticResource T.Eyebrow}" Margin="2,28,0,12" />
+                            <ItemsControl x:Name="StartApps" Focusable="False">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <WrapPanel />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Button Style="{StaticResource StartTile}" Click="OnStartTile" ToolTip="{Binding Tip}"
+                                                AutomationProperties.Name="{Binding Name}" ContextMenuOpening="OnStartTileMenu">
+                                            <Button.ContextMenu>
+                                                <ContextMenu />
+                                            </Button.ContextMenu>
+                                            <StackPanel HorizontalAlignment="Center">
+                                                <Grid Width="44" Height="44" HorizontalAlignment="Center">
+                                                    <Border CornerRadius="13" Background="{StaticResource B.Bg3}" BorderBrush="{StaticResource B.Line2}" BorderThickness="1" />
+                                                    <Rectangle RadiusX="13" RadiusY="13" Stroke="{StaticResource B.AccentLine}" StrokeThickness="1.2"
+                                                               StrokeDashArray="3 3" Visibility="{Binding AddVisibility}" />
+                                                    <Image Source="{Binding Icon}" Width="24" Height="24" RenderOptions.BitmapScalingMode="HighQuality"
+                                                           Visibility="{Binding IconVisibility}" />
+                                                    <TextBlock Text="{Binding Monogram}" FontFamily="{StaticResource F.Display}" FontSize="18" FontWeight="SemiBold"
+                                                               Foreground="{StaticResource B.Accent}" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                               Visibility="{Binding MonogramVisibility}" />
+                                                    <TextBlock Text="&#xE710;" FontFamily="{StaticResource F.Icon}" FontSize="16"
+                                                               Foreground="{StaticResource B.Accent}" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                               Visibility="{Binding AddVisibility}" />
+                                                </Grid>
+                                                <TextBlock Text="{Binding Name}" FontSize="12.5" FontWeight="SemiBold" Foreground="{StaticResource B.Text}"
+                                                           HorizontalAlignment="Center" TextTrimming="CharacterEllipsis" MaxWidth="84" Margin="0,11,0,0" />
+                                            </StackPanel>
+                                        </Button>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+
+                            <!-- Recent websites -->
+                            <TextBlock x:Name="StartRecentHead" Text="RECENT" Style="{StaticResource T.Eyebrow}" Margin="2,24,0,12" />
+                            <Border x:Name="StartRecentCard" Background="#B30A0E13" BorderBrush="{StaticResource B.Line}" BorderThickness="1"
+                                    CornerRadius="14" Padding="6">
+                                <ItemsControl x:Name="StartRecent" Focusable="False">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <UniformGrid Columns="2" />
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Button Style="{StaticResource StartRow}" Click="OnStartRecent" ToolTip="{Binding Tip}"
+                                                    AutomationProperties.Name="{Binding Name}">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <Grid Width="28" Height="28" VerticalAlignment="Center">
+                                                        <Border CornerRadius="8" Background="{StaticResource B.Bg3}" BorderBrush="{StaticResource B.Line2}" BorderThickness="1" />
+                                                        <Image Source="{Binding Icon}" Width="16" Height="16" RenderOptions.BitmapScalingMode="HighQuality"
+                                                               Visibility="{Binding IconVisibility}" />
+                                                        <TextBlock Text="{Binding Monogram}" FontFamily="{StaticResource F.Display}" FontSize="12.5" FontWeight="SemiBold"
+                                                                   Foreground="{StaticResource B.Accent}" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                                   Visibility="{Binding MonogramVisibility}" />
+                                                    </Grid>
+                                                    <StackPanel Grid.Column="1" Margin="10,0,8,0" VerticalAlignment="Center">
+                                                        <TextBlock Text="{Binding Name}" FontSize="12.5" Foreground="{StaticResource B.Text}" TextTrimming="CharacterEllipsis" />
+                                                        <TextBlock Text="{Binding Detail}" FontFamily="{StaticResource F.Mono}" FontSize="10.5" Foreground="{StaticResource B.Text3}"
+                                                                   TextTrimming="CharacterEllipsis" Margin="0,2,0,0" />
+                                                    </StackPanel>
+                                                    <TextBlock Grid.Column="2" Text="{Binding When}" FontFamily="{StaticResource F.Mono}" FontSize="10.5"
+                                                               Foreground="{StaticResource B.Text3}" VerticalAlignment="Center" />
+                                                </Grid>
+                                            </Button>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </Border>
+
+                            <!-- How the browser goes online, in plain words -->
+                            <Border x:Name="RouteCard" Margin="0,24,0,0" CornerRadius="14" Padding="16,14" BorderThickness="1">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <Grid Width="34" Height="34" VerticalAlignment="Center">
+                                        <Border x:Name="RouteTile" CornerRadius="10" BorderThickness="1" />
+                                        <TextBlock x:Name="RouteIcon" Text="&#xE8EA;" FontFamily="{StaticResource F.Icon}" FontSize="15"
+                                                   HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                    </Grid>
+                                    <StackPanel Grid.Column="1" Margin="14,0,14,0" VerticalAlignment="Center">
+                                        <TextBlock x:Name="RouteTitle" FontSize="13.5" FontWeight="SemiBold" Foreground="{StaticResource B.Text}" />
+                                        <TextBlock x:Name="RouteBody" Style="{StaticResource T.Small}" Margin="0,3,0,0" />
+                                    </StackPanel>
+                                    <Button Grid.Column="2" Style="{StaticResource Btn.Secondary}" Tag="&#xE8A7;" Content="Open PdaNet" Padding="12,6"
+                                            VerticalAlignment="Center" Click="OnOpenPdaNet" />
+                                </Grid>
+                            </Border>
+                        </StackPanel>
+                    </Grid>
+                </ScrollViewer>
+
+                <!-- A tab that stopped, or a browser that could not start -->
+                <Grid x:Name="Problem" Visibility="Collapsed" Background="{StaticResource B.Bg0}">
+                    <Rectangle Fill="{StaticResource B.DotGrid}" IsHitTestVisible="False" />
+                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="480" Margin="24">
+                        <Border x:Name="ProblemTile" Width="58" Height="58" CornerRadius="17" HorizontalAlignment="Center"
+                                Background="{StaticResource B.AmberSoft}" BorderBrush="{StaticResource B.AmberLine}" BorderThickness="1">
+                            <TextBlock x:Name="ProblemIcon" Text="&#xE7BA;" FontFamily="{StaticResource F.Icon}" FontSize="24"
+                                       Foreground="{StaticResource B.Amber}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <TextBlock x:Name="ProblemTitle" Style="{StaticResource T.H2}" FontSize="19" HorizontalAlignment="Center"
+                                   TextAlignment="Center" TextWrapping="Wrap" Margin="0,18,0,0" />
+                        <TextBlock x:Name="ProblemBody" Style="{StaticResource T.Body}" TextAlignment="Center" HorizontalAlignment="Center"
+                                   Margin="0,8,0,0" />
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,22,0,0">
+                            <Button x:Name="ProblemAction" Style="{StaticResource Btn.Primary}" Click="OnProblemAction" />
+                            <Button x:Name="ProblemSecond" Style="{StaticResource Btn.Secondary}" Margin="10,0,0,0" Click="OnProblemSecond" />
+                        </StackPanel>
+                        <TextBlock x:Name="ProblemDetail" Style="{StaticResource T.Mono}" FontSize="11" Foreground="{StaticResource B.Text3}"
+                                   TextAlignment="Center" TextWrapping="Wrap" Margin="0,18,0,0" />
+                    </StackPanel>
+                </Grid>
+            </Grid>
+
+            <!-- ============================== Status strip ============================== -->
+            <Border x:Name="Strip" Grid.Row="3" Height="26" BorderBrush="{StaticResource B.Line}" BorderThickness="0,1,0,0" Background="#CC040608">
+                <Grid Margin="14,0" TextElement.FontFamily="{StaticResource F.Mono}" TextElement.FontSize="11"
+                      TextElement.Foreground="{StaticResource B.Text3}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel x:Name="RouteArea" Orientation="Horizontal" VerticalAlignment="Center" Background="Transparent" Cursor="Hand"
+                                MouseLeftButtonUp="OnRouteClick">
+                        <Ellipse x:Name="RouteDot" Width="6" Height="6" Fill="{StaticResource B.Text3}" VerticalAlignment="Center" />
+                        <TextBlock x:Name="RouteText" Text="PDANET OFFLINE" Margin="8,0,0,0" />
+                    </StackPanel>
+                    <DockPanel Grid.Column="1" Margin="0,0,12,0" VerticalAlignment="Center">
+                        <StackPanel x:Name="PrivacyPart" DockPanel.Dock="Left" Orientation="Horizontal">
+                            <TextBlock Style="{StaticResource StripSep}" />
+                            <TextBlock x:Name="PrivacyText" Text="PRIVATE" />
+                        </StackPanel>
+                        <TextBlock x:Name="HoverSep" DockPanel.Dock="Left" Style="{StaticResource StripSep}" />
+                        <TextBlock x:Name="HoverText" Foreground="{StaticResource B.Text2}" TextTrimming="CharacterEllipsis" />
+                    </DockPanel>
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                        <StackPanel x:Name="DataPart" Orientation="Horizontal"
+                                    ToolTip="Data the browser sent and received through PdaNet since the browser opened">
+                            <TextBlock x:Name="DataText" />
+                            <TextBlock Style="{StaticResource StripSep}" />
+                        </StackPanel>
+                        <StackPanel x:Name="ZoomPart" Orientation="Horizontal">
+                            <TextBlock x:Name="ZoomText" />
+                            <TextBlock Style="{StaticResource StripSep}" />
+                        </StackPanel>
+                        <TextBlock x:Name="TabsText" Text="1 TAB" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <!-- ================================ Flyouts ================================ -->
+            <!-- Suggestions under the address bar or the start page search box -->
+            <Popup x:Name="SuggestPopup" Placement="Bottom" AllowsTransparency="True" StaysOpen="True" Focusable="False"
+                   VerticalOffset="6" PopupAnimation="Fade">
+                <Border x:Name="SuggestCard" Background="{StaticResource B.Bg2}" BorderBrush="{StaticResource B.Line2}" BorderThickness="1"
+                        CornerRadius="12" Padding="6" Margin="16,0,16,22">
+                    <Border.Effect>
+                        <DropShadowEffect BlurRadius="24" ShadowDepth="8" Opacity="0.55" Color="Black" />
+                    </Border.Effect>
+                    <ListBox x:Name="SuggestList" Background="Transparent" BorderThickness="0" Focusable="False"
+                             ItemContainerStyle="{StaticResource SuggestItem}" PreviewMouseLeftButtonUp="OnSuggestClick"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                             AutomationProperties.Name="Suggestions">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <Grid Width="28" Height="28" VerticalAlignment="Center">
+                                        <Border CornerRadius="8" Background="{StaticResource B.Bg3}" />
+                                        <Image Source="{Binding Icon}" Width="16" Height="16" RenderOptions.BitmapScalingMode="HighQuality"
+                                               Visibility="{Binding IconVisibility}" />
+                                        <TextBlock Text="{Binding Glyph}" FontFamily="{StaticResource F.Icon}" FontSize="13"
+                                                   Foreground="{StaticResource B.Text2}" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                   Visibility="{Binding GlyphVisibility}" />
+                                    </Grid>
+                                    <StackPanel Grid.Column="1" Margin="12,0,10,0" VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding Title}" FontSize="13" Foreground="{StaticResource B.Text}" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Text="{Binding Detail}" FontFamily="{StaticResource F.Mono}" FontSize="10.5"
+                                                   Foreground="{StaticResource B.Text3}" TextTrimming="CharacterEllipsis" Margin="0,2,0,0" />
+                                    </StackPanel>
+                                    <Border Grid.Column="2" Style="{StaticResource Badge}" Visibility="{Binding BadgeVisibility}">
+                                        <TextBlock Text="{Binding Badge}" Style="{StaticResource T.Badge}" />
+                                    </Border>
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </Border>
+            </Popup>
+
+            <!-- Pin a website: under the star, or under the Pin a website tile on the start page -->
+            <Popup x:Name="PinPopup" Placement="Custom" AllowsTransparency="True" StaysOpen="False" PopupAnimation="Fade"
+                   Closed="OnPinClosed">
+                <Border Width="316" Background="{StaticResource B.Bg2}" BorderBrush="{StaticResource B.Line2}" BorderThickness="1"
+                        CornerRadius="14" Padding="18,16,18,16" Margin="16,0,16,22">
+                    <Border.Effect>
+                        <DropShadowEffect BlurRadius="28" ShadowDepth="8" Opacity="0.6" Color="Black" />
+                    </Border.Effect>
+                    <StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock x:Name="PinStar" Text="&#xE735;" FontFamily="{StaticResource F.Icon}" FontSize="15"
+                                       Foreground="{StaticResource B.Accent}" VerticalAlignment="Center" />
+                            <TextBlock x:Name="PinTitle" Text="Pinned to your web apps" Style="{StaticResource T.H2}" FontSize="14.5" Margin="10,0,0,0" />
+                        </StackPanel>
+                        <StackPanel x:Name="PinAddressPart" Visibility="Collapsed">
+                            <TextBlock Text="Web address" Style="{StaticResource T.Small}" Foreground="{StaticResource B.Text2}" Margin="0,14,0,6" />
+                            <TextBox x:Name="PinAddress" Tag="For example outlook.office.com" PreviewKeyDown="OnPinKey" TextChanged="OnPinAddressChanged"
+                                     AutomationProperties.Name="Web address" />
+                        </StackPanel>
+                        <TextBlock Text="Name" Style="{StaticResource T.Small}" Foreground="{StaticResource B.Text2}" Margin="0,14,0,6" />
+                        <TextBox x:Name="PinName" MaxLength="40" PreviewKeyDown="OnPinKey" AutomationProperties.Name="Name" />
+                        <TextBlock x:Name="PinError" Style="{StaticResource T.Small}" Foreground="{StaticResource B.Red}" Margin="2,8,0,0"
+                                   Visibility="Collapsed" />
+                        <TextBlock Text="Web apps show up on the Launchpad and on every new tab" Style="{StaticResource T.Small}" Margin="0,12,0,0" />
+                        <DockPanel Margin="0,16,0,0">
+                            <Button x:Name="PinRemove" DockPanel.Dock="Left" Style="{StaticResource Btn.Danger}" Content="Remove" Padding="12,6"
+                                    Click="OnPinRemove" />
+                            <Button x:Name="PinDone" Style="{StaticResource Btn.Primary}" Content="Done" Padding="18,6" HorizontalAlignment="Right"
+                                    Click="OnPinDone" />
+                        </DockPanel>
+                    </StackPanel>
+                </Border>
+            </Popup>
+        </Grid>
+    </Border>
+</Window>

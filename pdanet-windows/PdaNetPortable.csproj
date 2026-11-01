@@ -39,6 +39,11 @@
     <Resource Include="Resources\app.ico" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- The PdaNet browser on the Launchpad, it runs on the Microsoft Edge WebView2 Runtime that ships with Windows -->
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4314.35" />
+  </ItemGroup>
+
   <!-- Portable single-file self-contained publish defaults -->
   <PropertyGroup Condition="'$(Configuration)'=='Release'">
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
