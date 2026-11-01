@@ -1,15 +1,18 @@
 // PdaNet browser MCP — in-page helper.
 //
-// Injected into the active page and called by the C# BrowserSession. It gives the agent
-// its "eyes" (an accessibility-style tree where every actionable element carries a stable
-// [ref=eN] handle) and resolves those handles back to live elements for clicks and typing.
+// Injected into the active page and called by the C# BrowserSession. It gives the agent its
+// "eyes" (a DOM-derived accessibility-style tree where every actionable element carries a
+// [ref=eGEN-N] handle) and resolves those handles back to live elements for clicks and typing.
 //
-// The only state kept across calls is window.__pdaEls — the ref registry rebuilt on every
-// snapshot. If the page navigated since the last snapshot the registry is gone, so resolve
-// reports the ref as stale and the agent knows to snapshot again. Everything else is local,
-// so the script is safe to re-inject on every call.
+// The tree descends into open shadow roots and same-origin iframes, and resolve() adds the
+// enclosing frame offsets so a click on an in-frame element still lands at the right screen
+// point. Each snapshot bumps window.__pdaGen and stamps that generation into every handle, so a
+// handle from an earlier snapshot is reported stale rather than silently hitting whatever now
+// sits at that index. Nothing here ever emits the value of a password field.
 (function () {
   "use strict";
+
+  function viewOf(el) { try { return (el.ownerDocument && el.ownerDocument.defaultView) || window; } catch (e) { return window; } }
 
   function clip(s, n) {
     s = (s == null ? "" : String(s)).replace(/\s+/g, " ").trim();
@@ -19,19 +22,22 @@
   function visible(el) {
     if (!el || el.nodeType !== 1) return false;
     var s;
-    try { s = getComputedStyle(el); } catch (e) { return false; }
+    try { s = viewOf(el).getComputedStyle(el); } catch (e) { return false; }
     if (!s || s.visibility === "hidden" || s.display === "none" || parseFloat(s.opacity) === 0) return false;
     var r = el.getBoundingClientRect();
     if (r.width <= 0 && r.height <= 0) return false;
-    // Fully scrolled far off the document is still "in the page", just not on screen — keep it.
     return true;
+  }
+
+  function sensitive(el) {
+    return el.tagName.toLowerCase() === "input" && /^password$/i.test(el.getAttribute("type") || "");
   }
 
   function accName(el) {
     var n = el.getAttribute("aria-label");
     if (!n && el.getAttribute("aria-labelledby")) {
       n = el.getAttribute("aria-labelledby").split(/\s+/).map(function (id) {
-        var e = document.getElementById(id);
+        var e = (el.ownerDocument || document).getElementById(id);
         return e ? e.innerText : "";
       }).join(" ");
     }
@@ -39,6 +45,7 @@
     if (!n) {
       if (tag === "input" || tag === "textarea") {
         if (el.labels && el.labels.length) n = el.labels[0].innerText;
+        // Never fall back to el.value for a name — it can contain a password or other secret.
         n = n || el.getAttribute("placeholder") || el.getAttribute("name") || el.getAttribute("title") || "";
       } else if (tag === "img") {
         n = el.getAttribute("alt") || "";
@@ -102,24 +109,29 @@
     }
     if (el.getAttribute("aria-expanded")) bits.push(el.getAttribute("aria-expanded") === "true" ? "expanded" : "collapsed");
     if (el.getAttribute("aria-selected") === "true") bits.push("selected");
-    if ((role === "textbox" || role === "searchbox") && el.value) bits.push('value="' + clip(el.value, 60) + '"');
+    if (role === "textbox" || role === "searchbox") {
+      if (sensitive(el)) { if (el.value) bits.push("(filled)"); }   // never reveal a password's value
+      else if (el.value) bits.push('value="' + clip(el.value, 60) + '"');
+    }
     return bits;
   }
 
   function snapshot() {
+    var gen = (window.__pdaGen = (window.__pdaGen || 0) + 1);
     var els = (window.__pdaEls = []);
     var lines = [];
     var cap = 1500;
 
+    function pre(d) { var s = ""; for (var i = 0; i < d; i++) s += "  "; return s; }
+
     function walk(node, depth) {
-      if (lines.length >= cap) return;
+      if (lines.length >= cap || !node) return;
       for (var i = 0; i < node.childNodes.length; i++) {
         var c = node.childNodes[i];
         if (c.nodeType === 3) {
-          // Bare text that is not inside an element we will already name.
           var txt = clip(c.textContent, 100);
           if (txt && !/^[\s•\-|·]+$/.test(txt) && node.childElementCount === 0) {
-            var pr = roleOf(node);
+            var pr = roleOf(node.nodeType === 1 ? node : c.parentElement || document.body);
             if (!ACTIONABLE[pr] && pr !== "heading") lines.push(pre(depth) + 'text "' + txt + '"');
           }
           continue;
@@ -142,44 +154,61 @@
           for (var k = 0; k < st.length; k++) parts.push(st[k]);
           if (act) {
             els.push(c);
-            parts.push("[ref=e" + els.length + "]");
+            parts.push("[ref=e" + gen + "-" + els.length + "]");
           }
           lines.push(pre(depth) + parts.join(" "));
           childDepth = depth + 1;
         }
+
         walk(c, childDepth);
+        if (c.shadowRoot) walk(c.shadowRoot, childDepth);        // open shadow DOM
+        if (tag === "iframe" || tag === "frame") {
+          try { var d = c.contentDocument; if (d && d.body) walk(d.body, childDepth); } catch (e) { /* cross-origin */ }
+        }
       }
     }
 
-    function pre(d) { var s = ""; for (var i = 0; i < d; i++) s += "  "; return s; }
-
     if (document.body) walk(document.body, 0);
-    var truncated = lines.length >= cap;
+    var dialogs = window.__pdaDialogs || [];
+    window.__pdaDialogs = [];
     return {
       ok: true, url: location.href, title: document.title || "",
-      text: lines.join("\n"), count: els.length, truncated: truncated
+      text: lines.join("\n"), count: els.length, truncated: lines.length >= cap, dialogs: dialogs
     };
   }
 
   function elFor(ref) {
-    var els = window.__pdaEls;
-    if (!els) return { stale: true };
-    var idx = parseInt(String(ref).replace(/^e/, ""), 10) - 1;
-    var el = (idx >= 0 && idx < els.length) ? els[idx] : null;
+    var els = window.__pdaEls, m = /^e(\d+)-(\d+)$/.exec(String(ref));
+    if (!m) return { missing: true };
+    if (!els || parseInt(m[1], 10) !== window.__pdaGen) return { stale: true };
+    var el = els[parseInt(m[2], 10) - 1];
     if (!el) return { missing: true };
-    if (!document.contains(el)) return { stale: true };
+    if (!el.isConnected) return { stale: true };   // works for shadow DOM and iframes too
     return { el: el };
+  }
+
+  // Offset of the element's frame chain, so in-iframe coordinates map to the top viewport.
+  function frameOffset(el) {
+    var off = { x: 0, y: 0 };
+    try {
+      var w = viewOf(el);
+      while (w && w !== window.top) {
+        var fe = w.frameElement; if (!fe) break;
+        var r = fe.getBoundingClientRect(); off.x += r.left; off.y += r.top; w = w.parent;
+      }
+    } catch (e) { /* cross-origin frame: best effort */ }
+    return off;
   }
 
   function rectOf(el) {
     try { el.scrollIntoView({ block: "center", inline: "center" }); } catch (e) { }
-    var r = el.getBoundingClientRect();
+    var r = el.getBoundingClientRect(), o = frameOffset(el);
+    var x = r.left + o.x, y = r.top + o.y;
     return {
-      ok: true, x: r.left, y: r.top, w: r.width, h: r.height,
-      cx: r.left + r.width / 2, cy: r.top + r.height / 2,
+      ok: true, x: x, y: y, w: r.width, h: r.height, cx: x + r.width / 2, cy: y + r.height / 2,
       tag: el.tagName.toLowerCase(), type: (el.getAttribute("type") || "").toLowerCase(),
       name: accName(el),
-      inView: r.bottom > 0 && r.right > 0 && r.top < innerHeight && r.left < innerWidth
+      inView: (y + r.height) > 0 && (x + r.width) > 0 && y < innerHeight && x < innerWidth
     };
   }
 
@@ -291,6 +320,20 @@
     return { ok: true, found: t.toLowerCase().indexOf(String(needle).toLowerCase()) >= 0 };
   }
 
+  // Read and clear any JavaScript dialogs the page tried to open (see the override script).
+  function drainDialogs() {
+    var d = window.__pdaDialogs || [];
+    window.__pdaDialogs = [];
+    return { ok: true, dialogs: d };
+  }
+
+  function setDialogPolicy(arg) {
+    window.__pdaDialogPolicy = { accept: !!(arg && arg.accept), text: arg && arg.text != null ? String(arg.text) : null };
+    var d = window.__pdaDialogs || [];
+    window.__pdaDialogs = [];
+    return { ok: true, dialogs: d };
+  }
+
   window.__pdaDispatch = function (op, arg) {
     try {
       switch (op) {
@@ -302,6 +345,8 @@
         case "scroll": return scroll(arg || {});
         case "read": return readable(arg || "text");
         case "hasText": return hasText(arg || "");
+        case "dialogs": return drainDialogs();
+        case "dialogPolicy": return setDialogPolicy(arg || {});
         default: return { ok: false, error: "unknown op " + op };
       }
     } catch (e) {

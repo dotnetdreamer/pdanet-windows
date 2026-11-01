@@ -29,15 +29,27 @@ public sealed class BrowserSession
     private readonly bool _visible;
     private BrowserWindow? _win;
 
-    // Per-page instrumentation: console lines, recent responses, the last JS dialog.
+    // Per-page instrumentation: console lines and recent network responses.
     private readonly HashSet<CoreWebView2> _wired = new();
     private readonly List<string> _console = new();
     private readonly List<string> _network = new();
-    private (string Kind, string Message)? _lastDialog;
-    private bool _dialogAccept = true;
-    private string? _dialogPromptText;
 
     private const int BufferCap = 120;
+
+    // Installed into every page so window.alert/confirm/prompt never block the renderer (a native
+    // modal would wedge the serialized request loop). They record their text and return the
+    // configured answer immediately. AreDefaultScriptDialogsEnabled=false is the belt-and-braces.
+    private const string DialogHookJs =
+        "(function(){if(window.__pdaDialogHook)return;window.__pdaDialogHook=true;" +
+        "window.__pdaDialogs=window.__pdaDialogs||[];" +
+        "window.__pdaDialogPolicy=window.__pdaDialogPolicy||{accept:true,text:null};" +
+        "var rec=function(k,m){try{window.__pdaDialogs.push({kind:k,message:String(m==null?'':m)});" +
+        "if(window.__pdaDialogs.length>20)window.__pdaDialogs.shift();}catch(e){}};" +
+        "window.alert=function(m){rec('alert',m);};" +
+        "window.confirm=function(m){rec('confirm',m);return !!window.__pdaDialogPolicy.accept;};" +
+        "window.prompt=function(m,d){rec('prompt',m);var p=window.__pdaDialogPolicy;" +
+        "return p.accept?(p.text!=null?p.text:(d!=null?d:'')):null;};" +
+        "})();";
 
     public BrowserSession(Dispatcher dispatcher, bool visible)
     {
@@ -181,11 +193,16 @@ public sealed class BrowserSession
         double x = Num(r, "cx"), y = Num(r, "cy");
         string btn = button is "right" or "middle" ? button : "left";
         await Cdp(core, "Input.dispatchMouseEvent", new JsonObject { ["type"] = "mouseMoved", ["x"] = x, ["y"] = y });
-        int clicks = doubleClick ? 2 : 1;
-        await Cdp(core, "Input.dispatchMouseEvent", new JsonObject
-        { ["type"] = "mousePressed", ["x"] = x, ["y"] = y, ["button"] = btn, ["buttons"] = Buttons(btn), ["clickCount"] = clicks });
-        await Cdp(core, "Input.dispatchMouseEvent", new JsonObject
-        { ["type"] = "mouseReleased", ["x"] = x, ["y"] = y, ["button"] = btn, ["buttons"] = 0, ["clickCount"] = clicks });
+
+        async Task Down(int count) => await Cdp(core, "Input.dispatchMouseEvent", new JsonObject
+        { ["type"] = "mousePressed", ["x"] = x, ["y"] = y, ["button"] = btn, ["buttons"] = Buttons(btn), ["clickCount"] = count });
+        async Task Up(int count) => await Cdp(core, "Input.dispatchMouseEvent", new JsonObject
+        { ["type"] = "mouseReleased", ["x"] = x, ["y"] = y, ["button"] = btn, ["buttons"] = 0, ["clickCount"] = count });
+
+        // A real double-click is two full press/release cycles (clickCount 1 then 2), which fires
+        // click, click, dblclick — not a single clickCount:2 event.
+        await Down(1); await Up(1);
+        if (doubleClick) { await Down(2); await Up(2); }
         await SettleAsync(core);
         var what = doubleClick ? "Double-clicked" : btn == "right" ? "Right-clicked" : "Clicked";
         return await ActionResultAsync(core, $"{what} {Describe(r)}.");
@@ -316,9 +333,8 @@ public sealed class BrowserSession
     public Task<string> NetworkAsync(int limit) => OnUi(() =>
     {
         var core = ReqCore();
-        var (title, body, _) = Win.AutoRoute();
         var sb = new StringBuilder();
-        sb.Append("Route: ").Append(title).Append(" — ").Append(body).Append("\n\n");
+        sb.Append(RouteLine()).Append("\n\n");
         var items = _network.TakeLast(Math.Clamp(limit, 1, BufferCap)).ToList();
         sb.Append(items.Count == 0
             ? "No network responses captured yet. Reload the page (browser_reload) to capture its requests, or interact to trigger more."
@@ -326,16 +342,35 @@ public sealed class BrowserSession
         return Task.FromResult(sb.ToString());
     });
 
-    public Task<string> HandleDialogAsync(bool accept, string? promptText) => OnUi(() =>
+    /// <summary>
+    /// How the browser is actually reaching the internet, read from the Windows per-user proxy —
+    /// which is what PdaNet sets and what WebView2 honours. This is cross-process: it reports
+    /// "through PdaNet" whenever any PdaNet instance in this session has routed the PC, not just
+    /// when this MCP process connected.
+    /// </summary>
+    private static string RouteLine()
     {
-        _dialogAccept = accept;
-        _dialogPromptText = promptText;
-        var last = _lastDialog;
-        var note = last == null
-            ? "No dialog has appeared yet."
-            : $"Last dialog — {last.Value.Kind}: \"{last.Value.Message}\".";
-        return Task.FromResult($"{note} Future dialogs will be {(accept ? "accepted" : "dismissed")}" +
-            (accept && promptText != null ? $" with text \"{promptText}\"" : "") + ".");
+        try
+        {
+            var cfg = ConfigManager.Instance.Config;
+            var (enabled, server) = SystemProxy.GetWinInet();
+            string local = cfg.LocalProxyPort.ToString();
+            if (enabled && server != null && (server.Contains("127.0.0.1:" + local) || server.Contains("localhost:" + local)))
+                return $"Route: through the PdaNet local proxy ({server}) — the browser's traffic is going through PdaNet, i.e. your phone's connection.";
+            if (enabled && !string.IsNullOrWhiteSpace(server))
+                return $"Route: through a system proxy ({server}) that is not PdaNet's. Connect the PdaNet app to route through your phone.";
+            return "Route: this PC's normal connection — no PdaNet proxy is set in Windows. Start and connect the PdaNet app to route the browser through your phone.";
+        }
+        catch { return "Route: could not be determined."; }
+    }
+
+    public Task<string> HandleDialogAsync(bool accept, string? promptText) => OnUi(async () =>
+    {
+        var core = ReqCore();
+        var r = await PageAsync(core, "dialogPolicy", new JsonObject { ["accept"] = accept, ["text"] = promptText });
+        var note = DialogsNote(r?["dialogs"] as JsonArray) ?? "No dialog has appeared since the last check.";
+        return $"{note} Future dialogs will be {(accept ? "accepted" : "dismissed")}" +
+            (accept && promptText != null ? $" with text \"{promptText}\"" : "") + ".";
     });
 
     // ============================ In-page script & CDP ============================
@@ -370,19 +405,15 @@ public sealed class BrowserSession
         var count = (int)Num(r, "count");
         var head = $"Page: {title}\nURL: {url}\n{count} actionable element(s)"
             + (r?["truncated"]?.GetValue<bool>() == true ? " (snapshot truncated — scroll or read for more)" : "") + "\n";
-        var dialog = DrainDialogNote();
+        var dialog = DialogsNote(r?["dialogs"] as JsonArray);
         if (dialog != null) head = dialog + "\n" + head;
         return head + "\n" + (string.IsNullOrWhiteSpace(text) ? "(no actionable elements found)" : text);
     }
 
     private async Task<string> ActionResultAsync(CoreWebView2 core, string line)
     {
-        var dialog = DrainDialogNote();
-        var snap = await SnapshotTextAsync(core);
-        var sb = new StringBuilder(line);
-        if (dialog != null) sb.Append('\n').Append(dialog);
-        sb.Append("\n\n").Append(snap);
-        return sb.ToString();
+        // The snapshot already surfaces any dialog that fired during the action.
+        return line + "\n\n" + await SnapshotTextAsync(core);
     }
 
     // Wait briefly, then until the document stops loading, so the returned snapshot reflects the result.
@@ -422,7 +453,12 @@ public sealed class BrowserSession
         }
         else if (key.Length == 1)
         {
-            await Cdp(core, "Input.insertText", new JsonObject { ["text"] = key });
+            // Dispatch real keydown/keyup (with the character) so key listeners fire, not just input.
+            int vk = char.ToUpperInvariant(key[0]);
+            await Cdp(core, "Input.dispatchKeyEvent", new JsonObject
+            { ["type"] = "keyDown", ["key"] = key, ["text"] = key, ["windowsVirtualKeyCode"] = vk });
+            await Cdp(core, "Input.dispatchKeyEvent", new JsonObject
+            { ["type"] = "keyUp", ["key"] = key, ["windowsVirtualKeyCode"] = vk });
         }
         else throw new McpToolException($"Unknown key '{key}'. Try a single character or Enter, Tab, Escape, Backspace, Delete, ArrowUp/Down/Left/Right, Home, End, PageUp, PageDown.");
     }
@@ -433,7 +469,11 @@ public sealed class BrowserSession
         if (!_wired.Add(core)) return;
         try
         {
-            core.ScriptDialogOpening += OnDialog;
+            // Dialogs: suppress native ones and install non-blocking JS overrides on every document
+            // (and on the one already loaded), so a page can never hang the agent on a confirm().
+            try { core.Settings.AreDefaultScriptDialogsEnabled = false; } catch { }
+            _ = core.AddScriptToExecuteOnDocumentCreatedAsync(DialogHookJs);
+            _ = core.ExecuteScriptAsync(DialogHookJs);
             core.PermissionRequested += OnPermission;
             _ = core.CallDevToolsProtocolMethodAsync("Runtime.enable", "{}");
             _ = core.CallDevToolsProtocolMethodAsync("Log.enable", "{}");
@@ -443,23 +483,6 @@ public sealed class BrowserSession
             core.GetDevToolsProtocolEventReceiver("Network.responseReceived").DevToolsProtocolEventReceived += OnResponse;
         }
         catch { /* best effort — console/network just stay empty */ }
-    }
-
-    private void OnDialog(object? sender, CoreWebView2ScriptDialogOpeningEventArgs e)
-    {
-        _lastDialog = (e.Kind.ToString(), e.Message ?? "");
-        var deferral = e.GetDeferral();
-        try
-        {
-            if (_dialogAccept)
-            {
-                if (e.Kind == CoreWebView2ScriptDialogKind.Prompt && _dialogPromptText != null)
-                    e.ResultText = _dialogPromptText;
-                e.Accept();
-            }
-            // When not accepting, completing the deferral without Accept() dismisses the dialog.
-        }
-        finally { deferral.Complete(); }
     }
 
     private void OnPermission(object? sender, CoreWebView2PermissionRequestedEventArgs e)
@@ -514,12 +537,14 @@ public sealed class BrowserSession
         if (buf.Count > BufferCap) buf.RemoveRange(0, buf.Count - BufferCap);
     }
 
-    private string? DrainDialogNote()
+    private static string? DialogsNote(JsonArray? dialogs)
     {
-        if (_lastDialog == null) return null;
-        var d = _lastDialog.Value;
-        _lastDialog = null;
-        return $"A JavaScript {d.Kind} dialog appeared: \"{Shorten(d.Message, 160)}\" — {(_dialogAccept ? "accepted" : "dismissed")} automatically.";
+        if (dialogs == null || dialogs.Count == 0) return null;
+        var last = dialogs[^1];
+        var kind = last?["kind"]?.GetValue<string>() ?? "dialog";
+        var msg = last?["message"]?.GetValue<string>() ?? "";
+        var more = dialogs.Count > 1 ? $" (and {dialogs.Count - 1} more)" : "";
+        return $"A JavaScript {kind} dialog appeared: \"{Shorten(msg, 160)}\"{more} — handled automatically (use browser_handle_dialog to change the response).";
     }
 
     // ============================ Helpers ============================
@@ -570,7 +595,12 @@ public sealed class BrowserSession
     // resolve / focus / clear take the ref as a bare JSON string argument.
     private static JsonNode RefArg(string @ref) => JsonValue.Create(@ref)!;
 
-    private static int RefIndex(string @ref) => int.TryParse(@ref.TrimStart('e'), out var i) ? i - 1 : -1;
+    // Ref handles look like "e{generation}-{index}"; the evaluate binder needs the 0-based index.
+    private static int RefIndex(string @ref)
+    {
+        var parts = @ref.Split('-');
+        return parts.Length == 2 && int.TryParse(parts[1], out var i) ? i - 1 : -1;
+    }
 
     private static double Num(JsonNode? n, string key) => n?[key]?.GetValue<double>() ?? 0;
     private static string Str(JsonNode? n, string key) => n?[key]?.GetValue<string>() ?? "";

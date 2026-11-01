@@ -102,11 +102,11 @@ public static class McpHost
             var answer = (await s.EvaluateAsync("return 6*7", null)).Trim();
             Check(answer == "42", $"evaluate returns a value (6*7 = {answer})");
 
-            var idx = (await s.EvaluateAsync("return (window.__pdaEls||[]).findIndex(e=>e.tagName==='INPUT')+1", null)).Trim();
-            Check(int.TryParse(idx, out var n) && n > 0, $"input resolved to a ref (e{idx})");
-            if (int.TryParse(idx, out n) && n > 0)
+            var inputRef = RefFrom(snap, "textbox");
+            Check(inputRef != null, $"input resolved to a handle ({inputRef ?? "none"})");
+            if (inputRef != null)
             {
-                await s.TypeAsync("e" + n, "hello world", submit: false, clear: true);
+                await s.TypeAsync(inputRef, "hello world", submit: false, clear: true);
                 var val = await s.EvaluateAsync("return document.querySelector('input').value", null);
                 Check(val.Contains("hello world"), $"type put text into the field ({val})");
             }
@@ -114,14 +114,17 @@ public static class McpHost
             var read = await s.ReadAsync("text");
             Check(read.Contains("Award winning"), "read extracts page text");
 
-            var bidx = (await s.EvaluateAsync("return (window.__pdaEls||[]).findIndex(e=>e.tagName==='BUTTON')+1", null)).Trim();
-            if (int.TryParse(bidx, out var b) && b > 0)
+            // The type above produced a new snapshot generation, so grab a fresh button handle —
+            // reusing the one from the first snapshot would (correctly) be rejected as stale.
+            var snap2 = await s.SnapshotAsync();
+            var buttonRef = RefFrom(snap2, "button");
+            Check(buttonRef != null, $"button resolved to a handle ({buttonRef ?? "none"})");
+            if (buttonRef != null)
             {
-                await s.ClickAsync("e" + b, "left", doubleClick: false);
+                await s.ClickAsync(buttonRef, "left", doubleClick: false);
                 var done = await s.EvaluateAsync("return document.body.getAttribute('data-done')", null);
                 Check(done.Contains("yes"), "click fired the button's handler (trusted input)");
             }
-            else Check(false, "button resolved to a ref");
 
             var (png, _) = await s.ScreenshotAsync(fullPage: false);
             Check(png.Length > 1000, $"screenshot captured ({png.Length} bytes)");
@@ -133,5 +136,20 @@ public static class McpHost
 
         Console.Error.WriteLine(pass ? "==== MCP SMOKE PASS ====" : "==== MCP SMOKE FAIL ====");
         return pass ? 0 : 2;
+    }
+
+    // Pull the first [ref=…] handle off a snapshot line whose role matches (e.g. "textbox", "button").
+    private static string? RefFrom(string snapshot, string role)
+    {
+        foreach (var raw in snapshot.Split('\n'))
+        {
+            var line = raw.TrimStart();
+            if (!line.StartsWith("- ")) continue;
+            var token = line.Substring(2).Split(' ', 2)[0];
+            if (!token.Equals(role, StringComparison.OrdinalIgnoreCase)) continue;
+            var m = System.Text.RegularExpressions.Regex.Match(line, @"\[ref=(e\d+-\d+)\]");
+            if (m.Success) return m.Groups[1].Value;
+        }
+        return null;
     }
 }

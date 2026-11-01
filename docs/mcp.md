@@ -26,11 +26,17 @@ PdaNet browser window, and waits for a client to connect.
   phone's country, is a genuinely new capability.
 - **You can watch it.** The window is visible by default, so you see every click and keystroke
   as the agent works. (Use `--hidden` for unattended runs.)
-- **Accessibility‑snapshot model.** The agent "sees" the page as a compact tree of elements, each
-  with a stable `[ref=eN]` handle — the same approach the best browser agents use. It acts on
-  handles, not on guessed CSS selectors.
+- **Accessibility‑style snapshot.** The agent "sees" the page as a compact tree of elements, each
+  with a `[ref=eN]` handle — the same approach the best browser agents use. It acts on handles, not
+  on guessed CSS selectors. The tree is derived from the DOM and descends into **open shadow roots**
+  and **same‑origin iframes**; cross‑origin iframe contents are not reachable (browser security).
+- **Handles can't go stale silently.** Each snapshot stamps a generation into its handles
+  (`[ref=e3-12]`). A handle from an earlier snapshot is reported *stale* and refused, so the agent
+  never acts on a handle that no longer means what it did when it was read.
 - **Trusted input.** Clicks and keystrokes are dispatched through the Chrome DevTools Protocol, so
   they fire exactly like a person's input and work on demanding single‑page apps (React, etc.).
+  Double‑click sends two real press/release cycles; in‑iframe clicks are offset to the right screen
+  point.
 - **Zero extra dependencies.** The server is hand‑rolled JSON‑RPC on `System.Text.Json`, so the
   portable single‑file exe stays lean. Nothing to install beyond the app and Microsoft Edge
   WebView2 (which ships with Windows 11).
@@ -78,9 +84,11 @@ claude mcp add pdanet-browser -- "C:\Tools\PdaNet\PdaNetPortable.exe" --mcp
 
 ### Any MCP client
 
-Launch `PdaNetPortable.exe --mcp` as a stdio server. The server implements the `initialize`
-handshake (protocol `2025-06-18`, and also `2025-11-25`, `2025-03-26`, `2024-11-05`), `tools/list`,
-`tools/call`, `ping`, and the stateless `server/discover` RPC from `2026-07-28`.
+Launch `PdaNetPortable.exe --mcp` as a stdio server. It primarily implements the `initialize`
+handshake (protocol `2025-06-18`, and also `2025-11-25`, `2025-03-26`, `2024-11-05`) with
+`tools/list`, `tools/call` and `ping`, and additionally answers the `server/discover` RPC for
+forward compatibility. It does not implement the full stateless per‑request `2026-07-28` mode.
+Unknown methods return `-32601`, unknown tools `-32602`, and a non‑`"2.0"` `jsonrpc` field `-32600`.
 
 Flags:
 
@@ -99,24 +107,26 @@ The loop is: **open → snapshot → act → snapshot**.
 
 1. `browser_navigate` to a URL. The reply already includes a snapshot.
 2. Read the snapshot — an indented tree where each actionable element has a role, a name and a
-   `[ref=eN]` handle:
+   `[ref=eGEN-N]` handle (the `GEN` is the snapshot generation):
 
    ```
    Page: Hacker News
    URL: https://news.ycombinator.com/
    42 actionable element(s)
 
-   - link "Hacker News" [ref=e1]
-   - link "new" [ref=e2]
-   - textbox "Search" [ref=e8]
-   - button "Search" [ref=e9]
+   - link "Hacker News" [ref=e1-1]
+   - link "new" [ref=e1-2]
+   - textbox "Search" [ref=e1-8]
+   - button "Search" [ref=e1-9]
    ...
    ```
-3. Act on a handle: `browser_click {ref:"e9"}`, `browser_type {ref:"e8", text:"mcp", submit:true}`.
-   Most actions return a **fresh** snapshot, so one call both acts and shows the result.
+3. Act on a handle: `browser_click {ref:"e1-9"}`, `browser_type {ref:"e1-8", text:"mcp", submit:true}`.
+   Most actions return a **fresh** snapshot (a new generation), so one call both acts and shows the
+   result — use the handles from that newest snapshot for the next step.
 
-Handles are rebuilt on every snapshot. If the page changes and you reuse an old handle, the tool
-replies that the handle is stale and tells you to snapshot again — it never clicks the wrong thing.
+Because handles carry the snapshot generation, reusing one from an earlier snapshot is reported as
+stale and refused rather than acted on — so the agent never clicks a handle that has since moved.
+Password fields are never revealed: the snapshot shows `(filled)`, never the value.
 
 ---
 
@@ -141,19 +151,26 @@ replies that the handle is stale and tells you to snapshot again — it never cl
 | `browser_wait_for` | Wait until text appears / disappears, or a fixed time. |
 | `browser_evaluate` | Run a JavaScript function body and get its JSON result. A handle is exposed as `window.__pdaEl`. |
 | `browser_console` | Recent console messages and page errors/warnings. |
-| `browser_network` | Recent network responses **and** the PdaNet route (is it Through PdaNet?). |
+| `browser_network` | Recent network responses **and** the route, read from the Windows proxy PdaNet sets — so it's accurate even when the PdaNet app runs as a separate process. |
 | `browser_handle_dialog` | Decide how JS dialogs (alert/confirm/prompt) are answered. |
 
 ---
 
 ## Safety & behaviour
 
-- **JavaScript dialogs** (`alert`/`confirm`/`prompt`/`beforeunload`) are **auto‑accepted** so a
-  page can never hang the agent. Switch to dismiss, or set prompt text, with
-  `browser_handle_dialog`. The text of the last dialog is reported back.
+- **JavaScript dialogs** (`alert`/`confirm`/`prompt`) can't hang the page: they are replaced with
+  non‑blocking stubs that return immediately (and native dialogs are disabled as a backstop).
+  `confirm`/`prompt` are **accepted** by default; switch to dismiss, or set prompt text, with
+  `browser_handle_dialog`. The text of any dialog that fired is reported back on the next snapshot.
+  A 90‑second per‑call timeout is a further backstop so no single tool call can wedge the server.
+- **Passwords are never exposed** — a password field shows as `(filled)` in snapshots, never its
+  value, and is never used as an element's name.
 - **Permission requests** (geolocation, notifications, camera…) are **auto‑denied** so an
   automated run never blocks on a prompt.
-- **`data:` and `javascript:` URLs are blocked** from navigation on purpose.
+- **`data:` and `javascript:` URLs are blocked from the `browser_navigate` tool**, so the agent
+  can't navigate the tab into arbitrary script. (An in‑page `javascript:` link a page itself
+  contains still runs when clicked, exactly as in any browser — and the agent can already run
+  scripts deliberately via `browser_evaluate`.)
 - **Popups become tabs** — a link that opens a new window opens a new tab the agent can see with
   `browser_tabs`.
 - The agent uses your **real browser profile** (sign‑ins, cookies). Treat the MCP server like
@@ -173,10 +190,10 @@ MCP client ──stdio JSON‑RPC──► PdaNetPortable.exe --mcp
                                    ├─ McpServer         initialize / tools.list / tools.call
                                    ├─ BrowserTools      the 20 browser_* tool schemas
                                    └─ BrowserSession ──► BrowserWindow (WebView2)
-                                        • perception: injected snapshot.js → ref tree
+                                        • perception: injected snapshot.js → ref tree (shadow/iframe)
                                         • input:      Chrome DevTools Protocol (trusted mouse/keys)
                                         • capture:    CapturePreview + Page.captureScreenshot
-                                        • route:      PdaNet "Through PdaNet" indicator
+                                        • route:      read from the Windows proxy PdaNet sets
 ```
 
 The read loop runs on a background thread; every browser touch is marshalled onto the WPF UI

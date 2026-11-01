@@ -20,13 +20,15 @@ public sealed class McpServer
     private const string Preferred = "2025-06-18";
 
     private const string Instructions =
-        "Drive the PdaNet browser — a real, visible Chromium window — to accomplish web tasks. " +
-        "Start with browser_navigate, then call browser_snapshot to see the page as an accessibility " +
-        "tree where every actionable element has a [ref=eN] handle. Pass those refs to browser_click, " +
-        "browser_type, browser_hover and browser_select_option. Snapshots go stale after the page " +
-        "changes, so re-snapshot (most actions already return a fresh one) before using a ref again. " +
-        "Use browser_read for article text, browser_screenshot to see pixels, and browser_network to " +
-        "check whether traffic is flowing through the tethered phone.";
+        "Drive the PdaNet browser — a real, visible WebView2 (Chromium) window — to accomplish web " +
+        "tasks. Start with browser_navigate, then call browser_snapshot to see the page as an " +
+        "accessibility-style tree (built from the DOM, including open shadow roots and same-origin " +
+        "iframes) where every actionable element has a [ref=eN] handle. Pass those handles to " +
+        "browser_click, browser_type, browser_hover and browser_select_option. Handles are tied to " +
+        "the snapshot that produced them: after the page changes, re-snapshot (most actions already " +
+        "return a fresh snapshot) — a handle from an older snapshot is reported stale rather than " +
+        "acted on. Use browser_read for article text, browser_screenshot to see pixels, and " +
+        "browser_network to check whether traffic is flowing through PdaNet (your phone).";
 
     private readonly StdioTransport _transport;
     private readonly IReadOnlyDictionary<string, McpTool> _tools;
@@ -75,6 +77,11 @@ public sealed class McpServer
         var method = msg["method"]?.GetValue<string>();
         var @params = msg["params"] as JsonObject;
 
+        if (msg["jsonrpc"]?.GetValue<string>() != "2.0")
+        {
+            if (id != null) _transport.Write(Error(id, -32600, "Invalid Request: \"jsonrpc\" must be \"2.0\""));
+            return;
+        }
         if (method == null)
         {
             if (id != null) _transport.Write(Error(id, -32600, "Invalid request: no method"));
@@ -104,12 +111,24 @@ public sealed class McpServer
                 break;
 
             case "tools/list":
-                _transport.Write(Result(id, new JsonObject { ["tools"] = (JsonArray)_toolList.DeepClone() }));
+                _transport.Write(Result(id, new JsonObject
+                {
+                    ["tools"] = (JsonArray)_toolList.DeepClone(),
+                    ["resultType"] = "complete",   // harmless under 2025, required under 2026
+                    ["ttlMs"] = 0,
+                    ["cacheScope"] = "public",
+                }));
                 break;
 
             case "tools/call":
-                _transport.Write(Result(id, await CallToolAsync(@params, ct)));
+            {
+                var toolName = @params?["name"]?.GetValue<string>();
+                if (toolName == null || !_tools.ContainsKey(toolName))
+                    _transport.Write(Error(id, -32602, $"Unknown tool: {toolName ?? "(none)"}"));
+                else
+                    _transport.Write(Result(id, await CallToolAsync(@params!, ct)));
                 break;
+            }
 
             case "resources/list":
                 _transport.Write(Result(id, new JsonObject { ["resources"] = new JsonArray() }));
@@ -155,19 +174,25 @@ public sealed class McpServer
             ["serverInfo"] = new JsonObject { ["name"] = "pdanet-browser", ["version"] = Constants.AppVersion },
             ["instructions"] = Instructions,
             ["ttlMs"] = 0,
+            ["cacheScope"] = "public",
         };
     }
 
-    private async Task<JsonObject> CallToolAsync(JsonObject? @params, CancellationToken ct)
-    {
-        var name = @params?["name"]?.GetValue<string>();
-        if (name == null || !_tools.TryGetValue(name, out var tool))
-            return ToolResult.Fail($"Unknown tool: {name}").ToJson();
+    // A tool should never take this long; the cap is a safety net so a stuck page can't wedge the
+    // (serialized) request loop forever. The call returns an error and the server keeps serving.
+    private const int ToolTimeoutMs = 90_000;
 
-        var args = @params?["arguments"] as JsonObject ?? new JsonObject();
+    private async Task<JsonObject> CallToolAsync(JsonObject @params, CancellationToken ct)
+    {
+        var name = @params["name"]!.GetValue<string>();
+        var tool = _tools[name];
+        var args = @params["arguments"] as JsonObject ?? new JsonObject();
         try
         {
-            return (await tool.Handler(args, ct)).ToJson();
+            var work = tool.Handler(args, ct);
+            if (await Task.WhenAny(work, Task.Delay(ToolTimeoutMs, ct)) != work)
+                return ToolResult.Fail($"{name} did not finish within {ToolTimeoutMs / 1000}s and was abandoned. The page may be stuck; try again or navigate away.").ToJson();
+            return (await work).ToJson();
         }
         catch (McpToolException e)
         {
@@ -175,7 +200,7 @@ public sealed class McpServer
         }
         catch (OperationCanceledException)
         {
-            return ToolResult.Fail("The action timed out.").ToJson();
+            return ToolResult.Fail("The action was cancelled.").ToJson();
         }
         catch (Exception e)
         {

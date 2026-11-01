@@ -32,7 +32,7 @@ public sealed class ToolResult
     {
         var arr = new JsonArray();
         foreach (var c in Content) arr.Add(c.ToJson());
-        var obj = new JsonObject { ["content"] = arr };
+        var obj = new JsonObject { ["content"] = arr, ["resultType"] = "complete" };
         if (IsError) obj["isError"] = true;
         return obj;
     }

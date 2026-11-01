@@ -53,12 +53,6 @@ public partial class BrowserWindow
         return list;
     }
 
-    internal (string Title, string Body, string Key) AutoRoute()
-    {
-        var r = Route();
-        return (r.Title, r.Body, r.Key);
-    }
-
     /// <summary>
     /// Makes sure the active tab (creating one if needed) has a ready CoreWebView2 and returns it,
     /// without navigating. The MCP layer calls this first so it can instrument the page for console
