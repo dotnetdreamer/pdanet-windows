@@ -7,6 +7,7 @@ using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Effects;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using PdaNetPortable.Core;
 using PdaNetPortable.Interop;
@@ -717,10 +718,10 @@ public partial class MainWindow : Window
     // ============================== Tray ==============================
     private void SetupTray()
     {
-        _iconOff = MakeStatusIcon(Drawing.Color.FromArgb(123, 138, 157));
-        _iconBusy = MakeStatusIcon(Drawing.Color.FromArgb(255, 182, 77));
-        _iconOn = MakeStatusIcon(Drawing.Color.FromArgb(43, 245, 168));
-        _iconError = MakeStatusIcon(Drawing.Color.FromArgb(255, 94, 123));
+        _iconOff = MakeStatusIcon(Ui.Color("C.Text3"));
+        _iconBusy = MakeStatusIcon(Ui.Color("C.Amber"));
+        _iconOn = MakeStatusIcon(Ui.Color("C.Accent"));
+        _iconError = MakeStatusIcon(Ui.Color("C.Red"));
 
         _tray = new WinForms.NotifyIcon { Text = TrayText(), Icon = _iconOff, Visible = true };
         _tray.MouseClick += (_, e) =>
@@ -800,23 +801,40 @@ public partial class MainWindow : Window
         _tray.Text = TrayText();
     }
 
-    /// <summary>A small radar style ring with a center dot in the state color.</summary>
-    private static Drawing.Icon MakeStatusIcon(Drawing.Color color)
+    /// <summary>
+    /// The tray icon, drawn as the app logo (a rounded dark tile with a neon border and the broadcast
+    /// glyph) tinted by the state color. Online is the green logo, so it matches the taskbar icon, the
+    /// other states tint the same shape. Mirrors how Resources\app.ico is drawn.
+    /// </summary>
+    private static Drawing.Icon MakeStatusIcon(System.Windows.Media.Color color)
     {
         int s = Math.Max(16, WinForms.SystemInformation.SmallIconSize.Width);
-        using var bmp = new Drawing.Bitmap(s, s);
-        using (var g = Drawing.Graphics.FromImage(bmp))
+        var ink = new SolidColorBrush(color);
+        var tile = new SolidColorBrush(Ui.Color("C.Bg1"));
+        var iconFont = (FontFamily)Application.Current.FindResource("F.Icon");
+
+        var visual = new DrawingVisual();
+        using (var dc = visual.RenderOpen())
         {
-            g.SmoothingMode = Drawing.Drawing2D.SmoothingMode.AntiAlias;
-            g.Clear(Drawing.Color.Transparent);
-            float stroke = Math.Max(1.6f, s / 9f);
-            float inset = stroke / 2 + s * 0.05f;
-            using var pen = new Drawing.Pen(color, stroke);
-            g.DrawEllipse(pen, inset, inset, s - 2 * inset, s - 2 * inset);
-            float r = s * 0.2f;
-            using var fill = new Drawing.SolidBrush(color);
-            g.FillEllipse(fill, s / 2f - r, s / 2f - r, 2 * r, 2 * r);
+            double radius = s * 0.22;
+            dc.DrawRoundedRectangle(tile, null, new Rect(0, 0, s, s), radius, radius);
+            double inset = s * 0.055, side = s - 2 * inset;
+            dc.DrawRoundedRectangle(null, new System.Windows.Media.Pen(ink, s * 0.045),
+                new Rect(inset, inset, side, side), side * 0.2, side * 0.2);
+            var typeface = new Typeface(iconFont, FontStyles.Normal, FontWeights.Normal, FontStretches.Normal);
+            var glyph = new FormattedText("", System.Globalization.CultureInfo.InvariantCulture,
+                System.Windows.FlowDirection.LeftToRight, typeface, s * 0.5, ink, 1.0);
+            dc.DrawText(glyph, new Point((s - glyph.Width) / 2, (s - glyph.Height) / 2));
         }
+
+        var rtb = new RenderTargetBitmap(s, s, 96, 96, PixelFormats.Pbgra32);
+        rtb.Render(visual);
+        var encoder = new PngBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(rtb));
+        using var ms = new System.IO.MemoryStream();
+        encoder.Save(ms);
+        ms.Position = 0;
+        using var bmp = new Drawing.Bitmap(ms);
         return Drawing.Icon.FromHandle(bmp.GetHicon());
     }
 
