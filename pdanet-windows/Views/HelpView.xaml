@@ -73,6 +73,15 @@
                 </Expander>
 
                 <Expander Style="{StaticResource Accordion}">
+                    <Expander.Header><TextBlock Text="Can Phone VPN work over WiFi instead of the cable?" Style="{StaticResource Q}" /></Expander.Header>
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource A}" Text="Yes, in step 02 on the Connect page pick how PdaNet reaches your phone, USB cable is the default, WiFi works without the cable, and Other shows every phone and emulator PdaNet can see" />
+                        <TextBlock Style="{StaticResource A}" Margin="0,8,0,0" Text="For WiFi turn on Wireless debugging in Developer options and keep the phone and this PC on the same WiFi, the first time press Pair over WiFi and type the code the phone shows" />
+                        <TextBlock Style="{StaticResource A}" Margin="0,8,0,0" Text="When your phone shows up on the cable and over WiFi at the same time, PdaNet uses only the way you picked, and a phone picked under Other is remembered, so a second phone never takes over" />
+                    </StackPanel>
+                </Expander>
+
+                <Expander Style="{StaticResource Accordion}">
                     <Expander.Header><TextBlock Text="What is carrier stealth?" Style="{StaticResource Q}" /></Expander.Header>
                     <StackPanel>
                         <TextBlock Style="{StaticResource A}" Text="Some mobile plans try to notice when you share your phone's internet with another device, stealth makes this PC's traffic look more like normal phone use so it blends in" />

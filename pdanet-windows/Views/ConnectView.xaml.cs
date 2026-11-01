@@ -11,6 +11,7 @@ using Brush = System.Windows.Media.Brush;
 using CheckState = PdaNetPortable.Services.CheckState;
 using Clipboard = System.Windows.Clipboard;
 using Cursors = System.Windows.Input.Cursors;
+using Ellipse = System.Windows.Shapes.Ellipse;
 using Point = System.Windows.Point;
 using RadioButton = System.Windows.Controls.RadioButton;
 using Rectangle = System.Windows.Shapes.Rectangle;
@@ -40,6 +41,11 @@ public partial class ConnectView : UserControl, IPage
     private string _checkSignature = "";
     private int _step;
 
+    // Phone VPN link picker: the links adb listed last and the one click fix offered for them.
+    private IReadOnlyList<PhoneLink> _links = Array.Empty<PhoneLink>();
+    private LinkFix? _fix;
+    private bool _syncingLink;
+
     // Screenshot only demo overrides (see Demo), never set during normal use.
     private bool _demo;
     private ConnectionMode _demoMode;
@@ -60,6 +66,7 @@ public partial class ConnectView : UserControl, IPage
         _shell = shell;
         _state = _cm.State;
         SelectedMode = ConnectionModeExtensions.FromKey(_cfg.ConnectionMode);
+        SyncLink();
         ModeRadio(SelectedMode).IsChecked = true;
 
         _probeTimer.Tick += (_, _) => Probe();
@@ -106,7 +113,8 @@ public partial class ConnectView : UserControl, IPage
             ConfigManager.Instance.SaveConfig();
         }
 
-        HowToList.ItemsSource = Numbered(Friendly.HowTo(mode));
+        HowToList.ItemsSource = Numbered(Friendly.HowTo(mode, ChoiceKind));
+        LinkPanel.Visibility = Show(mode == ConnectionMode.AdbAgent);
         _shell?.OnModeChanged(mode);
 
         if (_state == ConnectionState.Disconnected)
@@ -130,10 +138,13 @@ public partial class ConnectView : UserControl, IPage
         _probing = true;
         var mode = SelectedMode;
         var adbPath = _cfg.AdbPath;
-        Task.Run(() => Readiness.Check(mode, adbPath)).ContinueWith(t => Dispatcher.BeginInvoke(() =>
+        var (link, serial) = (_cfg.PhoneLink, _cfg.PhoneSerial);
+        Task.Run(() => Readiness.Check(mode, adbPath, link, serial)).ContinueWith(t => Dispatcher.BeginInvoke(() =>
         {
             _probing = false;
-            if (t.IsCompletedSuccessfully && mode == SelectedMode && _state == ConnectionState.Disconnected)
+            // Drop a result made for a mode or a phone link the user has moved away from since.
+            if (t.IsCompletedSuccessfully && mode == SelectedMode && _state == ConnectionState.Disconnected
+                && link == _cfg.PhoneLink && serial == _cfg.PhoneSerial)
                 RenderChecklist(t.Result);
             if (_probeAgain)
             {
@@ -152,6 +163,9 @@ public partial class ConnectView : UserControl, IPage
             _checkSignature = signature;
             CheckList.ItemsSource = report.Items.Select(ToRow).ToList();
         }
+
+        LinkPanel.Visibility = Show(SelectedMode == ConnectionMode.AdbAgent);
+        if (report.Links != null) RenderLinks(report.Links);
 
         bool checking = report.Items.Any(i => i.State == CheckState.Checking);
         ReadyBanner.Visibility = Show(report.Ready && !checking);
@@ -177,6 +191,187 @@ public partial class ConnectView : UserControl, IPage
             ? $"Ready to go online with {Friendly.ModeName(SelectedMode)}"
             : "Follow step 02, then press the button";
     }
+
+    // ============================ Phone link ==========================
+    /// <summary>One click fixes for the phone link, offered under the picker and on the fix it panel.</summary>
+    private sealed record LinkFix(string Message, IReadOnlyList<FixAction> Actions);
+    private sealed record FixAction(string Button, string Glyph, Action Apply);
+
+    // Segoe Fluent Icons glyphs for the fix buttons.
+    private static readonly string UsbGlyph = char.ConvertFromUtf32(0xE88E);
+    private static readonly string WifiGlyph = char.ConvertFromUtf32(0xE701);
+    private static readonly string MoreGlyph = char.ConvertFromUtf32(0xE712);
+
+    /// <summary>The serial of the link the saved choice points at, so the phone list can mark the phone.</summary>
+    public string? PickedSerial =>
+        AdbAgent.Pick(AdbAgent.LastLinks, _cfg.PhoneLink, _cfg.PhoneSerial)?.Serial
+        ?? (_cfg.PhoneLink == "other" ? _cfg.PhoneSerial : null);
+
+    private LinkKind ChoiceKind => _cfg.PhoneLink == "wifi"
+        ? LinkKind.Wifi
+        : AdbAgent.Pick(_links, _cfg.PhoneLink, _cfg.PhoneSerial)?.Kind ?? LinkKind.Usb;
+
+    /// <summary>Puts the picker back on the saved choice, for example after the phone list closes.</summary>
+    public void SyncLink()
+    {
+        _syncingLink = true;
+        (_cfg.PhoneLink switch { "wifi" => LinkWifi, "other" => LinkOther, _ => LinkUsb }).IsChecked = true;
+        _syncingLink = false;
+    }
+
+    /// <summary>Uses a phone picked from the phone list and remembers that phone.</summary>
+    public void UseLink(PhoneLink link)
+    {
+        var (choice, phone) = AdbAgent.ChoiceFor(link);
+        SetLink(choice, phone);
+    }
+
+    /// <summary>Saves the way to the phone and the phone picked from the list ("" for any phone that way).</summary>
+    private void SetLink(string choice, string phone)
+    {
+        bool changed = _cfg.PhoneLink != choice || _cfg.PhoneSerial != phone;
+        if (changed)
+        {
+            _cfg.PhoneLink = choice;
+            _cfg.PhoneSerial = phone;
+            ConfigManager.Instance.SaveConfig();
+        }
+        SyncLink();
+        HowToList.ItemsSource = Numbered(Friendly.HowTo(SelectedMode, ChoiceKind));
+
+        if (_state == ConnectionState.Error)
+        {
+            // Picked on the fix it panel, so try the new way straight away (never in a screenshot demo).
+            if (!_demo) _shell?.RequestConnect();
+            return;
+        }
+        if (_state != ConnectionState.Disconnected || SelectedMode != ConnectionMode.AdbAgent) return;
+
+        // Answer at once from what adb listed last, then ask adb again.
+        RenderChecklist(Readiness.PhoneVpn(AdbAgent.LastLinks, choice, phone));
+        if (changed) Ui.Enter(CheckList, rise: 6, ms: 200);
+        Probe(force: true);
+    }
+
+    private void OnLinkChecked(object sender, RoutedEventArgs e)
+    {
+        // The same phone another way. A phone or emulator picked under Other does not carry over.
+        if (!_syncingLink) SetLink(sender == LinkWifi ? "wifi" : "usb", _cfg.PhoneLink == "other" ? "" : _cfg.PhoneSerial);
+    }
+
+    private void OnLinkOther(object sender, RoutedEventArgs e) => _shell?.OpenPhones();
+
+    private void OnLinkFix(object sender, RoutedEventArgs e)
+    {
+        int i = sender == LinkHintBtn2 ? 1 : 0;
+        if (_fix != null && i < _fix.Actions.Count) _fix.Actions[i].Apply();
+    }
+
+    /// <summary>Live status on each way to reach the phone, plus one click fixes when the picked way needs a hand.</summary>
+    private void RenderLinks(IReadOnlyList<PhoneLink> links)
+    {
+        _links = links;
+        // With a phone picked from the list the dots follow that phone, else any phone.
+        var mine = _cfg.PhoneLink == "other" ? "" : _cfg.PhoneSerial;
+        var usb = AdbAgent.Pick(links, "usb", mine);
+        var wifi = AdbAgent.Pick(links, "wifi", mine);
+        var other = _cfg.PhoneLink == "other" ? AdbAgent.Pick(links, "other", _cfg.PhoneSerial) : null;
+        int more = links.Count(l => l != usb && l != wifi);
+        var missing = string.IsNullOrEmpty(mine) ? "No phone" : "The phone you picked is not";
+
+        SetDot(UsbDot, usb);
+        SetDot(WifiDot, wifi);
+        SetDot(OtherDot, other);
+        OtherCount.Visibility = Show(other == null && more > 0);
+        OtherCountText.Text = more.ToString();
+
+        Describe(LinkUsb, usb == null ? $"{missing} on the USB cable" : $"{usb.Label} on the USB cable{StateWords(usb)}");
+        Describe(LinkWifi, wifi == null ? $"{missing} over WiFi" : $"{wifi.Label} over WiFi{StateWords(wifi)}");
+        Describe(LinkOther, other != null ? $"Using {other.Label}{StateWords(other)}, pick another phone"
+            : more > 0 ? $"{more} more {(more == 1 ? "phone" : "phones")} or emulators, pick one"
+            : "Pick another phone or an emulator");
+
+        _fix = SuggestFix(links);
+        LinkHint.Visibility = Show(_fix != null);
+        if (_fix == null) return;
+        LinkHintText.Text = _fix.Message;
+        ShowAction(LinkHintBtn, _fix.Actions.ElementAtOrDefault(0));
+        ShowAction(LinkHintBtn2, _fix.Actions.ElementAtOrDefault(1));
+    }
+
+    /// <summary>
+    /// What to offer when the picked way needs a hand: a phone that is ready another way (the
+    /// picked phone itself first, then the cable before WiFi, named, never assumed to be yours),
+    /// and help with the pick itself (pair over WiFi, pick a phone). Before connecting both
+    /// show. After a failed connect only one button fits, and the way that works now comes first.
+    /// </summary>
+    private LinkFix? SuggestFix(IReadOnlyList<PhoneLink> links, bool failed = false)
+    {
+        var (choice, phone) = (_cfg.PhoneLink, _cfg.PhoneSerial);
+        bool remembered = !string.IsNullOrEmpty(phone);
+        var picked = AdbAgent.Pick(links, choice, phone);
+        var pickOne = new FixAction("Pick a phone", MoreGlyph, () => _shell?.OpenPhones());
+
+        if (picked is { Ready: true })
+        {
+            // A ready phone failed for another reason, the fix it steps say why, so no button here.
+            int rivals = failed ? 0 : AdbAgent.Rivals(links, choice, phone);
+            return rivals == 0 ? null
+                : new($"{rivals + 1} phones are {Friendly.LinkWords(picked.Kind)}, PdaNet uses {picked.Label}", new[] { pickOne });
+        }
+
+        // The same phone AdbAgent.Problem names, so the fix it steps and the button agree.
+        var kind = choice == "wifi" ? LinkKind.Wifi : LinkKind.Usb;
+        var alt = AdbAgent.Alternative(links, choice, phone);
+        FixAction? use = alt == null ? null : alt.Kind == LinkKind.Wifi
+            ? new("Use WiFi", WifiGlyph, () => SetLink("wifi", remembered ? alt.Key : ""))
+            : new("Use USB cable", UsbGlyph, () => SetLink("usb", remembered ? alt.Key : ""));
+        FixAction? help = picked != null ? null
+            : choice == "wifi" ? new("Pair over WiFi", WifiGlyph, () => _shell?.OpenPair())
+            : remembered || choice == "other" ? pickOne
+            : null;
+
+        var said = new List<string>();
+        if (picked == null)
+            said.Add(choice == "other" ? "The phone you picked is not connected"
+                : remembered ? $"The phone you picked is not {Friendly.LinkWords(kind)}"
+                : $"No phone {Friendly.LinkWords(kind)}");
+        if (alt != null) said.Add($"{alt.Label} is ready {Friendly.LinkWords(alt.Kind)}");
+        else if (choice == "wifi" && picked == null) said.Add("first time over WiFi? Pair the phone with this PC once");
+
+        var actions = (failed ? new[] { use ?? help } : new[] { help, use }).OfType<FixAction>().ToList();
+        if (said.Count == 0 || actions.Count == 0) return null;
+        var message = string.Join(", ", said);
+        return new(char.ToUpperInvariant(message[0]) + message[1..], actions);
+    }
+
+    private static void ShowAction(System.Windows.Controls.Button button, FixAction? action)
+    {
+        button.Visibility = Show(action != null);
+        if (action == null) return;
+        button.Content = action.Button;
+        button.Tag = action.Glyph;
+    }
+
+    /// <summary>The status of one way to the phone, as a tooltip and for screen readers.</summary>
+    private static void Describe(RadioButton segment, string text)
+    {
+        segment.ToolTip = text;
+        AutomationProperties.SetHelpText(segment, text);
+    }
+
+    private static void SetDot(Ellipse dot, PhoneLink? link)
+    {
+        dot.Visibility = Show(link != null);
+        dot.Fill = link is { Ready: true } ? Ui.Brush("B.Accent") : Ui.Brush("B.Amber");
+    }
+
+    private static string StateWords(PhoneLink link) => link.State switch
+    {
+        "device" => ", ready",
+        "unauthorized" => ", tap Allow on the phone",
+        _ => ", not responding",
+    };
 
     // ============================== State =============================
     public void ApplyState(ConnectionState state)
@@ -243,12 +438,16 @@ public partial class ConnectView : UserControl, IPage
                 break;
 
             case ConnectionState.Error:
-                var f = Friendly.Explain(_demo ? "No phone found, plug it in with a USB cable and turn on USB debugging" : _cm.LastError, CurMode);
+                var f = Friendly.Explain(_demo ? DemoError() : _cm.LastError, CurMode, AdbAgent.Link?.Kind);
                 Headline.Text = f.Title;
                 SubText.Text = f.Summary;
                 ErrSummary.Text = f.Summary;
                 FixList.ItemsSource = Numbered(f.Steps);
                 ErrRaw.Text = string.IsNullOrEmpty(f.Raw) ? "No extra details were recorded" : f.Raw;
+
+                // When the picked way to the phone is the problem, offer the way that works.
+                _fix = CurMode == ConnectionMode.AdbAgent ? SuggestFix(AdbAgent.LastLinks, failed: true) : null;
+                ShowAction(FixLinkBtn, _fix?.Actions.FirstOrDefault());
                 break;
 
             default:
@@ -379,7 +578,7 @@ public partial class ConnectView : UserControl, IPage
         DetMode.Text = Friendly.ModeName(mode);
         DetNetwork.Text = mode switch
         {
-            ConnectionMode.AdbAgent => "Through your phone over USB",
+            ConnectionMode.AdbAgent => PhoneRoute(),
             ConnectionMode.Usb => Friendly.Adapter(_demo ? "Ethernet 3" : _cm.CurrentInterface?.Alias),
             _ => CurSsid ?? Friendly.Adapter(_cm.CurrentInterface?.Alias),
         };
@@ -397,6 +596,22 @@ public partial class ConnectView : UserControl, IPage
         DetProxy.Text = hasProxy ? server! : "Not used";
         DetProxy.Foreground = hasProxy ? Ui.Brush("B.Text") : Ui.Brush("B.Text3");
         CopyProxyBtn.Visibility = Show(hasProxy);
+    }
+
+    private string PhoneRoute()
+    {
+        var kind = _demo ? ChoiceKind : AdbAgent.Link?.Kind ?? LinkKind.Usb;
+        return kind == LinkKind.Emulator
+            ? "Through the Android emulator on this PC"
+            : $"Through your phone {Friendly.LinkWords(kind)}";
+    }
+
+    /// <summary>Screenshot only: the error a real connect would raise for the sample phones.</summary>
+    private string DemoError()
+    {
+        const string noPhone = "No phone found, plug the phone in with a USB cable and turn on USB debugging";
+        if (CurMode != ConnectionMode.AdbAgent) return noPhone;
+        return AdbAgent.Problem(AdbAgent.List(null).Links, _cfg.PhoneLink, _cfg.PhoneSerial) ?? noPhone;
     }
 
     /// <summary>Screenshot only: render a state with sample data, with no real connection.</summary>

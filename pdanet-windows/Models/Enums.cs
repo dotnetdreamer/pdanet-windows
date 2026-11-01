@@ -9,6 +9,14 @@ public enum ConnectionMode
     AdbAgent
 }
 
+/// <summary>How Phone VPN mode reaches the phone through adb.</summary>
+public enum LinkKind
+{
+    Usb,
+    Wifi,
+    Emulator
+}
+
 /// <summary>
 /// Connection state machine, ported from connection_manager.ConnectionState.
 /// </summary>

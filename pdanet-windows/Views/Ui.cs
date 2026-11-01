@@ -31,6 +31,17 @@ internal static class Ui
             new DoubleAnimation(rise, 0, TimeSpan.FromMilliseconds(ms + 40)) { EasingFunction = EaseOut });
     }
 
+    /// <summary>A short side to side shake that points at a field that needs a fix.</summary>
+    public static void Shake(UIElement el)
+    {
+        var t = new TranslateTransform();
+        el.RenderTransform = t;
+        var a = new DoubleAnimationUsingKeyFrames();
+        foreach (var (time, x) in new[] { (0, 0.0), (60, -5.0), (120, 5.0), (180, -3.0), (240, 0.0) })
+            a.KeyFrames.Add(new LinearDoubleKeyFrame(x, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(time))));
+        t.BeginAnimation(TranslateTransform.XProperty, a);
+    }
+
     /// <summary>A looping animation with a frame rate cap so idle effects stay cheap.</summary>
     public static DoubleAnimation Loop(double from, double to, double seconds, int fps, IEasingFunction? ease = null)
     {

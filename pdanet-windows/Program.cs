@@ -27,6 +27,8 @@ public static class Program
             return SelfTest.RunAgent();
         if (args.Length > 0 && args[0] == "--selftest-monitor")
             return SelfTest.RunMonitor();
+        if (args.Length > 0 && args[0] == "--selftest-proxy")
+            return SelfTest.RunProxy();
 
         if (args.Length > 0 && (args[0] == "--version" || args[0] == "-v"))
         {
@@ -58,6 +60,9 @@ public static class Program
                 return 0;
             }
         }
+
+        // Put the user's own Windows proxy back if PdaNet stopped without disconnecting last time.
+        SystemProxy.RepairLeftover();
 
         var app = new App();
         app.InitializeComponent();   // merges the Cyberpunk theme resource dictionary

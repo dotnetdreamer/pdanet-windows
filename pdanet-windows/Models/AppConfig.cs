@@ -44,6 +44,9 @@ public class AppConfig
     [JsonPropertyName("location_auto_on_connect")] public bool LocationAutoOnConnect { get; set; } = false;
     [JsonPropertyName("agent_port")] public int AgentPort { get; set; } = 8899;   // phone-side agent listen port
     [JsonPropertyName("adb_path")] public string AdbPath { get; set; } = "";       // optional explicit adb.exe path
+    // Phone VPN: how to reach the phone, "usb" (default), "wifi", or "other" for the phone in phone_serial.
+    [JsonPropertyName("phone_link")] public string PhoneLink { get; set; } = "usb";
+    [JsonPropertyName("phone_serial")] public string PhoneSerial { get; set; } = "";
     [JsonPropertyName("data_warning_mb")] public int DataWarningMb { get; set; } = 10240;   // 10 GB
     [JsonPropertyName("data_critical_mb")] public int DataCriticalMb { get; set; } = 20480; // 20 GB
     // Record which apps go online through the local relay, for the Apps page. In Phone VPN mode

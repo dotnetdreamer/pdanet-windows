@@ -15,6 +15,14 @@ public static class Friendly
 {
     public static string ModeName(ConnectionMode mode) => mode.Display();
 
+    /// <summary>How Phone VPN reaches the phone, as words after a phone name, such as "on the USB cable".</summary>
+    public static string LinkWords(LinkKind link) => link switch
+    {
+        LinkKind.Wifi => "over WiFi",
+        LinkKind.Emulator => "on this PC",
+        _ => "on the USB cable",
+    };
+
     /// <summary>The steps ConnectionManager logs as "[n/total]" for each mode, in order.</summary>
     public static IReadOnlyList<string> ConnectSteps(ConnectionMode mode) => mode switch
     {
@@ -42,16 +50,25 @@ public static class Friendly
         },
     };
 
-    /// <summary>Step by step phone setup for the "Show me how" guide.</summary>
-    public static IReadOnlyList<string> HowTo(ConnectionMode mode) => mode switch
+    /// <summary>Step by step phone setup for the "Show me how" guide, Phone VPN follows the phone link.</summary>
+    public static IReadOnlyList<string> HowTo(ConnectionMode mode, LinkKind link = LinkKind.Usb) => mode switch
     {
+        ConnectionMode.AdbAgent when link == LinkKind.Wifi => new[]
+        {
+            "On your phone open Settings, then About phone",
+            "Tap Build number seven times until the phone says you are a developer",
+            "Go back to Settings and open System, then Developer options",
+            "Turn on Wireless debugging and keep the phone on the same WiFi as this PC",
+            "The first time, press Pair over WiFi and type the code from the phone",
+            "Want this PC to use your phone's VPN too? Turn the VPN on first",
+        },
         ConnectionMode.AdbAgent => new[]
         {
             "On your phone open Settings, then About phone",
-            "Tap Build number seven times until it says you are a developer",
+            "Tap Build number seven times until the phone says you are a developer",
             "Go back to Settings and open System, then Developer options",
             "Turn on USB debugging",
-            "Plug the phone into this PC and tap Allow when it asks",
+            "Plug the phone into this PC and tap Allow when the phone asks",
             "Want this PC to use your phone's VPN too? Turn the VPN on first",
         },
         ConnectionMode.Usb => new[]
@@ -87,20 +104,78 @@ public static class Friendly
             : $"This PC is using your phone's hotspot {ssid}",
     };
 
-    /// <summary>Turns a raw connection error into a title, a short summary and fix steps.</summary>
-    public static FriendlyError Explain(string? raw, ConnectionMode mode)
+    /// <summary>
+    /// Turns a raw connection error into a title, a short summary and fix steps. In Phone VPN
+    /// mode <paramref name="link"/> tells the cable from WiFi when the error text cannot.
+    /// </summary>
+    public static FriendlyError Explain(string? raw, ConnectionMode mode, LinkKind? link = null)
     {
         var r = Clean(raw);
         var m = (raw ?? "").ToLowerInvariant();
+        bool wifi = link == LinkKind.Wifi;
 
-        if (Has(m, "not allowed this pc", "unauthorized"))
-            return new("Your phone needs to trust this PC", "USB debugging is waiting for your OK on the phone", new[]
+        // Phone VPN messages from AdbAgent.Problem can end with a phone that is ready another way, such
+        // as "Galaxy S25 Ultra is ready over WiFi". The fix it panel then shows a button for that way
+        // (ConnectView.SuggestFix), so the steps below point at the button. head is the message without
+        // that last part, for the checks that must not read the other way's words.
+        var parts = r.Split(", ");
+        var ready = parts.Skip(1).LastOrDefault(p => p.Contains(" is ready "));
+        bool onWifi = ready?.EndsWith("over WiFi") == true, onUsb = ready?.EndsWith("on the USB cable") == true;
+        var useOther = onWifi ? "Or press Use WiFi below" : onUsb ? "Or press Use USB cable below" : null;
+        var head = string.Join(", ", parts.Where(p => p != ready)).ToLowerInvariant();
+        bool mine = m.Contains("phone you picked");
+
+        if (Has(m, "could not save your windows proxy"))
+            return new("Your settings could not be saved", "PdaNet saves your Windows proxy settings before connecting, the save failed so nothing changed", new[]
             {
-                "Unlock your phone",
-                "Look for the Allow USB debugging message",
-                "Tick Always allow from this computer, then tap Allow",
+                "Move PdaNet to a folder you can write to, like your Desktop",
                 "Press Try again",
             }, r);
+
+        if (Has(m, "not allowed this pc", "unauthorized"))
+        {
+            bool wireless = head.Contains("wireless");
+            return new("Your phone needs to trust this PC", wireless
+                ? "Wireless debugging is waiting for your OK on the phone"
+                : "USB debugging is waiting for your OK on the phone", Steps(
+                "Unlock your phone",
+                wireless ? "Look for the Allow wireless debugging message" : "Look for the Allow USB debugging message",
+                "Tick Always allow from this computer, then tap Allow",
+                useOther,
+                "Press Try again"), r);
+        }
+        if (Has(m, "no phone on the usb cable", "not on the usb cable"))
+            return new(parts[0], ready ?? "PdaNet cannot see the phone on the USB cable", new[]
+            {
+                "Plug the phone into this PC with a cable that can carry data",
+                "Turn on USB debugging in Developer options",
+                onWifi ? "Or press Use WiFi below" : mine ? "Or press Pick a phone below" : "Or pick another way in step 02",
+                "Press Try again",
+            }, r);
+
+        if (Has(m, "no phone over wifi", "not over wifi"))
+            return new(parts[0], ready ?? "PdaNet cannot see the phone over WiFi", new[]
+            {
+                "On the phone open Developer options, then turn on Wireless debugging",
+                "Keep the phone and this PC on the same WiFi",
+                onUsb ? "Or press Use USB cable below" : "First time over WiFi? Press Pair over WiFi below",
+                "Press Try again",
+            }, r);
+
+        if (Has(m, "phone you picked"))
+            return new("The phone you picked is not here", ready ?? "PdaNet cannot see the phone you picked", new[]
+            {
+                "Plug the phone back in",
+                onUsb ? "Or press Use USB cable below" : onWifi ? "Or press Use WiFi below" : "Or press Pick a phone below",
+                "Press Try again",
+            }, r);
+
+        if (Has(m, "not responding"))
+            return new("Your phone is not responding", "The phone is connected but does not answer", Steps(
+                "Unlock your phone",
+                head.Contains("wifi") ? "Turn Wireless debugging off and on again" : "Unplug the cable and plug the cable back in",
+                useOther,
+                "Press Try again"), r);
 
         if (Has(m, "no phone found", "no adb device"))
             return new("We cannot see your phone", "Phone VPN needs a USB cable and USB debugging", new[]
@@ -121,10 +196,12 @@ public static class Friendly
 
         if (Has(m, "helper stopped", "could not copy the helper", "could not start the phone helper",
                 "could not link", "could not start adb", "phone helper is missing", "could not unpack"))
-            return new("The phone helper could not start", "Your phone stopped the helper or the cable connection dropped", new[]
+            return new("The phone helper could not start", wifi
+                ? "Your phone stopped the helper or the WiFi link dropped"
+                : "Your phone stopped the helper or the cable connection dropped", new[]
             {
-                "Unplug the cable and plug it back in",
-                "Check that USB debugging is still on",
+                wifi ? "Check that the phone is still on the same WiFi" : "Unplug the cable and plug the cable back in",
+                wifi ? "Check that Wireless debugging is still on" : "Check that USB debugging is still on",
                 "Press Try again",
             }, r);
 
@@ -241,6 +318,9 @@ public static class Friendly
         < 50 => "Great for 4K video and video calls",
         _ => "Excellent, faster than most home internet",
     };
+
+    /// <summary>Fix steps, leaving out the ones that do not apply (null).</summary>
+    private static string[] Steps(params string?[] steps) => steps.OfType<string>().ToArray();
 
     private static bool Has(string haystack, params string[] needles) =>
         needles.Any(n => haystack.Contains(n, StringComparison.Ordinal));

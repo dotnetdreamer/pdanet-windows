@@ -199,6 +199,36 @@ public partial class MainWindow : Window
         ShowSheet(sheet);
     }
 
+    /// <summary>The full list of phones and emulators, opened by Other on the Connect page.</summary>
+    public void OpenPhones()
+    {
+        if (SheetOpen) { ConnectPage.SyncLink(); return; }
+        var sheet = new PhoneSheet(_config.AdbPath, ConnectPage.PickedSerial);
+        sheet.Picked += link => { CloseSheet(); ConnectPage.UseLink(link); };
+        sheet.PairRequested += () => { CloseSheet(); OpenPair(); };
+        sheet.Cancelled += CloseSheet;
+        sheet.Closed += ConnectPage.SyncLink;
+        ShowSheet(sheet);
+    }
+
+    /// <summary>Pairs a phone over WiFi once, then Phone VPN reaches the phone over WiFi.</summary>
+    public void OpenPair()
+    {
+        if (SheetOpen) { ConnectPage.SyncLink(); return; }
+        var sheet = new PairSheet(_config.AdbPath);
+        sheet.Linked += link =>
+        {
+            CloseSheet();
+            // Remember the phone that was just linked, so another phone on WiFi never takes its place.
+            // When adb does not list the phone yet, the user picks the phone from the list.
+            if (link != null) ConnectPage.UseLink(link);
+            else OpenPhones();
+        };
+        sheet.Cancelled += CloseSheet;
+        sheet.Closed += ConnectPage.SyncLink;
+        ShowSheet(sheet);
+    }
+
     public void OpenBlocked()
     {
         if (SheetOpen) return;
@@ -305,7 +335,7 @@ public partial class MainWindow : Window
 
     private void OnError(string message)
     {
-        var f = Friendly.Explain(message, _cm.CurrentMode);
+        var f = Friendly.Explain(message, _cm.CurrentMode, AdbAgent.Link?.Kind);
         Notify(f.Title, f.Steps.FirstOrDefault() ?? f.Summary);
         if (!ReferenceEquals(_currentPage, ConnectPage) || _cm.State != ConnectionState.Connecting)
             Toast(f.Title, ToastKind.Error);
@@ -332,6 +362,8 @@ public partial class MainWindow : Window
         else if (sheet == "speed") OpenSpeedTest();
         else if (sheet == "location") OpenLocation();
         else if (sheet == "blocked") OpenBlocked();
+        else if (sheet == "phones") OpenPhones();
+        else if (sheet == "pair") OpenPair();
 
         var state = Demo.Value("state");
         if (!string.IsNullOrEmpty(state))

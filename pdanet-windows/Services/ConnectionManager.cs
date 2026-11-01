@@ -189,8 +189,9 @@ public sealed class ConnectionManager
     private bool ConnectAdbAgent()
     {
         _log.Info("[1/4] Looking for your phone");
-        if (!AdbAgent.Init(_cfg.AdbPath, out var err)) { RaiseError(err); return false; }
-        _log.Ok($"Phone found, using adb at {AdbAgent.AdbPath}");
+        if (!AdbAgent.Init(_cfg.AdbPath, _cfg.PhoneLink, _cfg.PhoneSerial, out var err)) { RaiseError(err); return false; }
+        var linkWords = Friendly.LinkWords(AdbAgent.Link!.Kind);
+        _log.Ok($"Phone found {linkWords}, using adb at {AdbAgent.AdbPath}");
 
         _log.Info("[2/4] Starting the helper on your phone");
         if (!AdbAgent.Deploy(out err)) { RaiseError(err); return false; }
@@ -199,7 +200,7 @@ public sealed class ConnectionManager
 
         _log.Info("[3/4] Linking this PC to your phone");
         if (!LinkPhone(out err)) { RaiseError(err); return false; }
-        SystemProxy.SetWinInet($"127.0.0.1:{_cfg.LocalProxyPort}");
+        if (!SystemProxy.SetWinInet($"127.0.0.1:{_cfg.LocalProxyPort}")) { RaiseError(ProxyNotSaved); return false; }
         _log.Ok(_relay != null
             ? $"Windows proxy points at 127.0.0.1:{_cfg.LocalProxyPort}, linked to the phone helper, app watch is on"
             : $"Windows proxy points at 127.0.0.1:{_cfg.LocalProxyPort}, linked to the phone helper");
@@ -209,7 +210,7 @@ public sealed class ConnectionManager
             _log.Warning("Could not confirm internet yet, continuing");
 
         // The agent re-originates on the phone, so the phone/VPN governs the exit (no PC-side TTL needed).
-        CurrentInterface = new TetherInterface("adb-agent", "Phone helper over USB", null, null);
+        CurrentInterface = new TetherInterface("adb-agent", $"Phone helper {linkWords}", null, null);
         CurrentSsid = null;
         BypassActive = false;
         _stats.SetInterface(null);
@@ -335,12 +336,19 @@ public sealed class ConnectionManager
         return true;
     }
 
+    // Windows is only pointed at PdaNet once the user's own proxy values are saved (SystemProxy.SetWinInet).
+    private const string ProxyNotSaved =
+        "Could not save your Windows proxy settings, so PdaNet did not change them, move PdaNet to a folder you can write to";
+
     private void StartProxy(bool usePdaProxy, int ttl)
     {
         StartRelay(usePdaProxy
             ? new LocalProxy(_cfg.LocalProxyPort, ttl, _cfg.ProxyIp, _cfg.ProxyPort)
             : new LocalProxy(_cfg.LocalProxyPort, ttl));
-        SystemProxy.SetWinInet($"127.0.0.1:{_cfg.LocalProxyPort}");
+        if (SystemProxy.SetWinInet($"127.0.0.1:{_cfg.LocalProxyPort}")) return;
+        _relay?.Stop();
+        _relay = null;
+        throw new InvalidOperationException(ProxyNotSaved);
     }
 
     /// <summary>Replaces the running relay, so a reconnect does not trip over the old one's port.</summary>
@@ -376,7 +384,13 @@ public sealed class ConnectionManager
                 Label = "App watch",
                 ApplyTtl = false,
             });
-            SystemProxy.SetWinInet($"127.0.0.1:{_cfg.LocalProxyPort}");
+            if (!SystemProxy.SetWinInet($"127.0.0.1:{_cfg.LocalProxyPort}"))
+            {
+                // Optional here: the connection works without app watch, so carry on without the relay.
+                _relay?.Stop();
+                _relay = null;
+                _log.Warning("App watch and blocking are off for this connection, PdaNet could not save your Windows proxy settings");
+            }
         }
         catch (Exception e)
         {

@@ -9,6 +9,7 @@ This is an independent project inspired by PdaNet. It is not made by, or connect
 - Share your phone's internet with your PC through a USB cable
 - Also work with your phone's WiFi hotspot
 - Send your PC's traffic through whatever connection your phone is using, including a VPN that is running on the phone
+- Reach your phone by USB cable or over WiFi, and pick which way when your phone shows up both ways
 - Help stop your mobile carrier from noticing that you are sharing (this is often called tethering)
 - Guide you with a step by step screen that checks your phone is ready before you connect
 - Show live speed, data used, signal strength, and a plain language activity log on a modern dark screen
@@ -61,6 +62,18 @@ Pick how to connect, follow the short checklist so your phone is ready, then pre
   </tr>
   <tr>
     <td width="50%" valign="top">
+      <b>Cable or WiFi, you pick</b><br>
+      See every phone PdaNet can reach and pick one
+      <img src="docs/screenshots/phone-pick.png" alt="The list of phones and emulators">
+    </td>
+    <td width="50%" valign="top">
+      <b>Pair over WiFi once</b><br>
+      Type the code from the phone, PdaNet fills in the address when the phone shows up
+      <img src="docs/screenshots/phone-pair.png" alt="Pairing a phone over WiFi">
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
       <b>See every app online</b><br>
       The websites and the data of each app, live
       <img src="docs/screenshots/apps.png" alt="The Apps page with apps, websites and lines">
@@ -91,6 +104,7 @@ Pick how to connect, follow the short checklist so your phone is ready, then pre
 - An Android phone
 - A USB cable
 - USB debugging turned on in the phone's Developer options (only for the phone VPN mode)
+- For the phone VPN mode over WiFi, Android 11 or later with Wireless debugging turned on
 
 ## Getting the app
 
@@ -112,6 +126,24 @@ Use this when you want your PC to go online through the same connection, and the
 5. Open a browser and visit a site that shows your location
 
 If the phone is connected to a VPN, your PC will now appear to be in the same country as that VPN.
+
+Step 2 shows how the app reaches your phone: USB cable, WiFi or Other. USB cable is the default. When your phone is connected both ways at once, the app uses only the way you picked. Other lists every phone and emulator the app can see, for when more than one is connected. A phone picked from that list is remembered, so a second phone never takes its place.
+
+Before it connects, the app saves the proxy settings Windows has for your user account, and disconnecting puts them back. If the app cannot save them, the app changes nothing and does not connect. If the app stops without disconnecting, the next start puts them back.
+
+</details>
+
+<details>
+<summary><h3>Phone VPN over WiFi</h3></summary>
+
+Use this to go without the cable. You need Android 11 or later, with the phone and the PC on the same WiFi.
+
+1. On the phone, open Developer options and turn on Wireless debugging
+2. In the app, choose Phone VPN, then pick WiFi in step 2
+3. The first time, press Pair over WiFi, tap Pair device with pairing code on the phone, and type the code from the phone into the app
+4. Press the connect button
+
+After the first time, the app can usually find your phone over WiFi by itself while Wireless debugging is on. If the phone does not show up, press Pair over WiFi, then Paired before?, and type the address from the Wireless debugging screen.
 
 </details>
 
@@ -200,6 +232,7 @@ Open Settings from the main screen to change things such as
 <summary><h2>If something does not work</h2></summary>
 
 - Phone not found in VPN mode, check that USB debugging is on and that you tapped Allow on the phone
+- No phone on the USB cable while your phone is on WiFi, press Use WiFi, or pick WiFi in step 2
 - USB mode says there is no connection, turn on USB tethering on the phone and keep mobile data on
 - The browser still shows your real location, some company or school PCs force their own network proxy that overrides the app, in that case open the connection details on the Connect page, copy the proxy address, and set it in your browser
 - Nothing seems to happen when you connect, open the Activity page in the app to see which step failed

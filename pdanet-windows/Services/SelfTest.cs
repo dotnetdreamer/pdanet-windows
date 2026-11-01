@@ -1,5 +1,7 @@
+using System.IO;
 using System.Net;
 using System.Net.Http;
+using Microsoft.Win32;
 using System.Net.Sockets;
 using System.Threading;
 using PdaNetPortable.Core;
@@ -14,7 +16,44 @@ namespace PdaNetPortable.Services;
 /// </summary>
 public static class SelfTest
 {
+    // Both connect tests end with a teardown, also when a step fails or times out. A teardown that
+    // does not reach Disconnected fails the test (exit code 3) instead of passing quietly.
     public static int Run()
+    {
+        int result = 1;
+        try { result = UsbChecks(); }
+        finally { if (!Teardown(ConnectionManager.Instance)) result = Math.Max(result, 3); }
+        return result;
+    }
+
+    public static int RunAgent()
+    {
+        int result = 1;
+        try { result = AgentChecks(); }
+        finally { if (!Teardown(ConnectionManager.Instance)) result = Math.Max(result, 3); }
+        return result;
+    }
+
+    /// <summary>
+    /// Waits for a running connect, asks to disconnect a few times (Disconnect is skipped while the
+    /// connect worker is still finishing), then puts the saved proxy values back even when the
+    /// disconnect did not finish. True when PdaNet reached Disconnected.
+    /// </summary>
+    private static bool Teardown(ConnectionManager cm)
+    {
+        WaitFor(() => cm.State != ConnectionState.Connecting, 60000);
+        for (int i = 0; i < 5 && cm.State != ConnectionState.Disconnected; i++)
+        {
+            cm.Disconnect();
+            WaitFor(() => cm.State == ConnectionState.Disconnected, 4000);
+        }
+        SystemProxy.ClearWinInet();
+        bool done = cm.State == ConnectionState.Disconnected;
+        if (!done) Console.WriteLine($"FAIL: teardown did not reach Disconnected (state={cm.State})");
+        return done;
+    }
+
+    private static int UsbChecks()
     {
         Logger.Instance.EntryAdded += e => Console.WriteLine($"  [{e.Level}] {e.Message}");
 
@@ -30,6 +69,8 @@ public static class SelfTest
 
         var cm = ConnectionManager.Instance;
         bool pass = true;
+        SystemProxy.RepairLeftover();   // as at app start, so "before" holds the user's own values
+        var proxyBefore = SystemProxy.Read();
 
         Console.WriteLine(">> Connecting (USB)...");
         cm.Connect(ConnectionMode.Usb);
@@ -86,8 +127,7 @@ public static class SelfTest
         WaitFor(() => cm.State == ConnectionState.Disconnected, 15000);
         Report(ref pass, cm.State == ConnectionState.Disconnected, $"disconnected (state={cm.State})");
 
-        var (en2, _) = SystemProxy.GetWinInet();
-        Report(ref pass, !en2, $"WinINET proxy cleared (enabled={en2})");
+        Report(ref pass, SystemProxy.Read() == proxyBefore, "Windows proxy back as before the test");
         bool still = TcpOpen("127.0.0.1", cfg.LocalProxyPort);
         Report(ref pass, !still, $"local proxy stopped (listening={still})");
 
@@ -96,7 +136,7 @@ public static class SelfTest
         return pass ? 0 : 2;
     }
 
-    public static int RunAgent()
+    private static int AgentChecks()
     {
         Logger.Instance.EntryAdded += e => Console.WriteLine($"  [{e.Level}] {e.Message}");
         var cfg = ConfigManager.Instance.Config;
@@ -106,6 +146,8 @@ public static class SelfTest
 
         var cm = ConnectionManager.Instance;
         bool pass = true;
+        SystemProxy.RepairLeftover();   // as at app start, so "before" holds the user's own values
+        var proxyBefore = SystemProxy.Read();
 
         Console.WriteLine(">> Connecting (ADB agent)...");
         cm.Connect(ConnectionMode.AdbAgent);
@@ -139,8 +181,7 @@ public static class SelfTest
         cm.Disconnect();
         WaitFor(() => cm.State == ConnectionState.Disconnected, 15000);
         Report(ref pass, cm.State == ConnectionState.Disconnected, $"disconnected (state={cm.State})");
-        var (en, _) = SystemProxy.GetWinInet();
-        Report(ref pass, !en, $"WinINET proxy cleared (enabled={en})");
+        Report(ref pass, SystemProxy.Read() == proxyBefore, "Windows proxy back as before the test");
 
         Console.WriteLine("--------------------------------------------");
         Console.WriteLine(pass ? "==== AGENT SELFTEST PASS ====" : "==== AGENT SELFTEST FAIL ====");
@@ -398,6 +439,128 @@ public static class SelfTest
 
         Console.WriteLine(pass ? "==== LOCATION SELFTEST PASS ====" : "==== LOCATION SELFTEST FAIL ====");
         return pass ? 0 : 2;
+    }
+
+    /// <summary>
+    /// Checks that disconnecting puts the user's own Windows proxy back, on a scratch registry
+    /// key, so the real settings never change. Run via "--selftest-proxy".
+    /// </summary>
+    public static int RunProxy()
+    {
+        const string root = @"Software\PdaNetSelfTest";
+        const string key = root + @"\Internet Settings";
+        const string corp = "proxy.corp.example:8080", corpBypass = "*.corp.example;<local>";
+        var (realPath, realFile) = (SystemProxy.RegPath, SystemProxy.SavedFile);
+        string tempFile = Path.Combine(Path.GetTempPath(), $"pdanet-proxy-selftest-{Environment.ProcessId}.json");
+        string ours = $"127.0.0.1:{ConfigManager.Instance.Config.LocalProxyPort}";
+        bool pass = true;
+
+        Console.WriteLine("==== PdaNet Windows proxy self-test (scratch key, real settings untouched) ====");
+        SystemProxy.RegPath = key;
+        SystemProxy.SavedFile = tempFile;
+        // RepairLeftover steps aside while something listens on PdaNet's port (a live PdaNet window).
+        int port = ConfigManager.Instance.Config.LocalProxyPort;
+        bool portFree = !System.Net.NetworkInformation.IPGlobalProperties.GetIPGlobalProperties()
+            .GetActiveTcpListeners().Any(e => e.Port == port);
+        void Skip(string what) => Console.WriteLine($"SKIP: {what} (port {port} is in use, close PdaNet and run again)");
+
+        try
+        {
+            // A company proxy: connect, disconnect, then close the app.
+            WriteProxy(key, 1, corp, corpBypass);
+            Report(ref pass, SystemProxy.SetWinInet(ours) && ReadProxy(key) is (1, var s, _) && s == ours,
+                "connect points Windows at PdaNet");
+            SystemProxy.ClearWinInet();
+            Report(ref pass, ReadProxy(key) == (1, corp, corpBypass), "disconnect puts the company proxy back as it was");
+            SystemProxy.ClearWinInet();
+            Report(ref pass, ReadProxy(key) == (1, corp, corpBypass), "a second clear, as on app exit, changes nothing");
+
+            // No proxy before.
+            WriteProxy(key, 0, null, null);
+            SystemProxy.SetWinInet(ours);
+            SystemProxy.ClearWinInet();
+            Report(ref pass, ReadProxy(key) == (0, null, null), "no proxy before, no proxy and no PdaNet values after");
+
+            // A proxy the user set at PdaNet's own address, with the user's own bypass list.
+            WriteProxy(key, 1, ours, "<local>");
+            SystemProxy.ClearWinInet();
+            if (portFree) SystemProxy.RepairLeftover();
+            Report(ref pass, ReadProxy(key) == (1, ours, "<local>"), "a proxy the user set at PdaNet's address stays on exit and at start");
+            SystemProxy.SetWinInet(ours);
+            SystemProxy.ClearWinInet();
+            Report(ref pass, ReadProxy(key) == (1, ours, "<local>"), "and comes back as it was after a connect");
+
+            // PdaNet's leftover from an older build: PdaNet's address and bypass list, nothing saved.
+            WriteProxy(key, 1, ours, SystemProxy.BypassList);
+            SystemProxy.ClearWinInet();
+            Report(ref pass, ReadProxy(key) == (1, ours, SystemProxy.BypassList), "exit leaves an old leftover for the next start");
+            if (portFree)
+            {
+                SystemProxy.RepairLeftover();
+                Report(ref pass, ReadProxy(key) == (0, null, null), "the next start turns an old leftover off");
+            }
+            else Skip("the next start turns an old leftover off");
+
+            WriteProxy(key, 1, ours, SystemProxy.BypassList);
+            SystemProxy.SetWinInet(ours);
+            SystemProxy.ClearWinInet();
+            Report(ref pass, ReadProxy(key) == (0, null, null), "connecting over an old leftover never puts the leftover back");
+
+            // The save fails: nothing changes, and SetWinInet says no so the connect stops.
+            WriteProxy(key, 1, corp, corpBypass);
+            SystemProxy.SavedFile = Path.Combine(Path.GetTempPath(), $"pdanet-no-such-folder-{Environment.ProcessId}", "saved.json");
+            bool set = SystemProxy.SetWinInet(ours);
+            SystemProxy.SavedFile = tempFile;
+            Report(ref pass, !set && ReadProxy(key) == (1, corp, corpBypass), "when the save fails nothing changes and the connect stops");
+
+            // The app stops without disconnecting, then starts again.
+            WriteProxy(key, 1, corp, null);
+            SystemProxy.SetWinInet(ours);
+            if (portFree)
+            {
+                SystemProxy.RepairLeftover();
+                Report(ref pass, ReadProxy(key) == (1, corp, null), "the next start after a crash puts the company proxy back");
+            }
+            else
+            {
+                Skip("the next start after a crash puts the company proxy back");
+                SystemProxy.ClearWinInet();
+            }
+        }
+        catch (Exception e)
+        {
+            Report(ref pass, false, $"proxy test threw: {e.Message}");
+        }
+        finally
+        {
+            (SystemProxy.RegPath, SystemProxy.SavedFile) = (realPath, realFile);
+            try { Registry.CurrentUser.DeleteSubKeyTree(root, false); } catch { }
+            try { File.Delete(tempFile); } catch { }
+        }
+
+        Console.WriteLine(pass ? "==== PROXY SELFTEST PASS ====" : "==== PROXY SELFTEST FAIL ====");
+        return pass ? 0 : 2;
+    }
+
+    private static void WriteProxy(string path, int? enable, string? server, string? bypass)
+    {
+        using var k = Registry.CurrentUser.CreateSubKey(path);
+        foreach (var (name, value, kind) in new (string, object?, RegistryValueKind)[]
+                 {
+                     ("ProxyEnable", enable, RegistryValueKind.DWord),
+                     ("ProxyServer", server, RegistryValueKind.String),
+                     ("ProxyOverride", bypass, RegistryValueKind.String),
+                 })
+        {
+            if (value == null) k.DeleteValue(name, false);
+            else k.SetValue(name, value, kind);
+        }
+    }
+
+    private static (int? Enable, string? Server, string? Bypass) ReadProxy(string path)
+    {
+        using var k = Registry.CurrentUser.OpenSubKey(path);
+        return (k?.GetValue("ProxyEnable") as int?, k?.GetValue("ProxyServer") as string, k?.GetValue("ProxyOverride") as string);
     }
 
     private static int FreePort()

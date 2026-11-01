@@ -142,7 +142,7 @@ public partial class WifiSheet : UserControl, ISheet
             StatusText.Text = "Type your hotspot name, or join it from the Windows WiFi menu first";
             StatusText.Foreground = Ui.Brush("B.Red");
             StatusText.Margin = new Thickness(0);
-            Flash(SsidCombo);
+            Ui.Shake(SsidCombo);
             return;
         }
 
@@ -151,14 +151,4 @@ public partial class WifiSheet : UserControl, ISheet
     }
 
     private void OnCancel(object sender, RoutedEventArgs e) => Cancelled?.Invoke();
-
-    private static void Flash(UIElement el)
-    {
-        var t = new TranslateTransform();
-        el.RenderTransform = t;
-        var a = new DoubleAnimationUsingKeyFrames();
-        foreach (var (time, x) in new[] { (0, 0.0), (60, -5.0), (120, 5.0), (180, -3.0), (240, 0.0) })
-            a.KeyFrames.Add(new LinearDoubleKeyFrame(x, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(time))));
-        t.BeginAnimation(TranslateTransform.XProperty, a);
-    }
 }

@@ -1,0 +1,90 @@
+<UserControl x:Class="PdaNetPortable.Views.PhoneSheet"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Width="490">
+    <UserControl.Resources>
+        <!-- One way to reach a phone, picked like a connection mode card -->
+        <DataTemplate x:Key="LinkRowTemplate">
+            <RadioButton Style="{StaticResource ModeCard}" GroupName="PhonePick" IsChecked="{Binding Picked, Mode=OneTime}"
+                         Checked="OnRowChecked" MouseDoubleClick="OnRowDoubleClick" ToolTip="{Binding Serial}"
+                         AutomationProperties.Name="{Binding Speech}">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Border Style="{StaticResource ModeIconTile}">
+                        <TextBlock Text="{Binding Glyph}" Style="{StaticResource ModeIcon}" />
+                    </Border>
+                    <StackPanel Grid.Column="1" Margin="14,0,0,0" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding Title}" FontSize="14" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                        <TextBlock Style="{StaticResource T.Small}" Margin="0,3,0,0" TextTrimming="CharacterEllipsis"><Run Text="{Binding Detail, Mode=OneWay}" Foreground="{Binding DetailBrush, Mode=OneWay}" /><Run Text="   " /><Run Text="{Binding Id, Mode=OneWay}" FontFamily="{StaticResource F.Mono}" FontSize="11" Foreground="{StaticResource B.Text3}" /></TextBlock>
+                    </StackPanel>
+                </Grid>
+            </RadioButton>
+        </DataTemplate>
+    </UserControl.Resources>
+
+    <Border Background="{StaticResource B.Bg1}" BorderBrush="{StaticResource B.Line2}" BorderThickness="1" CornerRadius="16">
+        <Border.Effect>
+            <DropShadowEffect BlurRadius="40" ShadowDepth="12" Opacity="0.55" Color="Black" />
+        </Border.Effect>
+        <StackPanel Margin="26,24,26,22">
+            <Grid>
+                <StackPanel Orientation="Horizontal">
+                    <Border Style="{StaticResource IconTile}">
+                        <TextBlock Text="&#xE8EA;" Style="{StaticResource T.Icon}" FontSize="18"
+                                   Foreground="{StaticResource B.Accent}" HorizontalAlignment="Center" />
+                    </Border>
+                    <StackPanel Margin="14,0,0,0" VerticalAlignment="Center">
+                        <TextBlock Text="Pick a phone" Style="{StaticResource T.H2}" FontSize="17" />
+                        <TextBlock x:Name="Subtitle" Text="Looking for phones" Style="{StaticResource T.Small}" Margin="0,2,0,0" />
+                    </StackPanel>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top">
+                    <Button x:Name="RefreshBtn" Style="{StaticResource Btn.Icon}" Content="&#xE72C;" Margin="0,0,4,0" Click="OnRefresh"
+                            ToolTip="Look for phones again" AutomationProperties.Name="Look for phones again" />
+                    <Button Style="{StaticResource Btn.Icon}" Content="&#xE8BB;" Click="OnCancel" ToolTip="Close"
+                            AutomationProperties.Name="Close" />
+                </StackPanel>
+            </Grid>
+
+            <ScrollViewer MaxHeight="318" Margin="0,20,0,0" VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled" Focusable="False">
+                <ItemsControl x:Name="Rows" ItemTemplate="{StaticResource LinkRowTemplate}" Focusable="False" />
+            </ScrollViewer>
+
+            <!-- Nothing found yet -->
+            <Border x:Name="EmptyPanel" Background="{StaticResource B.Bg2}" BorderBrush="{StaticResource B.Line}" BorderThickness="1"
+                    CornerRadius="12" Padding="16,14" Visibility="Collapsed">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="&#xE946;" Style="{StaticResource T.Icon}" FontSize="14" Foreground="{StaticResource B.Text3}"
+                               VerticalAlignment="Top" Margin="0,2,0,0" />
+                    <StackPanel Grid.Column="1" Margin="12,0,0,0">
+                        <TextBlock Text="No phones yet" Style="{StaticResource T.RowTitle}" />
+                        <TextBlock Text="Plug in a phone with USB debugging on, or pair a phone over WiFi"
+                                   Style="{StaticResource T.Small}" TextWrapping="Wrap" Margin="0,4,0,0" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <Grid Margin="0,14,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Button Style="{StaticResource Btn.Link}" Content="Pair a phone over WiFi" Click="OnPair"
+                        HorizontalAlignment="Left" VerticalAlignment="Center" />
+                <StackPanel Grid.Column="1" Orientation="Horizontal">
+                    <Button Style="{StaticResource Btn.Ghost}" Content="Cancel" Click="OnCancel" />
+                    <Button x:Name="UseBtn" Style="{StaticResource Btn.Primary}" Tag="&#xE73E;" Content="Use this phone"
+                            Margin="8,0,0,0" Click="OnUse" IsEnabled="False" />
+                </StackPanel>
+            </Grid>
+        </StackPanel>
+    </Border>
+</UserControl>
