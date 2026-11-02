@@ -14,7 +14,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pion/logging"
 	"github.com/pion/stun/v4"
+	"github.com/pion/turn/v5"
 )
 
 // runSelftest checks the parts that must be exactly right, then runs a whole session between
@@ -35,8 +37,8 @@ func runSelftest(args []string) int {
 	}
 	if len(args) == 2 && args[0] == "phone" {
 		check("STUN through the phone helper", phoneSTUN(args[1]))
-		check("a whole session through the phone helper", loopback(
-			route{Mode: "phone", Tunnel: args[1]}, route{Mode: "direct"}, defaultStun))
+		_, err := loopback(route{Mode: "phone", Tunnel: args[1]}, route{Mode: "direct"}, options{Stun: defaultStun})
+		check("a whole session through the phone helper", err)
 		if failed > 0 {
 			return 1
 		}
@@ -64,8 +66,11 @@ func runSelftest(args []string) int {
 	check("a wrong code fails the key confirmation", wrongCode())
 	check("sealed messages", boxRoundTrip())
 	check("repeats, kinds of address, easy access waits", spacingAndKinds())
-	check("a whole session on this PC", loopback(route{Mode: "direct"}, route{Mode: "direct"}, []string{"none"}))
-	check("a whole session with an easy access code", loopback(route{Mode: "direct"}, route{Mode: "direct"}, []string{"none"}, "5550123456"))
+	_, err := loopback(route{Mode: "direct"}, route{Mode: "direct"}, options{Stun: []string{"none"}})
+	check("a whole session on this PC", err)
+	_, err = loopback(route{Mode: "direct"}, route{Mode: "direct"}, options{Stun: []string{"none"}, Code: "5550123456"})
+	check("a whole session with an easy access code", err)
+	check("a whole session through a TURN relay over TCP", turnLoopback())
 	if failed > 0 {
 		fmt.Printf("%d check(s) failed\n", failed)
 		return 1
@@ -254,24 +259,22 @@ func (f *fakePdaNet) waitFor(ev string, d time.Duration) (event, error) {
 	}
 }
 
-// loopback runs a whole session between two helpers. With a code, the host keeps it, the way
-// easy access does.
-func loopback(hostRoute, viewRoute route, stunURLs []string, code ...string) error {
+// loopback runs a whole session between two helpers in this process, with the STUN and TURN
+// servers in base, and gives the path the sharing PC names. With a code in base, the host keeps
+// it, the way easy access does.
+func loopback(hostRoute, viewRoute route, base options) (string, error) {
 	hub := "mem+selftest-" + randHex(4)
-	base := options{Relays: []string{hub}, Stun: stunURLs, NoLAN: true}
+	base.Relays, base.NoLAN = []string{hub}, true
 
 	hostOpt := base
 	hostOpt.Op, hostOpt.Name, hostOpt.Route = "host", "Sharing PC", hostRoute
-	if len(code) > 0 {
-		hostOpt.Code = code[0]
-	}
 	host := startHelper(hostOpt)
 	e, err := host.waitFor("code", 5*time.Second)
 	if err != nil {
-		return fmt.Errorf("host: %w", err)
+		return "", fmt.Errorf("host: %w", err)
 	}
 	if hostOpt.Code != "" && e.Code != hostOpt.Code {
-		return fmt.Errorf("the host shares with %s, not with its own code", e.Code)
+		return "", fmt.Errorf("the host shares with %s, not with its own code", e.Code)
 	}
 
 	viewOpt := base
@@ -280,21 +283,21 @@ func loopback(hostRoute, viewRoute route, stunURLs []string, code ...string) err
 
 	var wg sync.WaitGroup
 	var hostErr, viewErr error
-	var paired event
+	var paired, connected event
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
 		if paired, hostErr = host.waitFor("paired", 15*time.Second); hostErr == nil {
-			_, hostErr = host.waitFor("connected", 15*time.Second)
+			connected, hostErr = host.waitFor("connected", 20*time.Second)
 		}
 	}()
-	go func() { defer wg.Done(); _, viewErr = view.waitFor("connected", 30*time.Second) }()
+	go func() { defer wg.Done(); _, viewErr = view.waitFor("connected", 35*time.Second) }()
 	wg.Wait()
 	if hostErr != nil || viewErr != nil {
-		return fmt.Errorf("connect: host %v, viewer %v", hostErr, viewErr)
+		return "", fmt.Errorf("connect: host %v, viewer %v", hostErr, viewErr)
 	}
 	if paired.Peer != "Viewing PC" {
-		return fmt.Errorf("the sharing PC sees %q", paired.Peer)
+		return "", fmt.Errorf("the sharing PC sees %q", paired.Peer)
 	}
 
 	// Remote control both ways, on the reliable channel.
@@ -307,10 +310,10 @@ func loopback(hostRoute, viewRoute route, stunURLs []string, code ...string) err
 		select {
 		case b := <-c.ch:
 			if string(b) != c.want {
-				return fmt.Errorf("control message %q, want %q", b, c.want)
+				return "", fmt.Errorf("control message %q, want %q", b, c.want)
 			}
 		case <-time.After(10 * time.Second):
-			return fmt.Errorf("control message %q did not arrive", c.want)
+			return "", fmt.Errorf("control message %q did not arrive", c.want)
 		}
 	}
 
@@ -325,18 +328,59 @@ func loopback(hostRoute, viewRoute route, stunURLs []string, code ...string) err
 		select {
 		case b := <-view.video:
 			if len(b) < 5 || b[0]&frameKey == 0 || !bytes.Equal(b[5:], frame) {
-				return fmt.Errorf("the frame arrived changed: %d bytes, flags %d", len(b), b[0])
+				return "", fmt.Errorf("the frame arrived changed: %d bytes, flags %d", len(b), b[0])
 			}
 			_ = view.link.write(kindJSON, []byte(`{"op":"stop"}`))
 			if _, err := host.waitFor("ended", 10*time.Second); err != nil {
-				return fmt.Errorf("the sharing PC did not hear the viewer leave: %w", err)
+				return "", fmt.Errorf("the sharing PC did not hear the viewer leave: %w", err)
 			}
-			return nil
+			return connected.Path, nil
 		case <-time.After(500 * time.Millisecond):
 		case <-deadline:
-			return errors.New("no frame arrived")
+			return "", errors.New("no frame arrived")
 		}
 	}
+}
+
+// turnLoopback runs a TURN server on this PC, on TCP as a company network would leave it, and a
+// whole session that may only go through it.
+func turnLoopback() error {
+	ln, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		return err
+	}
+	pass := randHex(16)
+	key := turn.GenerateAuthKey("pdanet", "pdanet", pass)
+	lf := logging.NewDefaultLoggerFactory()
+	lf.DefaultLogLevel = logging.LogLevelDisabled
+	server, err := turn.NewServer(turn.ServerConfig{
+		Realm: "pdanet",
+		AuthHandler: func(ra *turn.RequestAttributes) (string, []byte, bool) {
+			return ra.Username, key, ra.Username == "pdanet"
+		},
+		ListenerConfigs: []turn.ListenerConfig{{
+			Listener:              ln,
+			RelayAddressGenerator: &turn.RelayAddressGeneratorStatic{RelayAddress: net.IPv4(127, 0, 0, 1), Address: "127.0.0.1"},
+		}},
+		LoggerFactory: lf,
+	})
+	if err != nil {
+		_ = ln.Close()
+		return err
+	}
+	defer server.Close()
+	path, err := loopback(route{Mode: "direct"}, route{Mode: "direct"}, options{
+		Stun:      []string{"none"},
+		Turn:      []iceServer{{URLs: []string{"turn:" + ln.Addr().String() + "?transport=tcp"}, Username: "pdanet", Credential: pass}},
+		RelayOnly: true,
+	})
+	if err != nil {
+		return err
+	}
+	if path != "relay" {
+		return fmt.Errorf("the session went %q, not through the relay", path)
+	}
+	return nil
 }
 
 // phoneSTUN asks a STUN server for this route's public address, through a socket on the phone

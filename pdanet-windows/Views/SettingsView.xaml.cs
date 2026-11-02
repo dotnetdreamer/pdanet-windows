@@ -5,6 +5,7 @@ using System.Windows.Input;
 using PdaNetPortable.Core;
 using PdaNetPortable.Models;
 using PdaNetPortable.Services;
+using PdaNetPortable.Share;
 using TextBox = System.Windows.Controls.TextBox;
 using UserControl = System.Windows.Controls.UserControl;
 
@@ -18,6 +19,7 @@ public partial class SettingsView : UserControl, IPage
 {
     private readonly AppConfig _cfg = ConfigManager.Instance.Config;
     private MainWindow? _shell;
+    private CancellationTokenSource? _relayTest;
 
     public SettingsView()
     {
@@ -53,6 +55,8 @@ public partial class SettingsView : UserControl, IPage
 
         WatchApps.IsChecked = _cfg.WatchApps;
         RefreshBlocked();
+
+        ShowRelay(ShareRelays.Read(_cfg));
 
         StartWithWindows.IsChecked = AutoStart.IsEnabled();
         StartMinimized.IsChecked = _cfg.StartMinimized;
@@ -100,6 +104,13 @@ public partial class SettingsView : UserControl, IPage
 
     public void Save()
     {
+        var relay = TypedRelay();
+        if (ShareRelays.Problem(relay) is { } problem)
+        {
+            _shell?.Toast(problem, ToastKind.Error);
+            return;
+        }
+
         _cfg.StealthMode = Stealth.IsChecked == true;
         _cfg.StealthLevel = Lv1.IsChecked == true ? 1 : Lv2.IsChecked == true ? 2 : 3;
         _cfg.UseSystemBypass = SystemBypass.IsChecked == true;
@@ -112,6 +123,8 @@ public partial class SettingsView : UserControl, IPage
         if (_cfg.DataCriticalMb < _cfg.DataWarningMb) _cfg.DataCriticalMb = _cfg.DataWarningMb;
 
         _cfg.WatchApps = WatchApps.IsChecked == true;
+
+        ShareRelays.Write(_cfg, relay);
 
         _cfg.StartMinimized = StartMinimized.IsChecked == true;
         _cfg.EnableNotifications = Notifications.IsChecked == true;
@@ -166,9 +179,65 @@ public partial class SettingsView : UserControl, IPage
         LocalPort.Text = fresh.LocalProxyPort.ToString();
         AgentPort.Text = fresh.AgentPort.ToString();
         AdbPath.Text = fresh.AdbPath;
+        ShowRelay(ShareRelays.Read(fresh));
         UpdateStealthEnabled();
         UpdateReconnectEnabled();
         _shell?.Toast("Defaults loaded, press Save to keep them", ToastKind.Info);
+    }
+
+    private void ShowRelay(ShareRelays.Settings relay)
+    {
+        RelayKeyId.Text = relay.KeyId;
+        RelayKeyToken.Password = relay.KeyToken;
+        RelayUrls.Text = string.Join(Environment.NewLine, relay.Urls);
+        RelayUsername.Text = relay.Username;
+        RelayPassword.Password = relay.Password;
+    }
+
+    private ShareRelays.Settings TypedRelay() => new(
+        RelayKeyId.Text.Trim(), RelayKeyToken.Password.Trim(), ShareRelays.SplitUrls(RelayUrls.Text),
+        RelayUsername.Text.Trim(), RelayPassword.Password);
+
+    // Tests what is typed, saved or not. While it runs the button stops it.
+    private async void OnTestRelay(object sender, RoutedEventArgs e)
+    {
+        if (_relayTest != null)
+        {
+            _relayTest.Cancel();
+            return;
+        }
+        var relay = TypedRelay();
+        if (ShareRelays.Problem(relay) is { } problem)
+        {
+            RelayTestText.Text = problem;
+            return;
+        }
+        if (!relay.Any)
+        {
+            RelayTestText.Text = "Type a Cloudflare key or your own relay first";
+            return;
+        }
+        _relayTest = new CancellationTokenSource();
+        RelayTestButton.Content = "Stop";
+        RelayTestText.Text = "Testing, this takes up to half a minute";
+        try
+        {
+            var (ok, text) = await ShareRelays.TestAsync(relay, _relayTest.Token);
+            RelayTestText.Text = text;
+            _shell?.Toast(ok ? "The relay works from this PC" : "The relay test failed, Settings says why",
+                ok ? ToastKind.Success : ToastKind.Error);
+        }
+        catch (Exception ex)
+        {
+            Logger.Instance.Warning("Screen sharing relay test could not run: " + ex.Message);
+            RelayTestText.Text = "The test could not run: " + ex.Message;
+        }
+        finally
+        {
+            _relayTest.Dispose();
+            _relayTest = null;
+            RelayTestButton.Content = "Test";
+        }
     }
 
     // Stealth strength and the extra switches only matter when stealth is on.

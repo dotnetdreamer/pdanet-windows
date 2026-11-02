@@ -25,6 +25,8 @@ func main() {
 			os.Exit(runSelftest(os.Args[2:]))
 		case "probe":
 			os.Exit(runProbe(os.Args[2:]))
+		case "relaytest":
+			os.Exit(runRelayTest(os.Stdin, os.Stdout))
 		case "version", "--version":
 			fmt.Println(version)
 			return

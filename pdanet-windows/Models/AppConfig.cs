@@ -62,6 +62,14 @@ public class AppConfig
     [JsonPropertyName("share_easy_access")] public bool ShareEasyAccess { get; set; } = false;
     [JsonPropertyName("share_easy_code")] public string? ShareEasyCode { get; set; }
     [JsonPropertyName("share_clipboard")] public bool ShareClipboard { get; set; } = true;
+    // Relays (TURN) for screen sharing, for a PC whose network blocks direct links: a Cloudflare
+    // Realtime TURN key, and servers of the person's own. The token and the password are kept
+    // encrypted with Windows DPAPI, for this Windows user only, see ShareRelays.
+    [JsonPropertyName("share_relay_key_id")] public string ShareRelayKeyId { get; set; } = "";
+    [JsonPropertyName("share_relay_key_token")] public string ShareRelayKeyToken { get; set; } = "";
+    [JsonPropertyName("share_relay_urls")] public List<string> ShareRelayUrls { get; set; } = new();
+    [JsonPropertyName("share_relay_username")] public string ShareRelayUsername { get; set; } = "";
+    [JsonPropertyName("share_relay_password")] public string ShareRelayPassword { get; set; } = "";
 
     public AppConfig Clone() => (AppConfig)MemberwiseClone();
 }

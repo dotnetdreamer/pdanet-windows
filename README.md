@@ -308,7 +308,15 @@ The connection
 - Direct links the two PCs the shortest way, straight across your network when they share one, else over the internet
 - Through your phone sends the screen through the phone PdaNet is connected to, in every mode, Phone VPN included, so it takes the phone's network and VPN. This counts against your mobile data. A still screen sends almost nothing, video and scrolling send the most
 - While PdaNet is connected to your phone, Through your phone is picked for you, else Direct. You can pick the other one before you start
-- When the two PCs cannot link up, PdaNet says whose network blocks it. A company or school network often does, on that PC connect PdaNet to a phone and use Through your phone
+- When the two PCs cannot link up, PdaNet says whose network blocks it. A company or school network often does, on that PC set up a relay server, see below
+
+A relay server, for networks that block direct links
+
+- Some networks, often at work or school, let no direct link out. A relay server then carries the session over the same secure port websites use, and passes on encrypted data it cannot read. A direct link still comes first when there is one
+- Only the PC whose network blocks direct links needs it. Open Settings, then Screen sharing
+- Cloudflare's relay is built in. Make a free Cloudflare account, open Realtime, then TURN Server, create a TURN key, and copy its Turn Token ID and API token into Settings. For each session PdaNet gets passwords that last a day, and the token never leaves your PC
+- Or use any other TURN server, one your company runs or your own: type its addresses one per line, such as `turns:turn.example.com:443?transport=tcp`, with its username and password
+- Press Test. PdaNet tries each address from this PC, then a short session that may only go through the relay, and says what works. Then press Save
 
 Easy access
 
@@ -341,6 +349,7 @@ Open Settings from the main screen to change things such as
 - How many times to retry when the connection drops
 - How much data to use before you see a warning
 - Whether the Apps page shows the apps that use the internet
+- A relay server for screen share, for a network that blocks direct links
 - Which port the app uses on your PC
 - A path to your own copy of adb, if you prefer that
 
@@ -354,7 +363,7 @@ Open Settings from the main screen to change things such as
 - USB mode says there is no connection, turn on USB tethering on the phone and keep mobile data on
 - The browser still shows your real location, some company or school PCs force their own network proxy that overrides the app, in that case open the connection details on the Connect page, copy the proxy address, and set it in your browser
 - Nothing seems to happen when you connect, open the Activity page in the app to see which step failed
-- Screen share does not connect, check that both PCs are online. When one of the PCs is on a strict company or school network, try Through your phone
+- Screen share does not connect, check that both PCs are online. When one of the PCs is on a strict company or school network, set up a relay server on that PC in Settings, then Screen sharing, and press Test
 - Without internet, Windows may ask once whether pdanet-rtc may use the network. Allow it on private networks, so two PCs on the same network can find each other
 
 </details>
@@ -364,7 +373,7 @@ Open Settings from the main screen to change things such as
 
 The app keeps its settings in a folder named data next to the program. WiFi passwords are stored in encrypted form using Windows. The app itself does not send your information anywhere. The Apps page keeps the list only while PdaNet runs, unless you save the list to a file.
 
-Screen share sends your screen, and the mouse and keyboard, only to the PC that typed your code, encrypted end to end. The public relays the two PCs meet through carry only sealed notes, and nothing is stored there.
+Screen share sends your screen, and the mouse and keyboard, only to the PC that typed your code, encrypted end to end. The public relays the two PCs meet through carry only sealed notes, and nothing is stored there. A relay server set up in Settings passes on the session's encrypted data and cannot read it. Its token and password are stored encrypted with Windows, for your Windows user only.
 
 </details>
 

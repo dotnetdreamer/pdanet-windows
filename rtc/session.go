@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/hmac"
 	"encoding/json"
 	"errors"
@@ -35,13 +36,16 @@ type route struct {
 }
 
 type options struct {
-	Op     string   `json:"op"`             // "host" shares this screen, "join" views another
-	Code   string   `json:"code,omitempty"` // the code to join, or the easy access code a host keeps
-	Name   string   `json:"name,omitempty"`
-	Route  route    `json:"route"`
-	Relays []string `json:"relays,omitempty"`
-	Stun   []string `json:"stun,omitempty"`
-	NoLAN  bool     `json:"noLan,omitempty"`
+	Op        string      `json:"op"`             // "host" shares this screen, "join" views another
+	Code      string      `json:"code,omitempty"` // the code to join, or the easy access code a host keeps
+	Name      string      `json:"name,omitempty"`
+	Route     route       `json:"route"`
+	Relays    []string    `json:"relays,omitempty"`
+	Stun      []string    `json:"stun,omitempty"`
+	Turn      []iceServer `json:"turn,omitempty"`      // TURN servers with their credentials, see turn.go
+	TurnKey   *turnKey    `json:"turnKey,omitempty"`   // a Cloudflare TURN key, traded for credentials
+	RelayOnly bool        `json:"relayOnly,omitempty"` // only through the TURN servers, to test them
+	NoLAN     bool        `json:"noLan,omitempty"`
 }
 
 // sdpBox is what the sealed offers and answers carry.
@@ -71,6 +75,9 @@ type session struct {
 	keepIP   func(net.IP) bool
 	phoneIPs []net.IP
 	stun     []string
+	turn     []iceServer // ready once turnDone closes, see startTURN
+	turnAt   time.Time
+	turnDone chan struct{}
 	dial     dialer
 
 	mu      sync.Mutex
@@ -108,6 +115,7 @@ func (s *session) run() int {
 	if err := s.prepare(); err != nil {
 		s.fail("noroute", err.Error())
 	} else {
+		s.startTURN()
 		switch s.opt.Op {
 		case "host":
 			go s.host()
@@ -170,14 +178,60 @@ func (s *session) prepare() error {
 
 func (s *session) peerConfig(host bool) peerConfig {
 	return peerConfig{
-		host:     host,
-		link:     s.link,
-		pnet:     s.pnet,
-		keepIP:   s.keepIP,
-		stun:     s.stun,
-		phoneIPs: s.phoneIPs,
-		viaPhone: s.opt.Route.Mode == "phone",
+		host:      host,
+		link:      s.link,
+		pnet:      s.pnet,
+		keepIP:    s.keepIP,
+		stun:      s.stun,
+		turn:      s.turnServers(),
+		relayOnly: s.opt.RelayOnly,
+		phoneIPs:  s.phoneIPs,
+		viaPhone:  s.opt.Route.Mode == "phone",
 	}
+}
+
+// startTURN gets the TURN servers ready while the pairing runs: a Cloudflare key takes one
+// request to Cloudflare, through the same route as the relays.
+func (s *session) startTURN() {
+	s.turnDone = make(chan struct{})
+	go func() {
+		defer close(s.turnDone)
+		s.turn = s.fetchTURN()
+	}()
+}
+
+// fetchTURN gives the TURN servers PdaNet passed, and those a Cloudflare key brings.
+func (s *session) fetchTURN() []iceServer {
+	list := cleanTURN(s.opt.Turn)
+	if k := s.opt.TurnKey; k != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), turnFetchWait)
+		defer cancel()
+		cf, err := cloudflareServers(ctx, s.dial, *k)
+		if err != nil {
+			log.Printf("relay: Cloudflare: %v", err)
+			s.link.event(event{Ev: "relay", Reason: "key", Detail: err.Error()})
+		}
+		list = append(list, cf...)
+	}
+	if len(list) > 0 {
+		log.Printf("relay: %s", turnURLs(list))
+	}
+	s.turnAt = time.Now()
+	return list
+}
+
+// turnServers waits for startTURN. Cloudflare's credentials last a day and an easy access share
+// can wait longer for the other PC, so then it asks for new ones.
+func (s *session) turnServers() []iceServer {
+	select {
+	case <-s.turnDone:
+	case <-s.done:
+		return nil
+	}
+	if s.opt.TurnKey != nil && time.Since(s.turnAt) > turnTTL*time.Second/2 {
+		s.turn = s.fetchTURN()
+	}
+	return s.turn
 }
 
 // readLoop takes what PdaNet sends: the screen, remote control and stop.

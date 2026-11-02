@@ -69,7 +69,7 @@ internal sealed class ShareSession
     public SharePhase Phase { get; private set; }
     public string? Code { get; private set; }
     public string? Peer { get; private set; }
-    /// <summary>"lan", "internet" or "phone" once live.</summary>
+    /// <summary>"lan", "internet", "phone" or "relay" once live.</summary>
     public string? Path { get; private set; }
     public bool ViaPhone { get; private set; }
     public DateTime? LiveSince { get; private set; }
@@ -132,7 +132,8 @@ internal sealed class ShareSession
         Begin(ShareRole.Host, viaPhone);
         Easy = code != null;
         AllowControl = _cfg.ShareAllowControl;
-        Launch(new { op = "host", code, name = Environment.MachineName, route });
+        var (turn, turnKey) = Relays();
+        Launch(new { op = "host", code, name = Environment.MachineName, route, turn, turnKey });
         return null;
     }
 
@@ -148,8 +149,16 @@ internal sealed class ShareSession
         if (problem != null) return problem;
         Begin(ShareRole.Viewer, viaPhone);
         Code = digits;
-        Launch(new { op = "join", code = digits, name = Environment.MachineName, route });
+        var (turn, turnKey) = Relays();
+        Launch(new { op = "join", code = digits, name = Environment.MachineName, route, turn, turnKey });
         return null;
+    }
+
+    /// <summary>The relays set up in Settings, as the helper takes them.</summary>
+    private (object[]? Servers, object? Key) Relays()
+    {
+        var s = ShareRelays.Read(_cfg);
+        return ShareRelays.Problem(s) == null ? (ShareRelays.Servers(s), ShareRelays.Key(s)) : (null, null);
     }
 
     private void Begin(ShareRole role, bool viaPhone)
@@ -435,6 +444,11 @@ internal sealed class ShareSession
             case "candidates":
                 _localKinds = Str(e, "local");
                 _remoteKinds = Str(e, "remote");
+                break;
+            case "relay":
+                // The Cloudflare key did not bring relays: the session goes on without them.
+                Notice = $"The relay in Settings could not be used: {Str(e, "detail")}";
+                _log.Warning("Screen sharing: " + Notice);
                 break;
             case "connected":
                 Path = Str(e, "path");
@@ -755,6 +769,7 @@ internal sealed class ShareSession
     {
         "lan" => "straight across your network",
         "phone" => "through your phone",
+        "relay" => "through a relay server",
         _ => "straight over the internet",
     };
 
@@ -769,25 +784,35 @@ internal sealed class ShareSession
     };
 
     /// <summary>
-    /// Why the two PCs found no direct path, from the kinds of address each offered: a network
-    /// that keeps a PC from the STUN servers blocks direct links whatever the other side does.
+    /// Why the two PCs found no path, from the kinds of address each offered. A PC needs "srflx",
+    /// an answer from the STUN servers over UDP, or "relay", an address on a relay server: a
+    /// network that allows neither blocks the session whatever the other side does.
     /// </summary>
     private string NoPathText()
     {
         bool known = _localKinds != null && _remoteKinds != null;
-        bool here = _localKinds?.Contains("srflx") == true, there = _remoteKinds?.Contains("srflx") == true;
+        bool hereRelay = _localKinds?.Contains("relay") == true, thereRelay = _remoteKinds?.Contains("relay") == true;
+        bool here = hereRelay || _localKinds?.Contains("srflx") == true;
+        bool there = thereRelay || _remoteKinds?.Contains("srflx") == true;
         var who = Peer is null or "the other PC" ? "The other PC" : Peer;
-        const string Phone = "connect PdaNet to a phone and pick Through your phone";
+        const string SetUp = "set up a relay in Settings, Screen sharing";
+        const string Test = "Press Test in Settings, Screen sharing";
+        // A relay is set up here, but this PC got no address on it.
+        bool relayDown = !hereRelay && ShareRelays.Configured(_cfg);
         if (ViaPhone)
             return known && !here
                 ? "Your phone's network blocks direct links, try Direct"
                 : "The two PCs could not reach each other through your phone. Some mobile networks do not allow direct links, try Direct";
         if (!known)
-            return $"The two PCs could not reach each other. Some company and school networks block direct links, on such a PC {Phone}";
-        if (!here && !there) return $"The networks of both PCs block direct links. On both PCs, {Phone}";
-        if (!there) return $"{who}'s network blocks direct links. On that PC, {Phone}";
-        if (!here) return $"This PC's network blocks direct links. On this PC, {Phone}";
-        return $"The two networks do not let these PCs link up directly. On one of them, {Phone}";
+            return relayDown
+                ? $"The two PCs could not reach each other, and the relay set up on this PC did not answer. {Test}"
+                : $"The two PCs could not reach each other. Some company and school networks block direct links, on such a PC {SetUp}";
+        if (!here && relayDown) return $"This PC's network blocks direct links, and the relay set up on this PC did not answer. {Test}";
+        if (!here && !there) return $"The networks of both PCs block direct links. On both PCs, {SetUp}";
+        if (!there) return $"{who}'s network blocks direct links. On that PC, {SetUp}";
+        if (!here) return $"This PC's network blocks direct links. On this PC, {SetUp}";
+        if (hereRelay || thereRelay) return $"The two PCs could not link up, not even through the relay. {Test}";
+        return $"The two networks do not let these PCs link up directly. On one of them, {SetUp}";
     }
 
     private string EndText(string reason) => reason switch

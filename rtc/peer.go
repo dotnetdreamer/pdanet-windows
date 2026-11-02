@@ -34,17 +34,20 @@ const (
 	minBitrate   = 200_000
 	maxBitrate   = 30_000_000
 	gatherWait   = 2500 * time.Millisecond // then send the candidates found so far, the local ones come first
+	relayWait    = 6 * time.Second         // with TURN servers, the most to wait for a relay address
 	keyGap       = 300 * time.Millisecond  // at most one keyframe request this often
 )
 
 type peerConfig struct {
-	host     bool
-	link     *ipc
-	pnet     *phoneNet         // the phone's network in Phone VPN mode
-	keepIP   func(net.IP) bool // the phone's network on this PC
-	stun     []string
-	phoneIPs []net.IP // addresses of the phone's network on this PC, to name the path
-	viaPhone bool
+	host      bool
+	link      *ipc
+	pnet      *phoneNet         // the phone's network in Phone VPN mode
+	keepIP    func(net.IP) bool // the phone's network on this PC
+	stun      []string
+	turn      []iceServer
+	relayOnly bool
+	phoneIPs  []net.IP // addresses of the phone's network on this PC, to name the path
+	viaPhone  bool
 }
 
 type videoOut struct {
@@ -154,7 +157,14 @@ func newPeer(cfg peerConfig) (*peer, error) {
 	if len(cfg.stun) > 0 {
 		servers = []webrtc.ICEServer{{URLs: cfg.stun}}
 	}
-	pc, err := api.NewPeerConnection(webrtc.Configuration{ICEServers: servers})
+	for _, t := range cfg.turn {
+		servers = append(servers, webrtc.ICEServer{URLs: t.URLs, Username: t.Username, Credential: t.Credential})
+	}
+	conf := webrtc.Configuration{ICEServers: servers}
+	if cfg.relayOnly {
+		conf.ICETransportPolicy = webrtc.ICETransportPolicyRelay
+	}
+	pc, err := api.NewPeerConnection(conf)
 	if err != nil {
 		return nil, err
 	}
@@ -266,10 +276,30 @@ func (p *peer) local(d webrtc.SessionDescription) (string, error) {
 	select {
 	case <-gathered:
 	case <-time.After(gatherWait):
+		p.waitRelay(gathered)
 	}
 	sdp := p.pc.LocalDescription().SDP
 	p.noteCandidates(true, sdp)
 	return sdp, nil
+}
+
+// waitRelay gives a relay address a few more seconds: it takes more round trips than the other
+// kinds, over TLS a few more still, and without trickle ICE what comes later is left out.
+func (p *peer) waitRelay(gathered <-chan struct{}) {
+	if len(p.cfg.turn) == 0 {
+		return
+	}
+	deadline := time.After(relayWait - gatherWait)
+	for !strings.Contains(p.pc.LocalDescription().SDP, " typ relay") {
+		select {
+		case <-gathered:
+			return
+		case <-deadline:
+			log.Printf("ice: no relay address yet, the offer goes without one")
+			return
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
 }
 
 // candidateKinds lists the kinds of address an SDP offers, such as "host srflx", or "none".
@@ -594,7 +624,8 @@ func (p *peer) isConnected() bool {
 }
 
 // describePath names the way the two PCs found: "lan" on the same network, "phone" through
-// the phone, "internet" otherwise. local and remote are the ICE candidate types.
+// the phone, "relay" through a TURN server, "internet" otherwise. local and remote are the ICE
+// candidate types.
 func (p *peer) describePath() (path, local, remote string) {
 	path = "internet"
 	if p.cfg.viaPhone {
@@ -609,6 +640,9 @@ func (p *peer) describePath() (path, local, remote string) {
 		return
 	}
 	local, remote = pair.Local.Typ.String(), pair.Remote.Typ.String()
+	if pair.Local.Typ == webrtc.ICECandidateTypeRelay || pair.Remote.Typ == webrtc.ICECandidateTypeRelay {
+		return "relay", local, remote
+	}
 	if p.cfg.viaPhone {
 		return
 	}
