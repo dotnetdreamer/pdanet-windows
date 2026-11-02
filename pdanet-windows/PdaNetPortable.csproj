@@ -14,6 +14,8 @@
     <ApplicationIcon>Resources\app.ico</ApplicationIcon>
     <StartupObject>PdaNetPortable.Program</StartupObject>
     <NoWarn>WFO0003</NoWarn>
+    <!-- Screen sharing converts pixels with pointers, row by row -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <Version>1.0.0</Version>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <AssemblyTitle>PdaNet Windows (Portable)</AssemblyTitle>
@@ -39,6 +41,10 @@
     <EmbeddedResource Include="Resources\adb\AdbWinUsbApi.dll">
       <LogicalName>PdaNetPortable.adb.AdbWinUsbApi.dll</LogicalName>
     </EmbeddedResource>
+    <!-- The WebRTC side of screen sharing (rtc/, Go and Pion), unpacked to the data folder when a session starts -->
+    <EmbeddedResource Include="Resources\rtc\pdanet-rtc.exe">
+      <LogicalName>PdaNetPortable.rtc.pdanet-rtc.exe</LogicalName>
+    </EmbeddedResource>
     <!-- Window icon, loaded at runtime via the Icon="Resources/app.ico" pack URI -->
     <Resource Include="Resources\app.ico" />
   </ItemGroup>
@@ -46,6 +52,10 @@
   <ItemGroup>
     <!-- The PdaNet browser on the Launchpad, it runs on the Microsoft Edge WebView2 Runtime that ships with Windows -->
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4314.35" />
+    <!-- Screen sharing: Desktop Duplication to capture the screen, Media Foundation for H.264 on the GPU -->
+    <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
+    <PackageReference Include="Vortice.Direct3D12" Version="3.8.3" />
+    <PackageReference Include="Vortice.MediaFoundation" Version="3.8.3" />
   </ItemGroup>
 
   <!-- Portable single-file self-contained publish defaults -->

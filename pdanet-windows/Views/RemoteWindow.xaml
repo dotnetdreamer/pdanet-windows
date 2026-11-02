@@ -1,0 +1,174 @@
+<Window x:Class="PdaNetPortable.Views.RemoteWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Screen share" Width="1280" Height="800" MinWidth="560" MinHeight="380"
+        WindowStartupLocation="CenterScreen" ResizeMode="CanResize"
+        Background="{StaticResource B.Bg0}" Foreground="{StaticResource B.Text}"
+        FontFamily="{StaticResource F.Ui}" FontSize="13"
+        UseLayoutRounding="True" SnapsToDevicePixels="True"
+        Icon="pack://application:,,,/Resources/app.ico">
+
+    <WindowChrome.WindowChrome>
+        <WindowChrome CaptionHeight="40" ResizeBorderThickness="6" GlassFrameThickness="0"
+                      CornerRadius="0" UseAeroCaptionButtons="False" />
+    </WindowChrome.WindowChrome>
+
+    <Window.Resources>
+        <!-- A small chip for each screen of the other PC: 1, 2, 3 -->
+        <Style x:Key="ScreenChip" TargetType="RadioButton" BasedOn="{StaticResource Seg}">
+            <Setter Property="Padding" Value="10,3" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="WindowChrome.IsHitTestVisibleInChrome" Value="True" />
+        </Style>
+        <Style x:Key="Tool" TargetType="Button" BasedOn="{StaticResource Btn.Icon}">
+            <Setter Property="Width" Value="34" />
+            <Setter Property="Height" Value="30" />
+            <Setter Property="Margin" Value="2,0" />
+            <Setter Property="WindowChrome.IsHitTestVisibleInChrome" Value="True" />
+        </Style>
+    </Window.Resources>
+
+    <Border x:Name="Frame" BorderBrush="{StaticResource B.Line2}" BorderThickness="1">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition x:Name="BarRow" Height="40" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <!-- ============================ Title bar ============================ -->
+            <Border x:Name="Bar" Background="{StaticResource B.Bg1}" BorderBrush="{StaticResource B.Line}" BorderThickness="0,0,0,1">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel Orientation="Horizontal" Margin="14,0,10,0" VerticalAlignment="Center">
+                        <TextBlock Text="&#xE7F4;" Style="{StaticResource T.Icon}" FontSize="15" Foreground="{StaticResource B.Cyan}"
+                                   VerticalAlignment="Center" />
+                        <TextBlock x:Name="PeerText" Text="Screen share" FontWeight="SemiBold" FontSize="13.5" Margin="10,0,0,0"
+                                   VerticalAlignment="Center" TextTrimming="CharacterEllipsis" MaxWidth="260" />
+                    </StackPanel>
+
+                    <Border x:Name="StatusPill" Grid.Column="1" HorizontalAlignment="Left" VerticalAlignment="Center" CornerRadius="11"
+                            Padding="10,3,12,3" BorderThickness="1" Background="{StaticResource B.Bg2}" BorderBrush="{StaticResource B.Line2}">
+                        <StackPanel Orientation="Horizontal">
+                            <Ellipse x:Name="StatusDot" Width="7" Height="7" Fill="{StaticResource B.Amber}" VerticalAlignment="Center" />
+                            <TextBlock x:Name="StatusText" Text="Connecting" FontSize="11.5" Margin="8,0,0,0" VerticalAlignment="Center"
+                                       TextTrimming="CharacterEllipsis" />
+                        </StackPanel>
+                    </Border>
+
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,8,0"
+                                WindowChrome.IsHitTestVisibleInChrome="True">
+                        <Border x:Name="ScreensHost" Style="{StaticResource Seg.Host}" Padding="2" Margin="0,0,8,0" Visibility="Collapsed"
+                                ToolTip="The other PC's screens, pick the one to see">
+                            <StackPanel x:Name="ScreenChips" Orientation="Horizontal" />
+                        </Border>
+                        <Button x:Name="FitBtn" Style="{StaticResource Tool}" Content="&#xE9A6;" Click="OnFit"
+                                ToolTip="Actual size" AutomationProperties.Name="Actual size" />
+                        <Button x:Name="KeysBtn" Style="{StaticResource Tool}" Content="&#xE765;" Click="OnKeysMenu"
+                                ToolTip="Keys and control" AutomationProperties.Name="Keys and control">
+                            <Button.ContextMenu>
+                                <ContextMenu />
+                            </Button.ContextMenu>
+                        </Button>
+                        <Button x:Name="QualityBtn" Style="{StaticResource Tool}" Content="&#xE713;" Click="OnQualityMenu"
+                                ToolTip="Picture" AutomationProperties.Name="Picture">
+                            <Button.ContextMenu>
+                                <ContextMenu />
+                            </Button.ContextMenu>
+                        </Button>
+                        <Button x:Name="FullBtn" Style="{StaticResource Tool}" Content="&#xE740;" Click="OnFull"
+                                ToolTip="Full screen  (Ctrl+Alt+Break)" AutomationProperties.Name="Full screen" />
+                        <Button x:Name="LeaveBtn" Style="{StaticResource Btn.Danger}" Content="Disconnect" Tag="&#xE71A;" Padding="12,5"
+                                Margin="8,0,0,0" Click="OnLeave" WindowChrome.IsHitTestVisibleInChrome="True" />
+                    </StackPanel>
+
+                    <StackPanel Grid.Column="3" Orientation="Horizontal" WindowChrome.IsHitTestVisibleInChrome="True">
+                        <Button Style="{StaticResource Btn.Chrome}" Content="&#xE921;" Click="OnMinimize" ToolTip="Minimize"
+                                WindowChrome.IsHitTestVisibleInChrome="True" AutomationProperties.Name="Minimize" />
+                        <Button x:Name="MaxBtn" Style="{StaticResource Btn.Chrome}" Content="&#xE922;" Click="OnMaximize" ToolTip="Maximize"
+                                WindowChrome.IsHitTestVisibleInChrome="True" AutomationProperties.Name="Maximize" />
+                        <Button Style="{StaticResource Btn.ChromeClose}" Content="&#xE8BB;" Click="OnCloseClick" ToolTip="Disconnect and close"
+                                WindowChrome.IsHitTestVisibleInChrome="True" AutomationProperties.Name="Disconnect and close" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <!-- ============================ The other PC's screen ============================ -->
+            <Grid x:Name="Stage" Grid.Row="1" Background="#FF000000" ClipToBounds="True">
+                <ScrollViewer x:Name="Scroller" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Disabled"
+                              Focusable="False" PanningMode="None">
+                    <Viewbox x:Name="Fitter" Stretch="Uniform" StretchDirection="Both">
+                        <!-- The picture, turned back when the other PC's screen is turned. The pointer and the
+                             input sit over it unturned, in the screen's own orientation. -->
+                        <Grid x:Name="Surface">
+                            <Image x:Name="Picture" Stretch="Fill" RenderOptions.BitmapScalingMode="Linear">
+                                <Image.LayoutTransform>
+                                    <RotateTransform x:Name="Turn" />
+                                </Image.LayoutTransform>
+                            </Image>
+                            <Canvas x:Name="PointerLayer" IsHitTestVisible="False" ClipToBounds="True">
+                                <Image x:Name="RemotePointer" Visibility="Collapsed" RenderOptions.BitmapScalingMode="NearestNeighbor" />
+                            </Canvas>
+                            <Border x:Name="InputLayer" Background="Transparent" Focusable="True" FocusVisualStyle="{x:Null}"
+                                    MouseMove="OnMouseMove" MouseDown="OnMouseDown" MouseUp="OnMouseUp" MouseWheel="OnMouseWheel"
+                                    AutomationProperties.Name="The other PC's screen" />
+                        </Grid>
+                    </Viewbox>
+                </ScrollViewer>
+
+                <!-- Watch only: the other person keeps their mouse and keyboard -->
+                <Border x:Name="Banner" VerticalAlignment="Top" HorizontalAlignment="Center" Margin="0,12,0,0" CornerRadius="10"
+                        Padding="14,7" Background="#E610161D" BorderBrush="{StaticResource B.Line2}" BorderThickness="1"
+                        Visibility="Collapsed" IsHitTestVisible="False">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="&#xE7B3;" Style="{StaticResource T.Icon}" FontSize="13" Foreground="{StaticResource B.Cyan}"
+                                   VerticalAlignment="Center" />
+                        <TextBlock x:Name="BannerText" FontSize="12.5" Margin="9,0,0,0" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Border>
+
+                <!-- Connecting, waiting, reconnecting, a private screen, the end -->
+                <Grid x:Name="Overlay" Background="#CC05070A">
+                    <Border HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="460" CornerRadius="16"
+                            Background="{StaticResource B.Bg1}" BorderBrush="{StaticResource B.Line2}" BorderThickness="1" Padding="28,24">
+                        <StackPanel>
+                            <Grid Width="44" Height="44" HorizontalAlignment="Left">
+                                <Path x:Name="OverlaySpinner" Stroke="{StaticResource B.Cyan}" StrokeThickness="2.5" StrokeStartLineCap="Round"
+                                      Data="M 22,3 A 19,19 0 1 1 3,22" RenderTransformOrigin="0.5,0.5" Stretch="None">
+                                    <Path.RenderTransform>
+                                        <RotateTransform x:Name="OverlaySpin" />
+                                    </Path.RenderTransform>
+                                </Path>
+                                <Border x:Name="OverlayIcon" Style="{StaticResource IconTile}" Width="44" Height="44" Visibility="Collapsed">
+                                    <TextBlock x:Name="OverlayGlyph" Text="&#xE7F4;" Style="{StaticResource T.Icon}" FontSize="19"
+                                               Foreground="{StaticResource B.Accent}" HorizontalAlignment="Center" />
+                                </Border>
+                            </Grid>
+                            <TextBlock x:Name="OverlayTitle" Style="{StaticResource T.H2}" FontSize="18" Margin="0,16,0,0" TextWrapping="Wrap" />
+                            <TextBlock x:Name="OverlayText" Style="{StaticResource T.Body}" Margin="0,8,0,0" TextWrapping="Wrap" />
+                            <Button x:Name="OverlayBtn" Style="{StaticResource Btn.Secondary}" Content="Close" HorizontalAlignment="Left"
+                                    Margin="0,18,0,0" Click="OnCloseClick" Visibility="Collapsed" />
+                        </StackPanel>
+                    </Border>
+                </Grid>
+
+                <!-- Full screen: a strip that comes down when the pointer touches the top edge -->
+                <Border x:Name="FullStrip" VerticalAlignment="Top" HorizontalAlignment="Center" CornerRadius="0,0,12,12"
+                        Padding="14,6" Background="#F010161D" BorderBrush="{StaticResource B.Line2}" BorderThickness="1,0,1,1"
+                        Visibility="Collapsed" MouseLeave="OnStripLeave">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock x:Name="StripText" FontSize="12.5" VerticalAlignment="Center" Margin="0,0,14,0" />
+                        <Button Style="{StaticResource Btn.Ghost}" Tag="&#xE73F;" Content="Exit full screen" Padding="10,4" Click="OnFull" />
+                        <Button Style="{StaticResource Btn.Danger}" Tag="&#xE71A;" Content="Disconnect" Padding="10,4" Margin="8,0,0,0"
+                                Click="OnLeave" />
+                    </StackPanel>
+                </Border>
+            </Grid>
+        </Grid>
+    </Border>
+</Window>

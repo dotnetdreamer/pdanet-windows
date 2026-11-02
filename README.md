@@ -18,6 +18,7 @@ This is an independent project inspired by PdaNet. It is not made by, or connect
 - Make your PC read as another city, time zone and region, with no admin
 - Browse the web in the PdaNet browser on the Launchpad, with tabs and your web apps one click away
 - Let an AI agent drive that browser for you, through your phone's connection, with a built in MCP server
+- See and use another PC, or let someone help on this one, with a ten digit code and nothing to install, straight between the two PCs or through your phone
 
 ## What it looks like
 
@@ -129,6 +130,7 @@ Pick how to connect, follow the short checklist so your phone is ready, then pre
 - USB debugging turned on in the phone's Developer options (only for the phone VPN mode)
 - For the phone VPN mode over WiFi, Android 11 or later with Wireless debugging turned on
 - For the PdaNet browser, Microsoft Edge WebView2, which comes with Windows 11, when WebView2 is missing the browser offers the free download from Microsoft
+- For screen share, PdaNet on both PCs. The N editions of Windows also need the free Media Feature Pack from Microsoft, for the video parts
 
 ## Getting the app
 
@@ -275,6 +277,52 @@ For client setup (Claude Desktop, Claude Code, or any MCP client), the full tool
 </details>
 
 <details>
+<summary><h2>Share your screen</h2></summary>
+
+Screen share on the Launchpad lets one PC see and use another, to help a friend or to reach your own PC from another room. Both PCs run PdaNet. There is no account, no server to set up and nothing to install.
+
+On the PC that shares its screen
+
+1. Open the Launchpad and press Share my screen
+2. Read the ten digit code to the other person, or press Copy and send it in a message
+3. With the switch, choose whether they may use your mouse and keyboard. You can change it at any time
+
+On the PC that sees the screen
+
+1. Open the Launchpad, type the code under Connect to a screen and press Connect
+2. The other PC's screen opens in a window of its own
+
+While you share, a small bar at the top of your screen says who sees it, with a Control switch and a Stop button. The bar never shows up in the picture. You can also stop from the Launchpad or the tray icon.
+
+In the window with the other PC's screen
+
+- Fit shows the whole screen in the window, Actual size shows it pixel for pixel
+- Full screen shows only the other PC's screen, Ctrl+Alt+Break goes back
+- The keyboard button sends the keys Windows keeps for itself, such as the Windows key, Alt+Tab and Ctrl+Shift+Esc
+- Picture picks Auto, Sharp for text or Smooth for video
+- When the other PC has more than one screen, pick the one to see at the top
+- Copied text goes both ways while you may use the other PC's mouse and keyboard
+
+The connection
+
+- Direct links the two PCs the shortest way, straight across your network when they share one, else over the internet
+- Through your phone sends the screen through the phone PdaNet is connected to, in every mode, Phone VPN included, so it takes the phone's network and VPN. This counts against your mobile data. A still screen sends almost nothing, video and scrolling send the most
+
+Safe by design
+
+- The code works once and only while you share. After five wrong tries the code changes
+- Everything between the two PCs is encrypted end to end. The last six digits of the code never leave the two PCs, both prove they know them without sending them
+- To find each other, the two PCs leave sealed notes on public relays (Nostr, MQTT and ntfy). The relays never see the code, the screen or anything you type. Without internet, two PCs on the same network find each other there
+
+Light on your PC
+
+- The screen goes from the capture to the encoder inside the graphics chip, without passing through the processor
+- Nothing is sent while the screen is still. When it settles, two more pictures make the text sharp
+- On a laptop with Intel graphics, sharing a 1080p screen adds about 60 MB to PdaNet and seeing one about 70 MB. Both give the memory back when the session ends
+
+</details>
+
+<details>
 <summary><h2>Settings</h2></summary>
 
 Open Settings from the main screen to change things such as
@@ -296,6 +344,8 @@ Open Settings from the main screen to change things such as
 - USB mode says there is no connection, turn on USB tethering on the phone and keep mobile data on
 - The browser still shows your real location, some company or school PCs force their own network proxy that overrides the app, in that case open the connection details on the Connect page, copy the proxy address, and set it in your browser
 - Nothing seems to happen when you connect, open the Activity page in the app to see which step failed
+- Screen share does not connect, check that both PCs are online. When one of the PCs is on a strict company or school network, try Through your phone
+- Without internet, Windows may ask once whether pdanet-rtc may use the network. Allow it on private networks, so two PCs on the same network can find each other
 
 </details>
 
@@ -303,6 +353,8 @@ Open Settings from the main screen to change things such as
 <summary><h2>Privacy</h2></summary>
 
 The app keeps its settings in a folder named data next to the program. WiFi passwords are stored in encrypted form using Windows. The app itself does not send your information anywhere. The Apps page keeps the list only while PdaNet runs, unless you save the list to a file.
+
+Screen share sends your screen, and the mouse and keyboard, only to the PC that typed your code, encrypted end to end. The public relays the two PCs meet through carry only sealed notes, and nothing is stored there.
 
 </details>
 
@@ -322,6 +374,8 @@ The finished program appears at `pdanet-windows/dist/PdaNetPortable.exe`.
 
 The Android helper is a small Java HTTP proxy in `agent/ProxyMain.java`. A prebuilt copy is already included in the app, so you only need to rebuild it if you change that file. The rebuild uses the Eclipse Java compiler and Google's d8 tool and needs no Android SDK. See `agent/build.bat` for the two tools to download and the steps.
 
+The screen share helper, `pdanet-rtc.exe`, is built from the Go code in `rtc` with Pion WebRTC. It finds the other PC, agrees on a key from the code with SPAKE2 (RFC 9382) and carries the picture and the input over WebRTC. A prebuilt copy is already included in the app. To rebuild it after changing that code, install Go and run `rtc/build.bat`. The parts it and the app use from others, and their licenses, are listed in [docs/third-party-notices.md](docs/third-party-notices.md).
+
 Three built in checks run without opening the window:
 
 ```
@@ -332,12 +386,20 @@ PdaNetPortable.exe --selftest-monitor
 
 The last check tests the Apps page and blocks. The check changes no Windows setting and needs no phone.
 
+Screen share has its own check, which tests the picture from capture to decoding, and a whole session between two helpers on this PC. Add `online` to meet through the public relays, or `memory` to see what each part costs in memory:
+
+```
+PdaNetPortable.exe --selftest-share
+```
+
 </details>
 
 <details>
 <summary><h2>How it works, in short</h2></summary>
 
 In the phone VPN mode the app runs a tiny helper on the phone through adb and then points Windows at it. Because that helper runs as a normal program on the phone, your PC's traffic follows the phone's connection, including any VPN. In USB and WiFi modes the app routes traffic through the phone and adjusts it so the connection looks like ordinary phone use.
+
+Screen share takes the screen with Windows' Desktop Duplication, turns it into H.264 video on the graphics chip and sends it with WebRTC straight to the other PC, where Windows' own decoder shows it. Through your phone, the same traffic goes through the phone's connection, over the cable and the phone helper in Phone VPN mode.
 
 </details>
 

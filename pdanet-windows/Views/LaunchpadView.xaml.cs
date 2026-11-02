@@ -5,24 +5,30 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
+using System.Windows.Controls.Primitives;
 using PdaNetPortable.Core;
 using PdaNetPortable.Models;
 using PdaNetPortable.Services;
+using PdaNetPortable.Share;
 using Button = System.Windows.Controls.Button;
+using DataObject = System.Windows.DataObject;
 using KeyEventArgs = System.Windows.Input.KeyEventArgs;
 using UserControl = System.Windows.Controls.UserControl;
 
 namespace PdaNetPortable.Views;
 
 /// <summary>
-/// The Launchpad: apps that run right inside PdaNet. For now the PdaNet browser, with a box to
-/// search or open a web address straight away, the web apps pinned for one click, and the
-/// websites opened lately.
+/// The Launchpad: apps that run right inside PdaNet. The PdaNet browser, with a box to search or
+/// open a web address straight away, the web apps pinned for one click and the websites opened
+/// lately, and screen share, to see another PC or show this one with a code.
 /// </summary>
 public partial class LaunchpadView : UserControl, IPage
 {
     private readonly BrowserStore _store = BrowserStore.Instance;
     private readonly ConnectionManager _cm = ConnectionManager.Instance;
+    private readonly AppConfig _cfg = ConfigManager.Instance.Config;
+    private readonly ShareSession _share = ShareSession.Instance;
+    private bool _formatting, _shareBreathing;
     private readonly DispatcherTimer _tick = new() { Interval = TimeSpan.FromSeconds(2) };
     private readonly DispatcherTimer _confirmTimer = new() { Interval = TimeSpan.FromSeconds(4) };
     private MainWindow? _shell;
@@ -42,7 +48,17 @@ public partial class LaunchpadView : UserControl, IPage
         _shell = shell;
         _store.Changed += () => Changed();
         SiteIcons.Updated += _ => Changed();
-        _cm.StateChanged += _ => Dispatcher.BeginInvoke(UpdateStatus);
+        _cm.StateChanged += _ => Dispatcher.BeginInvoke(() =>
+        {
+            UpdateStatus();
+            UpdateShare();
+        });
+        _share.Changed += UpdateShare;
+        _share.Ended += OnShareEnded;
+        AllowControl.IsChecked = _cfg.ShareAllowControl;
+        RoutePhone.IsChecked = _cfg.ShareViaPhone;
+        RouteDirect.IsChecked = !_cfg.ShareViaPhone;
+        UpdateShare();
         IsVisibleChanged += (_, _) =>
         {
             if (IsVisible)
@@ -50,6 +66,7 @@ public partial class LaunchpadView : UserControl, IPage
                 if (_stale) Load();
                 CheckRuntime();
                 UpdateStatus();
+                UpdateShare();
                 StartOrbit();
                 _tick.Start();
             }
@@ -58,6 +75,11 @@ public partial class LaunchpadView : UserControl, IPage
                 StopOrbit();
                 _tick.Stop();
                 _breathing = null;
+                _shareBreathing = false;
+                WaitSpin.BeginAnimation(RotateTransform.AngleProperty, null);
+                ShareRingScale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+                ShareRingScale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+                ShareRing.BeginAnimation(OpacityProperty, null);
                 OrbScale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
                 OrbScale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
                 OrbRing.BeginAnimation(OpacityProperty, null);
@@ -310,12 +332,12 @@ public partial class LaunchpadView : UserControl, IPage
         ClearRecentBtn.Content = "Clear";
     }
 
-    private void CopyText(string text)
+    private void CopyText(string text, string done = "Web address copied")
     {
         try
         {
             System.Windows.Clipboard.SetText(text);
-            _shell?.Toast("Web address copied");
+            _shell?.Toast(done);
         }
         catch
         {
@@ -327,6 +349,224 @@ public partial class LaunchpadView : UserControl, IPage
     {
         try { Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); }
         catch { _shell?.Toast("Could not open the web page, visit microsoft.com and search for WebView2", ToastKind.Error); }
+    }
+
+    // ============================ Screen share ============================
+    private bool ViaPhone => RoutePhone.IsChecked == true;
+
+    private void OnShare(object sender, RoutedEventArgs e)
+    {
+        var problem = _share.Share(ViaPhone);
+        if (problem != null) _shell?.Toast(problem, ToastKind.Warning);
+    }
+
+    private void OnJoin(object sender, RoutedEventArgs e)
+    {
+        var problem = _share.Join(CodeBox.Text, ViaPhone);
+        if (problem != null)
+        {
+            ShowJoinHint(problem, "B.Red");
+            Ui.Shake(CodeBox);
+            return;
+        }
+        _formatting = true;
+        CodeBox.Clear();
+        _formatting = false;
+        ShowJoinHint("Ten digits, the spaces come by themselves", "B.Text3");
+    }
+
+    private void OnStop(object sender, RoutedEventArgs e) => _share.Stop();
+
+    private void OnShowRemote(object sender, RoutedEventArgs e) => _shell?.ShowRemote();
+
+    private void OnAllowControl(object sender, RoutedEventArgs e)
+    {
+        bool allow = ((ToggleButton)sender).IsChecked == true;
+        if (_share.Active) _share.SetAllowControl(allow);
+        else
+        {
+            _cfg.ShareAllowControl = allow;
+            ConfigManager.Instance.SaveConfig();
+        }
+        AllowControl.IsChecked = ActiveControl.IsChecked = allow;
+    }
+
+    private void OnRoute(object sender, RoutedEventArgs e)
+    {
+        _cfg.ShareViaPhone = ViaPhone;
+        ConfigManager.Instance.SaveConfig();
+        UpdateShare();
+    }
+
+    private void OnCopyCode(object sender, RoutedEventArgs e)
+    {
+        if (_share.Code is { Length: 10 } code) CopyText(FormatCode(code), "Code copied, send it to the other person");
+    }
+
+    private void OnShareEnded(string text, bool error)
+    {
+        if (!error) return;
+        // A code that did not work stays in view, so it is easy to fix.
+        if (_share.Role == ShareRole.None && text.Contains("code", StringComparison.OrdinalIgnoreCase)) ShowJoinHint(text, "B.Red");
+    }
+
+    // The code box keeps digits only and adds the spaces itself: "482 619 3075".
+    private void OnCodeInput(object sender, TextCompositionEventArgs e)
+    {
+        if (!e.Text.All(char.IsAsciiDigit)) e.Handled = true;
+    }
+
+    private void OnCodePaste(object sender, DataObjectPastingEventArgs e)
+    {
+        var text = e.SourceDataObject.GetData(System.Windows.DataFormats.UnicodeText) as string ?? "";
+        e.CancelCommand();
+        var digits = new string(text.Where(char.IsAsciiDigit).Take(10).ToArray());
+        if (digits.Length > 0) CodeBox.Text = digits;
+    }
+
+    private void OnCodeChanged(object sender, TextChangedEventArgs e)
+    {
+        if (_formatting) return;
+        var digits = new string(CodeBox.Text.Where(char.IsAsciiDigit).Take(10).ToArray());
+        var formatted = FormatCode(digits);
+        if (CodeBox.Text != formatted)
+        {
+            _formatting = true;
+            CodeBox.Text = formatted;
+            CodeBox.CaretIndex = formatted.Length;
+            _formatting = false;
+        }
+        JoinBtn.Style = (Style)FindResource(digits.Length == 10 ? "Btn.Primary" : "Btn.Secondary");
+        ShowJoinHint(digits.Length == 10 ? "Press Enter or Connect" : "Ten digits, the spaces come by themselves", "B.Text3");
+    }
+
+    private void OnCodeKey(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter) return;
+        e.Handled = true;
+        OnJoin(sender, e);
+    }
+
+    private void ShowJoinHint(string text, string brush)
+    {
+        JoinHint.Text = text;
+        JoinHint.Foreground = Ui.Brush(brush);
+    }
+
+    /// <summary>Ten digits as three groups, the way a phone number is read out.</summary>
+    internal static string FormatCode(string digits) => digits.Length switch
+    {
+        <= 3 => digits,
+        <= 6 => $"{digits[..3]} {digits[3..]}",
+        _ => $"{digits[..3]} {digits[3..6]} {digits[6..]}",
+    };
+
+    /// <summary>Shows where the session is: share or connect, the code, or the live session.</summary>
+    private void UpdateShare()
+    {
+        var s = _share;
+        bool host = s.Role == ShareRole.Host;
+        bool waiting = host && s.Phase is SharePhase.Starting or SharePhase.Waiting;
+        ShareIdle.Visibility = s.Active ? Visibility.Collapsed : Visibility.Visible;
+        ShareWaiting.Visibility = waiting ? Visibility.Visible : Visibility.Collapsed;
+        ShareActive.Visibility = s.Active && !waiting ? Visibility.Visible : Visibility.Collapsed;
+
+        var (badge, badgeKey) = s.Phase switch
+        {
+            SharePhase.Idle => ("READY", "B.Accent"),
+            SharePhase.Starting or SharePhase.Waiting when host => ("WAITING", "B.Cyan"),
+            SharePhase.Live => (host ? "SHARING" : "VIEWING", "B.Accent"),
+            SharePhase.Reconnecting => ("RECONNECTING", "B.Amber"),
+            _ => ("CONNECTING", "B.Amber"),
+        };
+        var badgeColor = ((SolidColorBrush)Ui.Brush(badgeKey)).Color;
+        ShareBadgeText.Text = badge;
+        ShareBadgeText.Foreground = Ui.Brush(badgeKey);
+        ShareBadge.Background = new SolidColorBrush(Ui.WithAlpha(badgeColor, 0x1A));
+        ShareBadge.BorderBrush = new SolidColorBrush(Ui.WithAlpha(badgeColor, 0x66));
+
+        if (waiting)
+        {
+            CodeText.Text = s.Code is { Length: 10 } code ? FormatCode(code) : "··· ··· ····";
+            CopyCodeBtn.IsEnabled = s.Code != null;
+            WaitText.Text = s.Phase == SharePhase.Starting ? "Getting a code"
+                : s.RelaysTotal > 0 ? $"Waiting for the other PC, reachable {s.RelaysUp} of {s.RelaysTotal} ways"
+                : "Waiting for the other PC";
+            WaitNotice.Text = s.Notice ?? "";
+            WaitNotice.Visibility = string.IsNullOrEmpty(s.Notice) ? Visibility.Collapsed : Visibility.Visible;
+        }
+        WaitSpin.BeginAnimation(RotateTransform.AngleProperty, waiting && IsVisible ? Ui.Loop(0, 360, 0.9, 60) : null);
+
+        if (s.Active && !waiting)
+        {
+            string peer = s.Peer ?? "the other PC";
+            ActiveTitle.Text = (host, s.Phase) switch
+            {
+                (true, SharePhase.Live) => $"Sharing your screen with {peer}",
+                (true, SharePhase.Reconnecting) => $"Reconnecting with {peer}",
+                (true, _) => $"Connecting with {peer}",
+                (false, SharePhase.Starting) => $"Looking for {FormatCode(s.Code ?? "")}",
+                (false, SharePhase.Pairing) => "Found the other PC, checking the code",
+                (false, SharePhase.Connecting) => $"Connecting to {peer}",
+                (false, SharePhase.Live) => $"Viewing {peer}",
+                (false, _) => $"Reconnecting to {peer}",
+            };
+            if (s.Phase == SharePhase.Live && s.LiveSince is { } since)
+            {
+                var detail = $"{char.ToUpper(ShareSession.PathWords(s.Path)[0])}{ShareSession.PathWords(s.Path)[1..]}, for {Fmt.Uptime((DateTime.Now - since).TotalSeconds)}";
+                if (!host && !s.RemoteFlags.HasFlag(HostFlags.ControlAllowed)) detail += ", you can watch only";
+                if (host && !s.AllowControl) detail += ", they can watch only";
+                ActiveDetail.Text = detail;
+                var st = s.Stats;
+                int kbps = host ? st.SendKbps : st.RecvKbps;
+                ActiveStats.Text = $"{st.Rtt:0} ms · {(kbps >= 1000 ? $"{kbps / 1000.0:0.0} Mbit/s" : $"{kbps} kbit/s")} · {st.Fps} fps" +
+                                   (string.IsNullOrEmpty(st.Detail) ? "" : $" · {st.Detail}");
+            }
+            else
+            {
+                ActiveDetail.Text = s.Phase == SharePhase.Reconnecting ? "The connection dropped, PdaNet is finding a new way"
+                    : "Finding the shortest way between the two PCs";
+                ActiveStats.Text = "";
+            }
+            HostControls.Visibility = host ? Visibility.Visible : Visibility.Collapsed;
+            ActiveControl.IsChecked = s.AllowControl;
+            ShowWindowBtn.Visibility = host ? Visibility.Collapsed : Visibility.Visible;
+            EndBtn.Content = host ? "Stop sharing" : "Disconnect";
+            ShareLiveDot.Fill = Ui.Brush(s.Phase == SharePhase.Live ? "B.Accent" : "B.Amber");
+        }
+
+        // The route: the phone only works while PdaNet is connected to it.
+        bool phoneReady = _cm.IsConnected;
+        RouteDirect.IsEnabled = RoutePhone.IsEnabled = !s.Active;
+        if (!phoneReady && !s.Active) RoutePhone.IsEnabled = ViaPhone; // keep it pickable to switch back
+        ShareRouteText.Text = s.Active
+            ? s.ViaPhone ? "This session goes through your phone" : "This session goes straight between the PCs"
+            : ViaPhone
+                ? phoneReady ? $"Through your phone, with {Friendly.ModeName(_cm.CurrentMode)}" : "Connect PdaNet to your phone first"
+                : "Straight between the PCs, the shortest way";
+        ShareRouteText.Foreground = Ui.Brush(!s.Active && ViaPhone && !phoneReady ? "B.Amber" : "B.Text3");
+        ShareBtn.IsEnabled = !ViaPhone || phoneReady;
+
+        BreatheShare(waiting || s.Phase == SharePhase.Live);
+    }
+
+    // A slow ring around the screen icon while a code waits or a session runs.
+    private void BreatheShare(bool on)
+    {
+        if (_shareBreathing == on || !IsVisible) return;
+        _shareBreathing = on;
+        if (!on)
+        {
+            ShareRingScale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+            ShareRingScale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+            ShareRing.BeginAnimation(OpacityProperty, null);
+            ShareRing.Opacity = 0;
+            return;
+        }
+        var grow = Ui.Loop(0.9, 1.45, 2.4, 30, Ui.EaseOut);
+        ShareRingScale.BeginAnimation(ScaleTransform.ScaleXProperty, grow);
+        ShareRingScale.BeginAnimation(ScaleTransform.ScaleYProperty, grow);
+        ShareRing.BeginAnimation(OpacityProperty, Ui.Loop(0.8, 0, 2.4, 30, Ui.EaseOut));
     }
 
     private static MenuItem MenuEntry(string text, Action act, bool danger = false)

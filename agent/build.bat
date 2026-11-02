@@ -22,8 +22,10 @@ java -jar ecj.jar -8 -nowarn -d classes ProxyMain.java || goto :err
 
 echo [2/3] Converting to a dex with d8
 if not exist dexout mkdir dexout
-java -cp android-9\lib\d8.jar com.android.tools.r8.D8 --min-api 21 --output dexout ^
-  classes\ProxyMain.class classes\ProxyMain$1.class classes\ProxyMain$2.class classes\ProxyMain$3.class || goto :err
+rem Every class ECJ wrote, the anonymous inner classes included
+set CLASSES=
+for %%f in (classes\*.class) do call set CLASSES=%%CLASSES%% "%%f"
+java -cp android-9\lib\d8.jar com.android.tools.r8.D8 --min-api 21 --output dexout %CLASSES% || goto :err
 
 echo [3/3] Copying the dex into the app resources
 copy /y dexout\classes.dex ..\pdanet-windows\Resources\proxy.dex >nul || goto :err

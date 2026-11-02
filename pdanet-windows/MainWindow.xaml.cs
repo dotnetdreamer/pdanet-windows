@@ -13,6 +13,7 @@ using PdaNetPortable.Core;
 using PdaNetPortable.Interop;
 using PdaNetPortable.Models;
 using PdaNetPortable.Services;
+using PdaNetPortable.Share;
 using PdaNetPortable.Views;
 using Application = System.Windows.Application;
 using Drawing = System.Drawing;
@@ -46,6 +47,9 @@ public partial class MainWindow : Window
     private FrameworkElement _currentPage;
     private IInputElement? _focusBeforeSheet;
     private BrowserWindow? _browser;
+    private RemoteWindow? _remote;
+    private ShareBar? _shareBar;
+    private string? _sharePeerSeen;
     private ConnectionState _lastState = ConnectionState.Disconnected;
     private bool _reallyExit, _wasOnline, _dataWarned, _dataCritical, _trayHintShown, _locByConnect;
     private int _pingCounter;
@@ -70,11 +74,16 @@ public partial class MainWindow : Window
         HelpPage.Attach(this);
         _currentPage = ConnectPage;
         OnModeChanged(ConnectPage.SelectedMode);
+        // Narrator and Voice Access pick a page by selecting its item, which checks it without a click.
+        foreach (var nav in new[] { NavConnect, NavApps, NavLaunchpad, NavActivity, NavHistory, NavSettings, NavHelp })
+            nav.Checked += (s, e) => OnNav(s, e);
 
         _log.EntryAdded += OnLogEntry;
         _cm.StateChanged += s => Dispatcher.Invoke(() => OnConnectionStateChanged(s));
         _cm.ErrorOccurred += m => Dispatcher.Invoke(() => OnError(m));
         _cm.AutoReconnectEnabled = _config.AutoReconnect;
+        ShareSession.Instance.Changed += OnShareChanged;
+        ShareSession.Instance.Ended += OnShareEnded;
 
         _uiTimer.Tick += (_, _) => OnUiTick();
         _uiTimer.Start();
@@ -271,6 +280,69 @@ public partial class MainWindow : Window
         else _browser.Reveal();
         if (!string.IsNullOrEmpty(url)) _browser.Open(url, reuse, plain);
         LaunchpadPage.UpdateStatus();
+    }
+
+    // ============================ Screen share ============================
+    /// <summary>Opens the window with the other PC's screen, or brings it forward.</summary>
+    public void ShowRemote()
+    {
+        if (_remote == null)
+        {
+            _remote = new RemoteWindow();
+            _remote.Closed += (_, _) =>
+            {
+                _remote = null;
+                ShareSession.ReturnMemorySoon(); // its picture, once the window is gone
+            };
+            _remote.Show();
+            _remote.Activate();
+        }
+        else _remote.Reveal();
+    }
+
+    private void OnShareChanged()
+    {
+        var s = ShareSession.Instance;
+        // The PC that views gets its window as soon as the code checks out.
+        if (s.Role == ShareRole.Viewer && s.Phase >= SharePhase.Pairing && _remote == null) ShowRemote();
+
+        // The PC that shares shows a bar on its screen while someone can see it.
+        bool bar = s.Role == ShareRole.Host && s.Phase is SharePhase.Connecting or SharePhase.Live or SharePhase.Reconnecting;
+        if (bar && _shareBar == null)
+        {
+            _shareBar = new ShareBar();
+            _shareBar.Show();
+        }
+        else if (!bar && _shareBar != null)
+        {
+            _shareBar.Close();
+            _shareBar = null;
+        }
+
+        if (s.Phase == SharePhase.Live && s.Peer != null && _sharePeerSeen != s.Peer)
+        {
+            _sharePeerSeen = s.Peer;
+            if (s.Role == ShareRole.Host)
+            {
+                Notify("Your screen is shared", $"{s.Peer} sees your screen, stop it from the bar at the top of the screen");
+                Toast($"{s.Peer} sees your screen");
+            }
+        }
+        if (_tray != null) _tray.Text = TrayText();
+    }
+
+    private void OnShareEnded(string text, bool error)
+    {
+        _sharePeerSeen = null;
+        _shareBar?.Close();
+        _shareBar = null;
+        // The viewer window says it itself, the main window says it when the viewer window is gone.
+        if (_remote == null || ShareSession.Instance.Role == ShareRole.Host)
+        {
+            Toast(text, error ? ToastKind.Warning : ToastKind.Info);
+            Notify("Screen share", text);
+        }
+        if (_tray != null) _tray.Text = TrayText();
     }
 
     /// <summary>Adds a web app, or edits the web app given.</summary>
@@ -757,10 +829,11 @@ public partial class MainWindow : Window
                 Navigate(AppPage.Launchpad);
             }
         });
+        var stopShare = new WinForms.ToolStripMenuItem("Stop screen sharing", null, (_, _) => ShareSession.Instance.Stop());
         var quit = new WinForms.ToolStripMenuItem("Quit", null, (_, _) => ExitApp());
         menu.Items.AddRange(new WinForms.ToolStripItem[]
         {
-            open, browser, new WinForms.ToolStripSeparator(), connect, disconnect, new WinForms.ToolStripSeparator(), quit,
+            open, browser, stopShare, new WinForms.ToolStripSeparator(), connect, disconnect, new WinForms.ToolStripSeparator(), quit,
         });
         foreach (WinForms.ToolStripItem item in menu.Items)
         {
@@ -771,12 +844,21 @@ public partial class MainWindow : Window
         {
             connect.Enabled = _cm.State is ConnectionState.Disconnected or ConnectionState.Error;
             disconnect.Enabled = _cm.IsConnected || _cm.State == ConnectionState.Error;
+            var share = ShareSession.Instance;
+            stopShare.Visible = share.Active;
+            stopShare.Text = share.Role == ShareRole.Viewer ? "Leave the screen share" : "Stop screen sharing";
         };
         _tray.ContextMenuStrip = menu;
     }
 
     private string TrayText()
     {
+        var share = ShareSession.Instance;
+        if (share.Phase == SharePhase.Live && share.Peer != null)
+        {
+            var shared = share.Role == ShareRole.Host ? $"PdaNet · {share.Peer} sees your screen" : $"PdaNet · Viewing {share.Peer}";
+            return shared.Length > 63 ? shared[..63] : shared;
+        }
         var text = _cm.State switch
         {
             ConnectionState.Connected => $"PdaNet Windows · Online {Fmt.Uptime(_stats.UptimeSeconds)}",
@@ -888,6 +970,9 @@ public partial class MainWindow : Window
 
         // The browser closes first, so the browser keeps its tabs for next time.
         try { _browser?.Close(); } catch { }
+        // A screen share tells the other PC it ends.
+        try { ShareSession.Instance.Stop(); } catch { }
+        try { _remote?.Close(); } catch { }
 
         // Real shutdown: restore the system proxy (unprivileged) so browsing is not left broken.
         try { SystemProxy.ClearWinInet(); } catch { }

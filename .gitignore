@@ -30,6 +30,11 @@ agent/android-9/
 agent/*.zip
 agent/ecj.jar
 
+# ===== Screen sharing helper build output =====
+# The prebuilt helper (pdanet-windows/Resources/rtc/pdanet-rtc.exe) IS committed;
+# rtc/build.bat rebuilds it with Go.
+rtc/pdanet-rtc.exe
+
 # ===== NuGet =====
 *.nupkg
 packages/

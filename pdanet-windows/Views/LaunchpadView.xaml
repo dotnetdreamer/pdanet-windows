@@ -95,6 +95,7 @@
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
             <!-- ============================ Title ============================ -->
@@ -108,7 +109,7 @@
                 </Border>
                 <StackPanel>
                     <TextBlock Text="Launchpad" Style="{StaticResource T.H1}" />
-                    <TextBlock Text="Apps running right inside PdaNet, starting with the PdaNet browser"
+                    <TextBlock Text="Apps running right inside PdaNet: the PdaNet browser and screen share"
                                Style="{StaticResource T.Body}" Margin="0,4,0,0" />
                 </StackPanel>
             </DockPanel>
@@ -218,8 +219,207 @@
                 </Grid>
             </Border>
 
+            <!-- =========================== Screen share =========================== -->
+            <Border Grid.Row="2" Style="{StaticResource Card}" Padding="0" Margin="0,16,0,0" ClipToBounds="True">
+                <Grid>
+                    <Rectangle IsHitTestVisible="False" RadiusX="13" RadiusY="13">
+                        <Rectangle.Fill>
+                            <RadialGradientBrush Center="0.08,0.1" GradientOrigin="0.08,0.1" RadiusX="0.5" RadiusY="0.9">
+                                <GradientStop Color="#1446D7F8" Offset="0" />
+                                <GradientStop Color="#0046D7F8" Offset="1" />
+                            </RadialGradientBrush>
+                        </Rectangle.Fill>
+                    </Rectangle>
+
+                    <Grid Margin="26,22,26,20">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <!-- Title -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Grid Width="56" Height="56" VerticalAlignment="Top">
+                                <Ellipse x:Name="ShareRing" Stroke="{StaticResource B.Cyan}" StrokeThickness="1.2" Opacity="0"
+                                         RenderTransformOrigin="0.5,0.5">
+                                    <Ellipse.RenderTransform>
+                                        <ScaleTransform x:Name="ShareRingScale" />
+                                    </Ellipse.RenderTransform>
+                                </Ellipse>
+                                <Border Width="50" Height="50" CornerRadius="16" Background="{StaticResource B.CyanSoft}"
+                                        BorderBrush="#5546D7F8" BorderThickness="1">
+                                    <TextBlock Text="&#xE7F4;" Style="{StaticResource T.Icon}" FontSize="23" Foreground="{StaticResource B.Cyan}"
+                                               HorizontalAlignment="Center" />
+                                </Border>
+                            </Grid>
+                            <StackPanel Grid.Column="1" Margin="18,2,0,0">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="Screen share" Style="{StaticResource T.H2}" FontSize="21" FontFamily="{StaticResource F.Display}" />
+                                    <Border x:Name="ShareBadge" Style="{StaticResource Badge}" Margin="12,2,0,0">
+                                        <TextBlock x:Name="ShareBadgeText" Text="READY" Style="{StaticResource T.Badge}" />
+                                    </Border>
+                                    <v:InfoTip Margin="10,2,0,0" Heading="Screen share"
+                                               Body="See and use another PC, or let someone see and use this one. The person who shares gets a code, the other person types it. The picture and the mouse and keyboard go straight between the two PCs, encrypted end to end, nothing to install and no account"
+                                               Tip="The code works once. Only the PC that types it can connect, and only while you share" />
+                                </StackPanel>
+                                <TextBlock Style="{StaticResource T.Body}" Margin="0,6,0,0" MaxWidth="620" HorizontalAlignment="Left"
+                                           Text="See and control another PC, or get help on this one, with a ten digit code. The screen goes straight between the two PCs" />
+                            </StackPanel>
+                        </Grid>
+
+                        <!-- Idle: share or connect -->
+                        <Grid x:Name="ShareIdle" Grid.Row="1" Margin="0,20,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="18" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Border CornerRadius="12" Background="{StaticResource B.Bg1}" BorderBrush="{StaticResource B.Line}" BorderThickness="1"
+                                    Padding="18,16">
+                                <StackPanel>
+                                    <TextBlock Text="SHARE THIS SCREEN" Style="{StaticResource T.Eyebrow}" />
+                                    <TextBlock Style="{StaticResource T.Body}" Margin="0,8,0,0"
+                                               Text="Get a code and read it to the person who will see this screen" />
+                                    <Button x:Name="ShareBtn" Style="{StaticResource Btn.Primary}" Tag="&#xE72D;" Content="Share my screen"
+                                            HorizontalAlignment="Left" Margin="0,16,0,0" Padding="18,10" Click="OnShare" />
+                                    <DockPanel Margin="0,16,0,0">
+                                        <ToggleButton x:Name="AllowControl" DockPanel.Dock="Right" Style="{StaticResource Switch}"
+                                                      Click="OnAllowControl" AutomationProperties.Name="Let them use my mouse and keyboard" />
+                                        <TextBlock Text="Let them use my mouse and keyboard" Style="{StaticResource T.Small}"
+                                                   Foreground="{StaticResource B.Text2}" VerticalAlignment="Center" />
+                                    </DockPanel>
+                                </StackPanel>
+                            </Border>
+                            <Border Grid.Column="2" CornerRadius="12" Background="{StaticResource B.Bg1}" BorderBrush="{StaticResource B.Line}"
+                                    BorderThickness="1" Padding="18,16">
+                                <StackPanel>
+                                    <TextBlock Text="CONNECT TO A SCREEN" Style="{StaticResource T.Eyebrow}" />
+                                    <TextBlock Style="{StaticResource T.Body}" Margin="0,8,0,0"
+                                               Text="Type the code the other PC shows" />
+                                    <Grid Margin="0,16,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBox x:Name="CodeBox" FontFamily="{StaticResource F.Mono}" FontSize="18" Height="42"
+                                                 Padding="14,0" VerticalContentAlignment="Center" MaxLength="14" Tag="000 000 0000"
+                                                 PreviewTextInput="OnCodeInput" TextChanged="OnCodeChanged" KeyDown="OnCodeKey"
+                                                 DataObject.Pasting="OnCodePaste" AutomationProperties.Name="Code from the other PC" />
+                                        <Button x:Name="JoinBtn" Grid.Column="1" Style="{StaticResource Btn.Secondary}" Tag="&#xE8A7;"
+                                                Content="Connect" Margin="10,0,0,0" Padding="16,9" Click="OnJoin"
+                                                AutomationProperties.Name="Connect to the other PC" />
+                                    </Grid>
+                                    <TextBlock x:Name="JoinHint" Style="{StaticResource T.Small}" Margin="0,10,0,0" TextWrapping="Wrap"
+                                               Text="Ten digits, the spaces come by themselves" />
+                                </StackPanel>
+                            </Border>
+                        </Grid>
+
+                        <!-- Sharing: the code to read out -->
+                        <Grid x:Name="ShareWaiting" Grid.Row="1" Margin="0,20,0,0" Visibility="Collapsed">
+                            <Border CornerRadius="12" Background="{StaticResource B.Bg1}" BorderBrush="#4446D7F8" BorderThickness="1"
+                                    Padding="22,18">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="YOUR CODE" Style="{StaticResource T.Eyebrow}" />
+                                        <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                            <TextBlock x:Name="CodeText" Text="··· ··· ····" FontFamily="{StaticResource F.Mono}" FontSize="38"
+                                                       FontWeight="SemiBold" Foreground="{StaticResource B.Text}" VerticalAlignment="Center" />
+                                            <Button x:Name="CopyCodeBtn" Style="{StaticResource Btn.Ghost}" Tag="&#xE8C8;" Content="Copy"
+                                                    Margin="16,6,0,0" Padding="12,6" VerticalAlignment="Center" Click="OnCopyCode"
+                                                    ToolTip="Copy the code to send it in a message" />
+                                        </StackPanel>
+                                        <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                                            <Grid Width="13" Height="13" Margin="0,0,9,0" VerticalAlignment="Center">
+                                                <Path x:Name="WaitSpinner" Stroke="{StaticResource B.Cyan}" StrokeThickness="2" StrokeStartLineCap="Round"
+                                                      Data="M 6.5,1 A 5.5,5.5 0 1 1 1,6.5" RenderTransformOrigin="0.5,0.5">
+                                                    <Path.RenderTransform>
+                                                        <RotateTransform x:Name="WaitSpin" />
+                                                    </Path.RenderTransform>
+                                                </Path>
+                                            </Grid>
+                                            <TextBlock x:Name="WaitText" Style="{StaticResource T.Small}" Foreground="{StaticResource B.Text2}"
+                                                       VerticalAlignment="Center" Text="Getting ready" />
+                                        </StackPanel>
+                                        <TextBlock x:Name="WaitNotice" Style="{StaticResource T.Small}" Foreground="{StaticResource B.Amber}"
+                                                   Margin="0,8,0,0" TextWrapping="Wrap" Visibility="Collapsed" />
+                                        <TextBlock Style="{StaticResource T.Small}" Margin="0,8,0,0" TextWrapping="Wrap"
+                                                   Text="Read the code to the other person, they type it under Connect to a screen. The code works once" />
+                                    </StackPanel>
+                                    <Button Grid.Column="1" Style="{StaticResource Btn.Ghost}" Tag="&#xE71A;" Content="Stop"
+                                            VerticalAlignment="Top" Click="OnStop" ToolTip="Stop sharing, the code stops working" />
+                                </Grid>
+                            </Border>
+                        </Grid>
+
+                        <!-- A session: connecting or live -->
+                        <Grid x:Name="ShareActive" Grid.Row="1" Margin="0,20,0,0" Visibility="Collapsed">
+                            <Border CornerRadius="12" Background="{StaticResource B.Bg1}" BorderBrush="{StaticResource B.Line}" BorderThickness="1"
+                                    Padding="20,16">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <Ellipse x:Name="ShareLiveDot" Width="10" Height="10" Fill="{StaticResource B.Accent}" VerticalAlignment="Top"
+                                             Margin="0,7,14,0" />
+                                    <StackPanel Grid.Column="1">
+                                        <TextBlock x:Name="ActiveTitle" Style="{StaticResource T.RowTitle}" FontSize="16" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock x:Name="ActiveDetail" Style="{StaticResource T.Small}" Foreground="{StaticResource B.Text2}"
+                                                   Margin="0,5,0,0" TextWrapping="Wrap" />
+                                        <TextBlock x:Name="ActiveStats" Style="{StaticResource T.Mono}" FontSize="11" Foreground="{StaticResource B.Text3}"
+                                                   Margin="0,6,0,0" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                                        <StackPanel x:Name="HostControls" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,14,0">
+                                            <TextBlock Text="Control" Style="{StaticResource T.Small}" VerticalAlignment="Center" Margin="0,0,8,0" />
+                                            <ToggleButton x:Name="ActiveControl" Style="{StaticResource Switch}" Click="OnAllowControl"
+                                                          ToolTip="Let them use your mouse and keyboard, turn it off to let them only see"
+                                                          AutomationProperties.Name="Let them use my mouse and keyboard" />
+                                        </StackPanel>
+                                        <Button x:Name="ShowWindowBtn" Style="{StaticResource Btn.Secondary}" Tag="&#xE8A7;" Content="Show"
+                                                Margin="0,0,8,0" Click="OnShowRemote" ToolTip="Bring the window with the other PC's screen forward" />
+                                        <Button x:Name="EndBtn" Style="{StaticResource Btn.Danger}" Tag="&#xE71A;" Content="Stop sharing" Click="OnStop" />
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
+                        </Grid>
+
+                        <!-- How the session travels -->
+                        <DockPanel Grid.Row="2" Margin="2,16,0,0">
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <TextBlock Text="CONNECTION" Style="{StaticResource T.Eyebrow}" VerticalAlignment="Center" />
+                                <Border Style="{StaticResource Seg.Host}" Margin="12,0,0,0">
+                                    <StackPanel Orientation="Horizontal">
+                                        <RadioButton x:Name="RouteDirect" Style="{StaticResource Seg}" GroupName="ShareRoute" Content="Direct"
+                                                     Click="OnRoute" ToolTip="The two PCs reach each other the shortest way, straight across your network when they share one" />
+                                        <RadioButton x:Name="RoutePhone" Style="{StaticResource Seg}" GroupName="ShareRoute" Content="Through your phone"
+                                                     Click="OnRoute" ToolTip="The screen goes through the phone PdaNet is connected to, and its VPN when the phone runs one" />
+                                    </StackPanel>
+                                </Border>
+                                <v:InfoTip Margin="10,0,0,0" Heading="Connection"
+                                           Body="Direct links the two PCs the shortest way, on the same network straight across it, else over the internet. Through your phone sends the screen through the phone PdaNet is connected to, in every mode, Phone VPN included, so it takes the phone's network and VPN"
+                                           Tip="Through your phone counts against your mobile data. A still screen sends almost nothing, video and scrolling send the most" />
+                            </StackPanel>
+                            <TextBlock x:Name="ShareRouteText" Style="{StaticResource T.Small}" Margin="14,0,0,0" VerticalAlignment="Center"
+                                       TextTrimming="CharacterEllipsis" />
+                        </DockPanel>
+                    </Grid>
+                </Grid>
+            </Border>
+
             <!-- =================== Web apps and recent websites =================== -->
-            <Grid Grid.Row="2" Margin="0,26,0,0">
+            <Grid Grid.Row="3" Margin="0,26,0,0">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="24" />

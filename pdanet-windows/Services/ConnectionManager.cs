@@ -47,6 +47,12 @@ public sealed class ConnectionManager
     /// <summary>True when app traffic passes through our relay, so your block list applies.</summary>
     public bool RelayActive => _relay is { Running: true };
 
+    /// <summary>
+    /// The PC port adb links straight to the phone helper while Phone VPN mode is connected, else 0.
+    /// Screen sharing reaches the phone helper there to send the screen through the phone.
+    /// </summary>
+    public int PhoneLinkPort => State == ConnectionState.Connected && CurrentMode == ConnectionMode.AdbAgent ? _forwardPort : 0;
+
     // Remembered for auto-reconnect.
     private string? _lastSsid;
     private string? _lastPassword;

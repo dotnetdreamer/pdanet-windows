@@ -39,6 +39,12 @@ public static class Program
         if (args.Length > 0 && args[0] == "--selftest-location")
             return SelfTest.RunLocation(args.Length > 1 ? args[1] : "Eindhoven");
 
+        // Screen sharing on this PC, headless: the picture path, then a whole session between two helpers.
+        if (args.Length > 0 && args[0] == "--selftest-share")
+            return args.Contains("memory")
+                ? Share.ShareSelfTest.MemorySteps(args.Length > 2 ? args[2] : "d3d12")
+                : Share.ShareSelfTest.Run(online: args.Contains("online"));
+
         // MCP server mode: drive the PdaNet browser from an AI agent over stdio.
         // "--hidden" runs the browser off-screen; "--mcp-smoke [--show]" runs the built-in check.
         if (args.Length > 0 && args[0] == "--mcp")
