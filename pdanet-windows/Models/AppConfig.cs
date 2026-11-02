@@ -56,6 +56,11 @@ public class AppConfig
     // Screen sharing on the Launchpad. Whether the other PC may use this PC's mouse and
     // keyboard, the person can change it during a session.
     [JsonPropertyName("share_allow_control")] public bool ShareAllowControl { get; set; } = true;
+    // Easy access: this PC shares its screen whenever PdaNet runs, with a code that stays the
+    // same, so a PC that has the code connects without anyone here. The code is kept encrypted
+    // with Windows DPAPI, for this Windows user only, and forgotten when easy access goes off.
+    [JsonPropertyName("share_easy_access")] public bool ShareEasyAccess { get; set; } = false;
+    [JsonPropertyName("share_easy_code")] public string? ShareEasyCode { get; set; }
     [JsonPropertyName("share_clipboard")] public bool ShareClipboard { get; set; } = true;
 
     public AppConfig Clone() => (AppConfig)MemberwiseClone();

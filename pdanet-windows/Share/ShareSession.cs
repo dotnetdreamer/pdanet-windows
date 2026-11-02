@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Windows.Threading;
@@ -59,6 +60,10 @@ internal sealed class ShareSession
     // The kinds of address each PC offered for a direct link, such as "host srflx". A PC
     // without "srflx" got no answer from the STUN servers: its network blocks direct links.
     private string? _localKinds, _remoteKinds;
+    // Easy access: someone here stopped the session, it got as far as waiting with its code,
+    // PdaNet closes, and the timer that shares again after a session.
+    private bool _stoppedHere, _reachedWaiting, _closing;
+    private readonly DispatcherTimer _easyAgain = new();
 
     public ShareRole Role { get; private set; }
     public SharePhase Phase { get; private set; }
@@ -75,6 +80,10 @@ internal sealed class ShareSession
     public string? Notice { get; private set; }
     public bool AllowControl { get; private set; }
     public bool Active => Role != ShareRole.None;
+    /// <summary>This PC shares with its easy access code, which stays the same.</summary>
+    public bool Easy { get; private set; }
+    /// <summary>Easy access waits for a PC to connect, the Launchpad keeps Connect to a screen at hand.</summary>
+    public bool EasyWaiting => Easy && Role == ShareRole.Host && Phase is SharePhase.Starting or SharePhase.Waiting;
 
     // The PC that views: what the other PC shows.
     public ViewerPipeline? Viewer { get; private set; }
@@ -103,25 +112,35 @@ internal sealed class ShareSession
     private ShareSession()
     {
         _tick.Tick += (_, _) => OnTick();
+        _easyAgain.Tick += (_, _) =>
+        {
+            _easyAgain.Stop();
+            StartEasy();
+        };
+        ConnectionManager.Instance.StateChanged += _ => _ui.BeginInvoke(() => FollowConnection());
     }
 
     // ============================ Starting and stopping ============================
 
-    /// <summary>Shares this screen: makes a code and waits for the other PC.</summary>
+    /// <summary>Shares this screen: makes a code, or with easy access takes its code, and waits for the other PC.</summary>
     public string? Share(bool viaPhone)
     {
         if (Active) return null;
         var (route, problem) = BuildRoute(viaPhone);
         if (problem != null) return problem;
+        string? code = _cfg.ShareEasyAccess ? EasyCode() ?? NewEasyCode() : null;
         Begin(ShareRole.Host, viaPhone);
+        Easy = code != null;
         AllowControl = _cfg.ShareAllowControl;
-        Launch(new { op = "host", name = Environment.MachineName, route });
+        Launch(new { op = "host", code, name = Environment.MachineName, route });
         return null;
     }
 
     /// <summary>Views the PC that shows <paramref name="code"/>.</summary>
     public string? Join(string code, bool viaPhone)
     {
+        // Easy access pauses while this PC views another one, and comes back after.
+        if (EasyWaiting) Finish("Easy access pauses while this PC views another one", error: false, quiet: true);
         if (Active) return null;
         var digits = new string(code.Where(char.IsAsciiDigit).ToArray());
         if (digits.Length != 10) return "A code has ten digits, like 482 619 3075";
@@ -139,6 +158,8 @@ internal sealed class ShareSession
         ViaPhone = viaPhone;
         Code = Peer = Path = Notice = null;
         _localKinds = _remoteKinds = null;
+        Easy = _stoppedHere = _reachedWaiting = false;
+        _easyAgain.Stop();
         LiveSince = null;
         RelaysUp = RelaysTotal = 0;
         RemoteScreens = Array.Empty<ScreenInfo>();
@@ -174,19 +195,38 @@ internal sealed class ShareSession
         _log.Info(Role == ShareRole.Host ? "Screen sharing: making a code" : "Screen sharing: looking for the other PC");
     }
 
-    /// <summary>Ends the session from this PC: the other PC is told.</summary>
+    /// <summary>
+    /// Ends the session from this PC: the other PC is told. Easy access stopped here waits until
+    /// PdaNet starts again or the person shares again.
+    /// </summary>
     public void Stop()
     {
         if (!Active || _ending) return;
+        _stoppedHere = true;
         _rtc?.Send(RtcHelper.KindCtl, MsgWriter.Bare(Msg.Bye));
         Finish(Role == ShareRole.Host ? "You stopped sharing your screen" : "You left the session", error: false);
     }
 
-    /// <summary>Tears everything down and returns to idle. Runs on the UI thread.</summary>
-    private void Finish(string text, bool error)
+    /// <summary>PdaNet closes: the session ends and easy access does not share again.</summary>
+    public void Close()
+    {
+        _closing = true;
+        _easyAgain.Stop();
+        Stop();
+    }
+
+    /// <summary>
+    /// Tears everything down and returns to idle. Runs on the UI thread. A quiet end is one PdaNet
+    /// makes itself, such as easy access following the connection: nothing is shown for it.
+    /// </summary>
+    private void Finish(string text, bool error, bool quiet = false)
     {
         if (!Active || _ending) return;
         _ending = true;
+        // Easy access shares again once a session is over, unless someone here stopped it
+        // while it shared. After viewing another PC it comes back whoever ended that.
+        bool again = _cfg.ShareEasyAccess && !_closing && !(Role == ShareRole.Host && _stoppedHere);
+        bool soon = _reachedWaiting || !error; // a share that never got its code waits longer
         _tick.Stop();
         _input?.ReleaseAll();
         _clip?.Dispose();
@@ -209,10 +249,17 @@ internal sealed class ShareSession
         Role = ShareRole.None;
         Code = null;
         LiveSince = null;
+        Easy = false;
         SetPhase(SharePhase.Idle);
-        if (error) _log.Warning("Screen sharing: " + text);
+        if (quiet) _log.Debug("Screen sharing: " + text);
+        else if (error) _log.Warning("Screen sharing: " + text);
         else _log.Info("Screen sharing: " + text);
-        Ended?.Invoke(text, error);
+        if (!quiet) Ended?.Invoke(text, error);
+        if (again)
+        {
+            _easyAgain.Interval = TimeSpan.FromSeconds(soon ? 3 : 60);
+            _easyAgain.Start();
+        }
     }
 
     private static int _returnPending;
@@ -247,6 +294,81 @@ internal sealed class ShareSession
 
     [System.Runtime.InteropServices.DllImport("kernel32.dll")]
     private static extern nuint HeapCompact(IntPtr heap, uint flags);
+
+    // ============================ Easy access ============================
+
+    /// <summary>
+    /// Turns easy access on or off. On, this PC shares whenever PdaNet runs, with a code that
+    /// stays the same. Off, the code is forgotten and a share that waits with it ends; a session
+    /// that runs goes on.
+    /// </summary>
+    public void SetEasyAccess(bool on)
+    {
+        _cfg.ShareEasyAccess = on;
+        if (!on) _cfg.ShareEasyCode = null;
+        ConfigManager.Instance.SaveConfig();
+        if (on && EasyCode() == null) NewEasyCode();
+        _log.Info(on ? "Easy access is on, this PC shares whenever PdaNet runs" : "Easy access is off, its code is forgotten");
+        // A share that waits follows at once: on, it waits with the easy access code; off, it
+        // ends, so nobody gets in with that code any more.
+        bool waits = Role == ShareRole.Host && Phase is SharePhase.Starting or SharePhase.Waiting;
+        if (waits && Easy != on)
+            Finish(on ? "Easy access takes over the share" : "Easy access is off", error: false, quiet: true);
+        if (on) StartEasy();
+        Changed?.Invoke();
+    }
+
+    /// <summary>
+    /// Shares with the easy access code when easy access is on and no session runs: when PdaNet
+    /// starts, and a moment after each session.
+    /// </summary>
+    public void StartEasy()
+    {
+        if (!_cfg.ShareEasyAccess || Active || _closing) return;
+        // Through the phone while PdaNet is connected to it, as the Launchpad picks too.
+        bool viaPhone = ConnectionManager.Instance.IsConnected;
+        var problem = Share(viaPhone);
+        if (problem != null && viaPhone) problem = Share(false);
+        if (problem != null) _log.Warning("Easy access could not share: " + problem);
+    }
+
+    /// <summary>Easy access that waits takes the new way when PdaNet connects to the phone or leaves it.</summary>
+    private void FollowConnection()
+    {
+        if (!EasyWaiting || ViaPhone == ConnectionManager.Instance.IsConnected) return;
+        Finish("Easy access follows the new connection", error: false, quiet: true);
+        StartEasy();
+    }
+
+    /// <summary>The easy access code, or null while there is none.</summary>
+    public string? EasyCode()
+    {
+        if (string.IsNullOrEmpty(_cfg.ShareEasyCode)) return null;
+        try
+        {
+            var bytes = ProtectedData.Unprotect(Convert.FromBase64String(_cfg.ShareEasyCode), EasyEntropy, DataProtectionScope.CurrentUser);
+            var code = Encoding.ASCII.GetString(bytes);
+            return code.Length == 10 && code.All(char.IsAsciiDigit) ? code : null;
+        }
+        catch { return null; } // another Windows user's, or damaged
+    }
+
+    /// <summary>Makes and keeps a new easy access code, for one that is missing or cannot be read.</summary>
+    private string NewEasyCode()
+    {
+        var code = NewCode();
+        _cfg.ShareEasyCode = Protect(code);
+        ConfigManager.Instance.SaveConfig();
+        return code;
+    }
+
+    private static readonly byte[] EasyEntropy = Encoding.ASCII.GetBytes("pdanet easy access code");
+
+    private static string Protect(string code) =>
+        Convert.ToBase64String(ProtectedData.Protect(Encoding.ASCII.GetBytes(code), EasyEntropy, DataProtectionScope.CurrentUser));
+
+    private static string NewCode() =>
+        string.Concat(Enumerable.Range(0, 10).Select(_ => (char)('0' + RandomNumberGenerator.GetInt32(10))));
 
     // ============================ Control ============================
 
@@ -284,6 +406,7 @@ internal sealed class ShareSession
                 Notice = Str(e, "reason") == "tries"
                     ? "Wrong codes were tried, so PdaNet made a new code. Read the new one to the other person"
                     : null;
+                _reachedWaiting = true;
                 SetPhase(SharePhase.Waiting);
                 break;
             case "relays":
@@ -292,7 +415,14 @@ internal sealed class ShareSession
                 break;
             case "wrongtry":
                 int left = Int(e, "left");
-                Notice = $"Someone typed a wrong code. After {left} more, PdaNet makes a new code";
+                Notice = Easy
+                    ? $"Someone typed a wrong code. After {left} more, easy access takes no tries for a while"
+                    : $"Someone typed a wrong code. After {left} more, PdaNet makes a new code";
+                break;
+            case "locked":
+                var until = DateTime.Now.AddSeconds(Int(e, "wait"));
+                Notice = $"Wrong codes were tried, so easy access takes no tries until {until.ToString(until.Date == DateTime.Today ? "HH:mm" : "ddd HH:mm")}";
+                _log.Warning("Screen sharing: " + Notice);
                 break;
             case "found":
                 SetPhase(SharePhase.Pairing);

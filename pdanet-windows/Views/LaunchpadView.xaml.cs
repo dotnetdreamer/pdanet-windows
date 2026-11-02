@@ -391,6 +391,17 @@ public partial class LaunchpadView : UserControl, IPage
 
     private void OnRoute(object sender, RoutedEventArgs e) => UpdateShare();
 
+    // Checked and Unchecked rather than Click, so Narrator and Voice Access can flip it too.
+    // _syncing marks the switch following the setting, which is no flip by the person.
+    private bool _syncing;
+
+    private void OnEasyAccess(object sender, RoutedEventArgs e)
+    {
+        if (_syncing || EasyAccess.IsChecked == _cfg.ShareEasyAccess) return;
+        _share.SetEasyAccess(EasyAccess.IsChecked == true);
+        UpdateShare();
+    }
+
     // The connection state the route was last picked for, see FollowConnection.
     private bool? _routeFor;
 
@@ -401,7 +412,7 @@ public partial class LaunchpadView : UserControl, IPage
     private void FollowConnection()
     {
         bool connected = _cm.IsConnected;
-        if (_routeFor == connected || _share.Active) return;
+        if (_routeFor == connected || (_share.Active && !_share.EasyWaiting)) return;
         _routeFor = connected;
         RoutePhone.IsChecked = connected;
         RouteDirect.IsChecked = !connected;
@@ -476,13 +487,30 @@ public partial class LaunchpadView : UserControl, IPage
     {
         var s = _share;
         bool host = s.Role == ShareRole.Host;
-        bool waiting = host && s.Phase is SharePhase.Starting or SharePhase.Waiting;
-        ShareIdle.Visibility = s.Active ? Visibility.Collapsed : Visibility.Visible;
+        // Easy access waits in the share box, so Connect to a screen stays at hand.
+        bool easy = s.EasyWaiting;
+        bool waiting = host && !easy && s.Phase is SharePhase.Starting or SharePhase.Waiting;
+        ShareIdle.Visibility = !s.Active || easy ? Visibility.Visible : Visibility.Collapsed;
         ShareWaiting.Visibility = waiting ? Visibility.Visible : Visibility.Collapsed;
-        ShareActive.Visibility = s.Active && !waiting ? Visibility.Visible : Visibility.Collapsed;
+        ShareActive.Visibility = s.Active && !waiting && !easy ? Visibility.Visible : Visibility.Collapsed;
+        ShareBtn.Visibility = easy ? Visibility.Collapsed : Visibility.Visible;
+        EasyPanel.Visibility = easy ? Visibility.Visible : Visibility.Collapsed;
+        _syncing = true;
+        EasyAccess.IsChecked = _cfg.ShareEasyAccess;
+        _syncing = false;
+        if (easy)
+        {
+            EasyCodeText.Text = s.Code is { Length: 10 } easyCode ? FormatCode(easyCode) : "··· ··· ····";
+            EasyWaitText.Text = s.RelaysTotal > 0
+                ? $"Waiting for a PC with this code, reachable {s.RelaysUp} of {s.RelaysTotal} ways"
+                : "Waiting for a PC with this code";
+            EasyNotice.Text = s.Notice ?? "";
+            EasyNotice.Visibility = string.IsNullOrEmpty(s.Notice) ? Visibility.Collapsed : Visibility.Visible;
+        }
 
         var (badge, badgeKey) = s.Phase switch
         {
+            _ when easy => ("EASY ACCESS", "B.Cyan"),
             SharePhase.Idle => ("READY", "B.Accent"),
             SharePhase.Starting or SharePhase.Waiting when host => ("WAITING", "B.Cyan"),
             SharePhase.Live => (host ? "SHARING" : "VIEWING", "B.Accent"),
@@ -546,16 +574,18 @@ public partial class LaunchpadView : UserControl, IPage
         }
 
         // The route: the phone only works while PdaNet is connected to it.
+        // While easy access waits, the pick is for connecting to another PC.
         FollowConnection();
         bool phoneReady = _cm.IsConnected;
-        RouteDirect.IsEnabled = RoutePhone.IsEnabled = !s.Active;
-        if (!phoneReady && !s.Active) RoutePhone.IsEnabled = ViaPhone; // keep it pickable to switch back
-        ShareRouteText.Text = s.Active
+        bool free = !s.Active || easy;
+        RouteDirect.IsEnabled = RoutePhone.IsEnabled = free;
+        if (!phoneReady && free) RoutePhone.IsEnabled = ViaPhone; // keep it pickable to switch back
+        ShareRouteText.Text = !free
             ? s.ViaPhone ? "This session goes through your phone" : "This session goes straight between the PCs"
             : ViaPhone
                 ? phoneReady ? $"Through your phone, with {Friendly.ModeName(_cm.CurrentMode)}" : "Connect PdaNet to your phone first"
                 : "Straight between the PCs, the shortest way";
-        ShareRouteText.Foreground = Ui.Brush(!s.Active && ViaPhone && !phoneReady ? "B.Amber" : "B.Text3");
+        ShareRouteText.Foreground = Ui.Brush(free && ViaPhone && !phoneReady ? "B.Amber" : "B.Text3");
         ShareBtn.IsEnabled = !ViaPhone || phoneReady;
 
         BreatheShare(waiting || s.Phase == SharePhase.Live);

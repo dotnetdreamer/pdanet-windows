@@ -310,9 +310,17 @@ The connection
 - While PdaNet is connected to your phone, Through your phone is picked for you, else Direct. You can pick the other one before you start
 - When the two PCs cannot link up, PdaNet says whose network blocks it. A company or school network often does, on that PC connect PdaNet to a phone and use Through your phone
 
+Easy access
+
+- Turn on Easy access under Share this screen, and PdaNet shares this screen each time it starts, and again after each session, with a code that stays the same. From another PC you connect with that code, nobody needs to be at this one
+- Turn on Start with Windows in Settings as well, to reach this PC after a restart
+- While easy access waits, Connect to a screen still works. Easy access pauses while this PC views another one, and comes back after
+- Stop, here or in the tray, stops sharing until PdaNet starts again. Turning easy access off forgets the code, turning it on again makes a new one
+
 Safe by design
 
 - The code works once and only while you share. After five wrong tries the code changes
+- An easy access code stays the same, so after five wrong tries easy access takes no tries for a quarter of an hour, twice as long each time after, a day at most. The code is kept encrypted with Windows, for your Windows user only
 - Everything between the two PCs is encrypted end to end. The last six digits of the code never leave the two PCs, both prove they know them without sending them
 - To find each other, the two PCs leave sealed notes on public relays (Nostr, MQTT and ntfy). The relays never see the code, the screen or anything you type. Without internet, two PCs on the same network find each other there
 

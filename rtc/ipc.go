@@ -103,6 +103,7 @@ type event struct {
 	Up     int    `json:"up,omitempty"`
 	Total  int    `json:"total,omitempty"`
 	Left   int    `json:"left,omitempty"`
+	Wait   int    `json:"wait,omitempty"` // seconds an easy access code takes no tries
 	Bps    int    `json:"bps,omitempty"`
 
 	// Stats, sent about once a second while connected.

@@ -63,8 +63,9 @@ func runSelftest(args []string) int {
 		"3313c5cefc361d27fb16847a91c2a73b766ffa90a4839122a9b70a2f6bd1d6df"))
 	check("a wrong code fails the key confirmation", wrongCode())
 	check("sealed messages", boxRoundTrip())
-	check("copies of a message space out, kinds of address", spacingAndKinds())
+	check("repeats, kinds of address, easy access waits", spacingAndKinds())
 	check("a whole session on this PC", loopback(route{Mode: "direct"}, route{Mode: "direct"}, []string{"none"}))
+	check("a whole session with an easy access code", loopback(route{Mode: "direct"}, route{Mode: "direct"}, []string{"none"}, "5550123456"))
 	if failed > 0 {
 		fmt.Printf("%d check(s) failed\n", failed)
 		return 1
@@ -74,7 +75,7 @@ func runSelftest(args []string) int {
 }
 
 // spacingAndKinds checks the gaps between the copies of a message that waits for an answer,
-// and the kinds of address read out of an SDP.
+// the kinds of address read out of an SDP, and how long easy access waits after wrong tries.
 func spacingAndKinds() error {
 	var r repeater
 	var gaps []time.Duration
@@ -100,6 +101,10 @@ func spacingAndKinds() error {
 	}
 	if k := candidateKinds("v=0\r\n"); k != "none" {
 		return fmt.Errorf("kinds %q without candidates, want \"none\"", k)
+	}
+	locks := []time.Duration{lockFor(0), lockFor(1), lockFor(6), lockFor(7), lockFor(60)}
+	if !slices.Equal(locks, []time.Duration{15 * time.Minute, 30 * time.Minute, 16 * time.Hour, 24 * time.Hour, 24 * time.Hour}) {
+		return fmt.Errorf("easy access waits %v after wrong tries", locks)
 	}
 	return nil
 }
@@ -249,16 +254,24 @@ func (f *fakePdaNet) waitFor(ev string, d time.Duration) (event, error) {
 	}
 }
 
-func loopback(hostRoute, viewRoute route, stunURLs []string) error {
+// loopback runs a whole session between two helpers. With a code, the host keeps it, the way
+// easy access does.
+func loopback(hostRoute, viewRoute route, stunURLs []string, code ...string) error {
 	hub := "mem+selftest-" + randHex(4)
 	base := options{Relays: []string{hub}, Stun: stunURLs, NoLAN: true}
 
 	hostOpt := base
 	hostOpt.Op, hostOpt.Name, hostOpt.Route = "host", "Sharing PC", hostRoute
+	if len(code) > 0 {
+		hostOpt.Code = code[0]
+	}
 	host := startHelper(hostOpt)
 	e, err := host.waitFor("code", 5*time.Second)
 	if err != nil {
 		return fmt.Errorf("host: %w", err)
+	}
+	if hostOpt.Code != "" && e.Code != hostOpt.Code {
+		return fmt.Errorf("the host shares with %s, not with its own code", e.Code)
 	}
 
 	viewOpt := base

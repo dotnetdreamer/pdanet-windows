@@ -98,6 +98,8 @@ public partial class MainWindow : Window
             if (Demo.Active) Dispatcher.BeginInvoke(ApplyDemo, DispatcherPriority.Loaded);
             else if (Program.StartMinimizedRequested || _config.StartMinimized)
                 HideToTray(initial: true);
+            // Easy access shares this screen whenever PdaNet runs.
+            if (!Demo.Active) ShareSession.Instance.StartEasy();
         };
 
         _log.Info("Window ready");
@@ -970,8 +972,8 @@ public partial class MainWindow : Window
 
         // The browser closes first, so the browser keeps its tabs for next time.
         try { _browser?.Close(); } catch { }
-        // A screen share tells the other PC it ends.
-        try { ShareSession.Instance.Stop(); } catch { }
+        // A screen share tells the other PC it ends, and easy access does not share again.
+        try { ShareSession.Instance.Close(); } catch { }
         try { _remote?.Close(); } catch { }
 
         // Real shutdown: restore the system proxy (unprivileged) so browsing is not left broken.

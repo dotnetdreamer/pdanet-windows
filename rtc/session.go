@@ -35,8 +35,8 @@ type route struct {
 }
 
 type options struct {
-	Op     string   `json:"op"` // "host" shares this screen, "join" views another
-	Code   string   `json:"code,omitempty"`
+	Op     string   `json:"op"`             // "host" shares this screen, "join" views another
+	Code   string   `json:"code,omitempty"` // the code to join, or the easy access code a host keeps
 	Name   string   `json:"name,omitempty"`
 	Route  route    `json:"route"`
 	Relays []string `json:"relays,omitempty"`
@@ -233,13 +233,23 @@ type attempt struct {
 }
 
 func (s *session) host() {
-	code := newCode()
+	// Easy access brings a code that stays the same, else every share gets a new one.
+	code, fixed := newCode(), s.opt.Code != ""
+	if fixed {
+		c, err := parseCode(s.opt.Code)
+		if err != nil {
+			s.fail("badcode", err.Error())
+			return
+		}
+		code = c
+	}
 	rv := s.openRendezvous(code.room())
 	s.link.event(event{Ev: "code", Code: string(code)})
 	waitingSince := time.Now()
 
 	pending := map[string]*attempt{}
-	wrong := 0
+	wrong, lockouts := 0, 0
+	var lockedUntil time.Time
 	var partner string
 	answers := make(chan wireMsg, 1)
 	restarts := make(chan wireMsg, 1)
@@ -252,9 +262,19 @@ func (s *session) host() {
 			s.link.event(event{Ev: "wrongtry", Left: maxWrongTries - wrong})
 			return
 		}
-		// Too many wrong tries: whoever tries learns nothing more from this code.
-		code, wrong = newCode(), 0
+		wrong = 0
 		clear(pending)
+		if fixed {
+			// The owner of an easy access code must still get in, so the code stays, and
+			// nobody gets another try for a while instead, longer each time.
+			wait := lockFor(lockouts)
+			lockouts++
+			lockedUntil = time.Now().Add(wait)
+			s.link.event(event{Ev: "locked", Wait: int(wait.Seconds())})
+			return
+		}
+		// Too many wrong tries: whoever tries learns nothing more from this code.
+		code = newCode()
 		rv = s.openRendezvous(code.room())
 		waitingSince = time.Now()
 		s.link.event(event{Ev: "code", Code: string(code), Reason: "tries"})
@@ -270,7 +290,7 @@ func (s *session) host() {
 		case m := <-rv.in:
 			switch m.T {
 			case "hello":
-				if partner != "" || m.To != "" || m.PA == "" {
+				if partner != "" || m.To != "" || m.PA == "" || time.Now().Before(lockedUntil) {
 					continue
 				}
 				if at := pending[m.F]; at != nil {
@@ -646,6 +666,13 @@ func (s *session) openRendezvous(room string) *rendezvous {
 		old.close()
 	}
 	return rv
+}
+
+// lockFor is how long an easy access code takes no tries after round n of wrong ones: a
+// quarter of an hour, twice as long each round after, a day at most. A stranger who knows the
+// first four digits then gets a handful of guesses a day at the last six.
+func lockFor(n int) time.Duration {
+	return min(15*time.Minute<<min(n, 7), 24*time.Hour)
 }
 
 // repeater spaces out the copies of a message that waits for an answer. A copy only matters

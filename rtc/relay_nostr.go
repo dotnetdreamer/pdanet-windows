@@ -49,6 +49,9 @@ type nostrRelay struct {
 // ban those who go on, and the other relays carry the messages meanwhile.
 const nostrQuiet = 2 * time.Minute
 
+// nostrIdle is how long a relay may stay silent, pongs included, before it counts as gone.
+const nostrIdle = 90 * time.Second
+
 func newNostrRelay(rv *rendezvous, url string, d dialer) relay {
 	key, err := btcec.NewPrivateKey()
 	if err != nil {
@@ -104,6 +107,9 @@ func (r *nostrRelay) session() error {
 	defer c.Close()
 	stop := context.AfterFunc(r.ctx, func() { _ = c.Close() })
 	defer stop()
+	// No event may come for hours while a share waits: the relay's answers to the pings
+	// below keep the connection, else it would drop and dial again every nostrIdle.
+	c.SetPongHandler(func(string) error { return c.SetReadDeadline(time.Now().Add(nostrIdle)) })
 
 	req := []any{"REQ", randHex(6), map[string]any{
 		"kinds": []int{nostrKind},
@@ -138,7 +144,7 @@ func (r *nostrRelay) session() error {
 	}()
 
 	for {
-		_ = c.SetReadDeadline(time.Now().Add(90 * time.Second))
+		_ = c.SetReadDeadline(time.Now().Add(nostrIdle))
 		_, data, err := c.ReadMessage()
 		if err != nil {
 			return err

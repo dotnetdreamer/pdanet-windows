@@ -20,7 +20,8 @@ import (
 // A pairing code is ten digits. The first four name the meeting place on the relays and are
 // public. The last six are the password, which only SPAKE2 sees, so a relay or a listener
 // cannot test guesses, and a stranger who guesses gets one try per attempt. The PC that
-// shares makes a new code after a few wrong tries.
+// shares makes a new code after a few wrong tries, or with easy access, whose code stays,
+// takes no tries for a while (see lockFor).
 type pairCode string
 
 const codeDigits = 10

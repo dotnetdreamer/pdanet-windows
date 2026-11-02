@@ -265,7 +265,7 @@
                                     </Border>
                                     <v:InfoTip Margin="10,2,0,0" Heading="Screen share"
                                                Body="See and use another PC, or let someone see and use this one. The person who shares gets a code, the other person types it. The picture and the mouse and keyboard go straight between the two PCs, encrypted end to end, nothing to install and no account"
-                                               Tip="The code works once. Only the PC that types it can connect, and only while you share" />
+                                               Tip="The code works once, unless easy access is on. Only the PC that types it can connect, and only while you share" />
                                 </StackPanel>
                             </StackPanel>
                         </Grid>
@@ -283,11 +283,37 @@
                                     <TextBlock Text="SHARE THIS SCREEN" Style="{StaticResource T.Eyebrow}" />
                                     <Button x:Name="ShareBtn" Style="{StaticResource Btn.Primary}" Tag="&#xE72D;" Content="Share my screen"
                                             HorizontalAlignment="Left" Margin="0,12,0,0" Padding="18,10" Click="OnShare" />
+                                    <!-- Easy access waits: its code, which stays the same -->
+                                    <StackPanel x:Name="EasyPanel" Margin="0,10,0,0" Visibility="Collapsed">
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock x:Name="EasyCodeText" Text="··· ··· ····" FontFamily="{StaticResource F.Mono}" FontSize="26"
+                                                       FontWeight="SemiBold" Foreground="{StaticResource B.Text}" VerticalAlignment="Center" />
+                                            <Button Style="{StaticResource Btn.Ghost}" Tag="&#xE8C8;" Content="Copy" Margin="14,0,0,0" Padding="10,5"
+                                                    VerticalAlignment="Center" Click="OnCopyCode" ToolTip="Copy the code, to keep it or send it" />
+                                            <Button Style="{StaticResource Btn.Ghost}" Tag="&#xE71A;" Content="Stop" Margin="6,0,0,0" Padding="10,5"
+                                                    VerticalAlignment="Center" Click="OnStop" ToolTip="Stop sharing until PdaNet starts again" />
+                                        </StackPanel>
+                                        <TextBlock x:Name="EasyWaitText" Style="{StaticResource T.Small}" Margin="0,8,0,0" TextWrapping="Wrap" />
+                                        <TextBlock x:Name="EasyNotice" Style="{StaticResource T.Small}" Foreground="{StaticResource B.Amber}"
+                                                   Margin="0,6,0,0" TextWrapping="Wrap" Visibility="Collapsed" />
+                                    </StackPanel>
                                     <DockPanel Margin="0,16,0,0">
                                         <ToggleButton x:Name="AllowControl" DockPanel.Dock="Right" Style="{StaticResource Switch}"
                                                       Click="OnAllowControl" AutomationProperties.Name="Let them use my mouse and keyboard" />
                                         <TextBlock Text="Let them use my mouse and keyboard" Style="{StaticResource T.Small}"
                                                    Foreground="{StaticResource B.Text2}" VerticalAlignment="Center" />
+                                    </DockPanel>
+                                    <DockPanel Margin="0,10,0,0">
+                                        <ToggleButton x:Name="EasyAccess" DockPanel.Dock="Right" Style="{StaticResource Switch}"
+                                                      Checked="OnEasyAccess" Unchecked="OnEasyAccess"
+                                                      AutomationProperties.Name="Easy access, share whenever PdaNet runs" />
+                                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                            <TextBlock Text="Easy access, share whenever PdaNet runs" Style="{StaticResource T.Small}"
+                                                       Foreground="{StaticResource B.Text2}" VerticalAlignment="Center" />
+                                            <v:InfoTip Margin="8,0,0,0" Heading="Easy access"
+                                                       Body="PdaNet shares this screen each time it starts, and again after each session, with a code that stays the same. From another PC you connect with that code, nobody needs to be here. Turn on Start with Windows in Settings to reach this PC after a restart"
+                                                       Tip="Anyone with the code can see this screen. After wrong codes, easy access waits before it takes more tries. Turning it off forgets the code" />
+                                        </StackPanel>
                                     </DockPanel>
                                 </StackPanel>
                             </Border>
