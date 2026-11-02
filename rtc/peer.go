@@ -4,6 +4,8 @@ import (
 	"encoding/binary"
 	"log"
 	"net"
+	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -70,6 +72,8 @@ type peer struct {
 	needRestart chan struct{}
 
 	mu          sync.Mutex
+	localKinds  string // the kinds of address each side offered, see noteCandidates
+	remoteKinds string
 	connected   bool
 	everUp      bool
 	lostAt      time.Time
@@ -209,6 +213,7 @@ func (p *peer) answer(offer string) (string, error) {
 	if err := p.pc.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: offer}); err != nil {
 		return "", err
 	}
+	p.noteCandidates(false, offer)
 	sender, err := p.pc.AddTrack(p.track)
 	if err != nil {
 		return "", err
@@ -223,7 +228,11 @@ func (p *peer) answer(offer string) (string, error) {
 
 // accept takes the answer on the PC that views.
 func (p *peer) accept(answer string) error {
-	return p.pc.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeAnswer, SDP: answer})
+	if err := p.pc.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeAnswer, SDP: answer}); err != nil {
+		return err
+	}
+	p.noteCandidates(false, answer)
+	return nil
 }
 
 // restartOffer starts over the search for a path, after the network changed.
@@ -239,6 +248,7 @@ func (p *peer) restartAnswer(offer string) (string, error) {
 	if err := p.pc.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: offer}); err != nil {
 		return "", err
 	}
+	p.noteCandidates(false, offer)
 	a, err := p.pc.CreateAnswer(nil)
 	if err != nil {
 		return "", err
@@ -257,7 +267,51 @@ func (p *peer) local(d webrtc.SessionDescription) (string, error) {
 	case <-gathered:
 	case <-time.After(gatherWait):
 	}
-	return p.pc.LocalDescription().SDP, nil
+	sdp := p.pc.LocalDescription().SDP
+	p.noteCandidates(true, sdp)
+	return sdp, nil
+}
+
+// candidateKinds lists the kinds of address an SDP offers, such as "host srflx", or "none".
+// A side without "srflx" heard nothing back from the STUN servers: its network keeps it off
+// the internet over UDP, and with that from a direct link.
+func candidateKinds(sdp string) string {
+	var kinds []string
+	for _, line := range strings.Split(sdp, "\n") {
+		if !strings.HasPrefix(line, "a=candidate:") {
+			continue
+		}
+		f := strings.Fields(line)
+		for i := 0; i+1 < len(f); i++ {
+			if f[i] == "typ" && !slices.Contains(kinds, f[i+1]) {
+				kinds = append(kinds, f[i+1])
+			}
+		}
+	}
+	if len(kinds) == 0 {
+		return "none"
+	}
+	slices.Sort(kinds)
+	return strings.Join(kinds, " ")
+}
+
+// noteCandidates keeps the kinds of address one side offered. Once both sides are known it
+// tells PdaNet and the log, so a session that finds no path can say whose network blocks it.
+func (p *peer) noteCandidates(local bool, sdp string) {
+	kinds := candidateKinds(sdp)
+	p.mu.Lock()
+	if local {
+		p.localKinds = kinds
+	} else {
+		p.remoteKinds = kinds
+	}
+	l, r := p.localKinds, p.remoteKinds
+	p.mu.Unlock()
+	if l == "" || r == "" {
+		return
+	}
+	log.Printf("ice: this PC offers %s, the other PC %s", l, r)
+	p.link.event(event{Ev: "candidates", Local: l, Remote: r})
 }
 
 // ============================ Data channels ============================

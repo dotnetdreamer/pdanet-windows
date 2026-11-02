@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"log"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -39,9 +40,14 @@ type nostrRelay struct {
 	tag    string
 	out    chan []byte
 	isUp   atomic.Bool
+	quiet  atomic.Int64 // Unix nanoseconds until which nothing is posted here
 	ctx    context.Context
 	cancel context.CancelFunc
 }
+
+// nostrQuiet is how long a relay that says this PC posts too often gets nothing more. Relays
+// ban those who go on, and the other relays carry the messages meanwhile.
+const nostrQuiet = 2 * time.Minute
 
 func newNostrRelay(rv *rendezvous, url string, d dialer) relay {
 	key, err := btcec.NewPrivateKey()
@@ -67,7 +73,7 @@ func (r *nostrRelay) up() bool     { return r.isUp.Load() }
 func (r *nostrRelay) close()       { r.cancel() }
 
 func (r *nostrRelay) publish(msg []byte) {
-	if !r.isUp.Load() {
+	if !r.isUp.Load() || time.Now().UnixNano() < r.quiet.Load() {
 		return
 	}
 	select {
@@ -108,7 +114,7 @@ func (r *nostrRelay) session() error {
 		return err
 	}
 	r.isUp.Store(true)
-	r.rv.relayUp()
+	r.rv.relayUp(r)
 
 	done := make(chan struct{})
 	defer close(done)
@@ -153,12 +159,27 @@ func (r *nostrRelay) session() error {
 		case "OK":
 			var ok bool
 			if len(frame) >= 4 && json.Unmarshal(frame[2], &ok) == nil && !ok {
-				log.Printf("relay %s refused an event: %s", r.url, frame[3])
+				var why string
+				_ = json.Unmarshal(frame[3], &why)
+				if tooOften(why) {
+					r.quiet.Store(time.Now().Add(nostrQuiet).UnixNano())
+					log.Printf("relay %s refused an event: %q, it gets nothing for %v", r.url, why, nostrQuiet)
+				} else {
+					log.Printf("relay %s refused an event: %q", r.url, why)
+				}
 			}
 		case "CLOSED", "NOTICE":
 			log.Printf("relay %s: %s", r.url, data)
 		}
 	}
+}
+
+// tooOften tells a refusal that more posts only make worse: NIP-01 starts the reason with
+// "rate-limited:" or "blocked:", and some relays say "banned:" once one went on posting.
+func tooOften(why string) bool {
+	why = strings.ToLower(why)
+	return strings.HasPrefix(why, "rate-limited") || strings.HasPrefix(why, "blocked") ||
+		strings.HasPrefix(why, "banned") || strings.Contains(why, "rate-limit")
 }
 
 // sign makes a NIP-01 event: its id is the SHA-256 of [0, pubkey, created_at, kind, tags,

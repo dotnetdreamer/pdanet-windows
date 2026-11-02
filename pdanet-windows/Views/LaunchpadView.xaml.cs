@@ -56,8 +56,6 @@ public partial class LaunchpadView : UserControl, IPage
         _share.Changed += UpdateShare;
         _share.Ended += OnShareEnded;
         AllowControl.IsChecked = _cfg.ShareAllowControl;
-        RoutePhone.IsChecked = _cfg.ShareViaPhone;
-        RouteDirect.IsChecked = !_cfg.ShareViaPhone;
         UpdateShare();
         IsVisibleChanged += (_, _) =>
         {
@@ -372,7 +370,7 @@ public partial class LaunchpadView : UserControl, IPage
         _formatting = true;
         CodeBox.Clear();
         _formatting = false;
-        ShowJoinHint("Ten digits, the spaces come by themselves", "B.Text3");
+        ShowJoinHint("", "B.Text3");
     }
 
     private void OnStop(object sender, RoutedEventArgs e) => _share.Stop();
@@ -391,11 +389,22 @@ public partial class LaunchpadView : UserControl, IPage
         AllowControl.IsChecked = ActiveControl.IsChecked = allow;
     }
 
-    private void OnRoute(object sender, RoutedEventArgs e)
+    private void OnRoute(object sender, RoutedEventArgs e) => UpdateShare();
+
+    // The connection state the route was last picked for, see FollowConnection.
+    private bool? _routeFor;
+
+    /// <summary>
+    /// Picks Through your phone while PdaNet is connected to the phone, Direct otherwise, each
+    /// time that changes. A pick by hand holds until the connection changes again.
+    /// </summary>
+    private void FollowConnection()
     {
-        _cfg.ShareViaPhone = ViaPhone;
-        ConfigManager.Instance.SaveConfig();
-        UpdateShare();
+        bool connected = _cm.IsConnected;
+        if (_routeFor == connected || _share.Active) return;
+        _routeFor = connected;
+        RoutePhone.IsChecked = connected;
+        RouteDirect.IsChecked = !connected;
     }
 
     private void OnCopyCode(object sender, RoutedEventArgs e)
@@ -437,7 +446,7 @@ public partial class LaunchpadView : UserControl, IPage
             _formatting = false;
         }
         JoinBtn.Style = (Style)FindResource(digits.Length == 10 ? "Btn.Primary" : "Btn.Secondary");
-        ShowJoinHint(digits.Length == 10 ? "Press Enter or Connect" : "Ten digits, the spaces come by themselves", "B.Text3");
+        ShowJoinHint(digits.Length == 10 ? "Press Enter or Connect" : "", "B.Text3");
     }
 
     private void OnCodeKey(object sender, KeyEventArgs e)
@@ -451,6 +460,7 @@ public partial class LaunchpadView : UserControl, IPage
     {
         JoinHint.Text = text;
         JoinHint.Foreground = Ui.Brush(brush);
+        JoinHint.Visibility = text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
     }
 
     /// <summary>Ten digits as three groups, the way a phone number is read out.</summary>
@@ -536,6 +546,7 @@ public partial class LaunchpadView : UserControl, IPage
         }
 
         // The route: the phone only works while PdaNet is connected to it.
+        FollowConnection();
         bool phoneReady = _cm.IsConnected;
         RouteDirect.IsEnabled = RoutePhone.IsEnabled = !s.Active;
         if (!phoneReady && !s.Active) RoutePhone.IsEnabled = ViaPhone; // keep it pickable to switch back

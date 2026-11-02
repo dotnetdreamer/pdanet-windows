@@ -122,7 +122,7 @@ func (r *ntfyRelay) subscribe() error {
 		switch ev.Event {
 		case "open":
 			r.isUp.Store(true)
-			r.rv.relayUp()
+			r.rv.relayUp(r)
 		case "message":
 			r.rv.deliver([]byte(ev.Message))
 		}

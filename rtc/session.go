@@ -52,10 +52,11 @@ type sdpBox struct {
 }
 
 const (
-	repeatEvery   = 1500 * time.Millisecond
-	maxWrongTries = 5                // then the PC that shares makes a new code
-	attemptTTL    = 30 * time.Second // a hello without an offer by then counts as a wrong try
-	findTimeout   = 45 * time.Second
+	repeatEvery   = 1500 * time.Millisecond // the first copy of what waits for an answer
+	repeatMax     = 12 * time.Second        // later copies wait twice as long, up to this
+	maxWrongTries = 5                       // then the PC that shares makes a new code
+	attemptTTL    = 30 * time.Second        // a hello without an offer by then counts as a wrong try
+	findTimeout   = 30 * time.Second
 	wrongWait     = 5 * time.Second // a reply that does not check out, and no other within this
 	answerTimeout = 30 * time.Second
 	lostTimeout   = 90 * time.Second
@@ -456,7 +457,9 @@ func (s *session) join() {
 		return
 	}
 	hello := wireMsg{T: "hello", PA: b64(sp.share)}
-	rv.publish(hello)
+	rv.ask(hello)
+	var again repeater // the copies of what waits for an answer
+	again.sent(true)
 
 	var (
 		host, offer       string
@@ -471,13 +474,15 @@ func (s *session) join() {
 	)
 	restartOffers := make(chan string, 1)
 
-	sendOffer := func() {
+	sendOffer := func(first bool) {
 		body, _ := json.Marshal(sdpBox{SDP: offer, Name: s.opt.Name, Ver: version})
-		rv.publish(wireMsg{T: "offer", To: host, CA: b64(keys.confirmA), Box: bx.seal("offer", s.self, host, body)})
+		rv.ask(wireMsg{T: "offer", To: host, CA: b64(keys.confirmA), Box: bx.seal("offer", s.self, host, body)})
+		again.sent(first)
 	}
-	sendRestart := func() {
+	sendRestart := func(first bool) {
 		body, _ := json.Marshal(sdpBox{SDP: restartSDP})
-		rv.publish(wireMsg{T: "restart", To: host, Box: bx.seal("restart", s.self, host, body)})
+		rv.ask(wireMsg{T: "restart", To: host, Box: bx.seal("restart", s.self, host, body)})
+		again.sent(first)
 	}
 
 	tick := time.NewTicker(repeatEvery)
@@ -490,7 +495,7 @@ func (s *session) join() {
 		case sdp := <-offers:
 			offer = sdp
 			if host != "" && !answered {
-				sendOffer()
+				sendOffer(true)
 			}
 
 		case m := <-rv.in:
@@ -518,7 +523,7 @@ func (s *session) join() {
 				s.setPartner(host, bx)
 				s.link.event(event{Ev: "found"})
 				if offer != "" {
-					sendOffer()
+					sendOffer(true)
 				}
 
 			case "answer":
@@ -535,6 +540,7 @@ func (s *session) join() {
 					return
 				}
 				answered = true
+				rv.answered()
 				s.link.event(event{Ev: "paired", Peer: cleanName(ans.Name)})
 
 			case "rans":
@@ -551,6 +557,7 @@ func (s *session) join() {
 					continue
 				}
 				restarting, restartSDP = false, ""
+				rv.answered()
 
 			case "bye":
 				if s.isBye(m, host) {
@@ -577,17 +584,7 @@ func (s *session) join() {
 
 		case sdp := <-restartOffers:
 			restartSDP = sdp
-			sendRestart()
-
-		case <-rv.upCh:
-			switch {
-			case host == "":
-				rv.publish(hello)
-			case !answered && offer != "":
-				sendOffer()
-			case restarting && restartSDP != "":
-				sendRestart()
-			}
+			sendRestart(true)
 
 		case <-tick.C:
 			s.reportRelays(rv)
@@ -604,20 +601,24 @@ func (s *session) join() {
 					s.fail("nohost", "")
 					return
 				}
-				rv.publish(hello)
+				if again.due() {
+					rv.ask(hello)
+					again.sent(false)
+				}
 			case !answered:
 				if time.Since(foundAt) > answerTimeout {
 					s.fail("noanswer", "")
 					return
 				}
-				if offer != "" {
-					sendOffer()
+				if offer != "" && again.due() {
+					sendOffer(false)
 				}
 			case restarting:
 				if p.isConnected() {
 					restarting = false
-				} else if restartSDP != "" {
-					sendRestart()
+					rv.answered()
+				} else if restartSDP != "" && again.due() {
+					sendRestart(false)
 				}
 			}
 			if answered && p.lostFor() > lostTimeout {
@@ -645,6 +646,30 @@ func (s *session) openRendezvous(room string) *rendezvous {
 		old.close()
 	}
 	return rv
+}
+
+// repeater spaces out the copies of a message that waits for an answer. A copy only matters
+// when every relay lost the one before, and public relays ban those who post too often, so
+// each copy waits twice as long as the one before, up to repeatMax.
+type repeater struct {
+	next time.Time
+	gap  time.Duration
+}
+
+// sent notes a copy that just went out. The first copy of a new message starts over.
+func (r *repeater) sent(first bool) {
+	if first || r.gap == 0 {
+		r.gap = repeatEvery
+	} else {
+		r.gap = min(2*r.gap, repeatMax)
+	}
+	r.next = time.Now().Add(r.gap)
+}
+
+// due tells whether the next copy should go out now. The ticks that check come every
+// repeatEvery, so one a little early counts.
+func (r *repeater) due() bool {
+	return !time.Now().Add(repeatEvery / 4).Before(r.next)
 }
 
 // reportRelays tells PdaNet how many relays are up, when that changes.

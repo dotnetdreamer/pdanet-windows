@@ -307,6 +307,8 @@ The connection
 
 - Direct links the two PCs the shortest way, straight across your network when they share one, else over the internet
 - Through your phone sends the screen through the phone PdaNet is connected to, in every mode, Phone VPN included, so it takes the phone's network and VPN. This counts against your mobile data. A still screen sends almost nothing, video and scrolling send the most
+- While PdaNet is connected to your phone, Through your phone is picked for you, else Direct. You can pick the other one before you start
+- When the two PCs cannot link up, PdaNet says whose network blocks it. A company or school network often does, on that PC connect PdaNet to a phone and use Through your phone
 
 Safe by design
 

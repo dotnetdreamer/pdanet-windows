@@ -56,6 +56,9 @@ internal sealed class ShareSession
     private DateTime _phaseSince;
     private int _lastFrames;
     private bool _ending;
+    // The kinds of address each PC offered for a direct link, such as "host srflx". A PC
+    // without "srflx" got no answer from the STUN servers: its network blocks direct links.
+    private string? _localKinds, _remoteKinds;
 
     public ShareRole Role { get; private set; }
     public SharePhase Phase { get; private set; }
@@ -135,6 +138,7 @@ internal sealed class ShareSession
         Role = role;
         ViaPhone = viaPhone;
         Code = Peer = Path = Notice = null;
+        _localKinds = _remoteKinds = null;
         LiveSince = null;
         RelaysUp = RelaysTotal = 0;
         RemoteScreens = Array.Empty<ScreenInfo>();
@@ -297,6 +301,10 @@ internal sealed class ShareSession
                 Peer = Str(e, "peer") is { Length: > 0 } p ? p : "the other PC";
                 Notice = null;
                 SetPhase(SharePhase.Connecting);
+                break;
+            case "candidates":
+                _localKinds = Str(e, "local");
+                _remoteKinds = Str(e, "remote");
                 break;
             case "connected":
                 Path = Str(e, "path");
@@ -518,12 +526,11 @@ internal sealed class ShareSession
         var stuck = DateTime.Now - _phaseSince;
         if (Phase == SharePhase.Connecting && stuck > TimeSpan.FromSeconds(35))
         {
-            Finish(ViaPhone
-                ? "The two PCs could not reach each other through your phone. Some mobile networks do not allow direct links, try Direct"
-                : "The two PCs could not reach each other. Some company and school networks block direct links, try your phone's hotspot on one PC", error: true);
+            Finish(NoPathText(), error: true);
             return;
         }
-        if (Phase == SharePhase.Starting && stuck > TimeSpan.FromSeconds(20))
+        // With a relay up, the helper says by itself when no PC answers the code.
+        if (Phase == SharePhase.Starting && RelaysUp == 0 && stuck > TimeSpan.FromSeconds(20))
         {
             Finish("Screen sharing could not reach the internet. Check this PC's connection and try again", error: true);
             return;
@@ -630,6 +637,28 @@ internal sealed class ShareSession
         "noroute" => $"PdaNet could not use your phone for screen sharing: {detail}",
         _ => string.IsNullOrEmpty(detail) ? "Screen sharing hit a problem, try again" : $"Screen sharing hit a problem: {detail}",
     };
+
+    /// <summary>
+    /// Why the two PCs found no direct path, from the kinds of address each offered: a network
+    /// that keeps a PC from the STUN servers blocks direct links whatever the other side does.
+    /// </summary>
+    private string NoPathText()
+    {
+        bool known = _localKinds != null && _remoteKinds != null;
+        bool here = _localKinds?.Contains("srflx") == true, there = _remoteKinds?.Contains("srflx") == true;
+        var who = Peer is null or "the other PC" ? "The other PC" : Peer;
+        const string Phone = "connect PdaNet to a phone and pick Through your phone";
+        if (ViaPhone)
+            return known && !here
+                ? "Your phone's network blocks direct links, try Direct"
+                : "The two PCs could not reach each other through your phone. Some mobile networks do not allow direct links, try Direct";
+        if (!known)
+            return $"The two PCs could not reach each other. Some company and school networks block direct links, on such a PC {Phone}";
+        if (!here && !there) return $"The networks of both PCs block direct links. On both PCs, {Phone}";
+        if (!there) return $"{who}'s network blocks direct links. On that PC, {Phone}";
+        if (!here) return $"This PC's network blocks direct links. On this PC, {Phone}";
+        return $"The two networks do not let these PCs link up directly. On one of them, {Phone}";
+    }
 
     private string EndText(string reason) => reason switch
     {

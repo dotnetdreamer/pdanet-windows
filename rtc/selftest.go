@@ -10,6 +10,7 @@ import (
 	"io"
 	"math/big"
 	"net"
+	"slices"
 	"sync"
 	"time"
 
@@ -62,6 +63,7 @@ func runSelftest(args []string) int {
 		"3313c5cefc361d27fb16847a91c2a73b766ffa90a4839122a9b70a2f6bd1d6df"))
 	check("a wrong code fails the key confirmation", wrongCode())
 	check("sealed messages", boxRoundTrip())
+	check("copies of a message space out, kinds of address", spacingAndKinds())
 	check("a whole session on this PC", loopback(route{Mode: "direct"}, route{Mode: "direct"}, []string{"none"}))
 	if failed > 0 {
 		fmt.Printf("%d check(s) failed\n", failed)
@@ -69,6 +71,37 @@ func runSelftest(args []string) int {
 	}
 	fmt.Println("all checks passed")
 	return 0
+}
+
+// spacingAndKinds checks the gaps between the copies of a message that waits for an answer,
+// and the kinds of address read out of an SDP.
+func spacingAndKinds() error {
+	var r repeater
+	var gaps []time.Duration
+	r.sent(true)
+	gaps = append(gaps, r.gap)
+	for range 5 {
+		r.sent(false)
+		gaps = append(gaps, r.gap)
+	}
+	want := []time.Duration{1500 * time.Millisecond, 3 * time.Second, 6 * time.Second, 12 * time.Second, 12 * time.Second, 12 * time.Second}
+	if !slices.Equal(gaps, want) {
+		return fmt.Errorf("gaps %v, want %v", gaps, want)
+	}
+	if r.sent(true); r.gap != repeatEvery {
+		return errors.New("a new message does not start over")
+	}
+	sdp := "v=0\r\n" +
+		"a=candidate:1 1 udp 2130706431 192.168.1.20 50000 typ host\r\n" +
+		"a=candidate:2 1 udp 1694498815 203.0.113.7 50000 typ srflx raddr 0.0.0.0 rport 50000\r\n" +
+		"a=candidate:3 1 udp 2130706431 10.0.0.5 50002 typ host\r\n"
+	if k := candidateKinds(sdp); k != "host srflx" {
+		return fmt.Errorf("kinds %q, want \"host srflx\"", k)
+	}
+	if k := candidateKinds("v=0\r\n"); k != "none" {
+		return fmt.Errorf("kinds %q without candidates, want \"none\"", k)
+	}
+	return nil
 }
 
 func spakeVector(idA, idB, w, x, y, pA, pB, ke, cA, cB string) error {

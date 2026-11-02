@@ -53,10 +53,8 @@ public class AppConfig
     // this puts the relay in front of the adb link, so it takes effect on the next connect.
     [JsonPropertyName("watch_apps")] public bool WatchApps { get; set; } = true;
 
-    // Screen sharing on the Launchpad. Sessions go straight between the two PCs unless the
-    // person picks the phone, then the screen goes through the phone PdaNet is connected to.
-    [JsonPropertyName("share_via_phone")] public bool ShareViaPhone { get; set; } = false;
-    // Whether the other PC may use this PC's mouse and keyboard, the person can change it during a session.
+    // Screen sharing on the Launchpad. Whether the other PC may use this PC's mouse and
+    // keyboard, the person can change it during a session.
     [JsonPropertyName("share_allow_control")] public bool ShareAllowControl { get; set; } = true;
     [JsonPropertyName("share_clipboard")] public bool ShareClipboard { get; set; } = true;
 

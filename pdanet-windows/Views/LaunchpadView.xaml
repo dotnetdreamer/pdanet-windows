@@ -257,7 +257,7 @@
                                                HorizontalAlignment="Center" />
                                 </Border>
                             </Grid>
-                            <StackPanel Grid.Column="1" Margin="18,2,0,0">
+                            <StackPanel Grid.Column="1" Margin="18,0,0,0" VerticalAlignment="Center">
                                 <StackPanel Orientation="Horizontal">
                                     <TextBlock Text="Screen share" Style="{StaticResource T.H2}" FontSize="21" FontFamily="{StaticResource F.Display}" />
                                     <Border x:Name="ShareBadge" Style="{StaticResource Badge}" Margin="12,2,0,0">
@@ -267,8 +267,6 @@
                                                Body="See and use another PC, or let someone see and use this one. The person who shares gets a code, the other person types it. The picture and the mouse and keyboard go straight between the two PCs, encrypted end to end, nothing to install and no account"
                                                Tip="The code works once. Only the PC that types it can connect, and only while you share" />
                                 </StackPanel>
-                                <TextBlock Style="{StaticResource T.Body}" Margin="0,6,0,0" MaxWidth="620" HorizontalAlignment="Left"
-                                           Text="See and control another PC, or get help on this one, with a ten digit code. The screen goes straight between the two PCs" />
                             </StackPanel>
                         </Grid>
 
@@ -283,10 +281,8 @@
                                     Padding="18,16">
                                 <StackPanel>
                                     <TextBlock Text="SHARE THIS SCREEN" Style="{StaticResource T.Eyebrow}" />
-                                    <TextBlock Style="{StaticResource T.Body}" Margin="0,8,0,0"
-                                               Text="Get a code and read it to the person who will see this screen" />
                                     <Button x:Name="ShareBtn" Style="{StaticResource Btn.Primary}" Tag="&#xE72D;" Content="Share my screen"
-                                            HorizontalAlignment="Left" Margin="0,16,0,0" Padding="18,10" Click="OnShare" />
+                                            HorizontalAlignment="Left" Margin="0,12,0,0" Padding="18,10" Click="OnShare" />
                                     <DockPanel Margin="0,16,0,0">
                                         <ToggleButton x:Name="AllowControl" DockPanel.Dock="Right" Style="{StaticResource Switch}"
                                                       Click="OnAllowControl" AutomationProperties.Name="Let them use my mouse and keyboard" />
@@ -299,9 +295,7 @@
                                     BorderThickness="1" Padding="18,16">
                                 <StackPanel>
                                     <TextBlock Text="CONNECT TO A SCREEN" Style="{StaticResource T.Eyebrow}" />
-                                    <TextBlock Style="{StaticResource T.Body}" Margin="0,8,0,0"
-                                               Text="Type the code the other PC shows" />
-                                    <Grid Margin="0,16,0,0">
+                                    <Grid Margin="0,12,0,0">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="*" />
                                             <ColumnDefinition Width="Auto" />
@@ -315,7 +309,7 @@
                                                 AutomationProperties.Name="Connect to the other PC" />
                                     </Grid>
                                     <TextBlock x:Name="JoinHint" Style="{StaticResource T.Small}" Margin="0,10,0,0" TextWrapping="Wrap"
-                                               Text="Ten digits, the spaces come by themselves" />
+                                               Visibility="Collapsed" />
                                 </StackPanel>
                             </Border>
                         </Grid>

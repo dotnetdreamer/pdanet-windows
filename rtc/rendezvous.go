@@ -64,14 +64,14 @@ type rendezvous struct {
 	topic string
 	self  string
 	in    chan wireMsg
-	upCh  chan struct{} // a relay just connected
 	done  chan struct{}
 
-	mu     sync.Mutex
-	relays []relay
-	lan    bool // the local network relay runs
-	closed bool
-	seen   map[string]time.Time
+	mu      sync.Mutex
+	relays  []relay
+	lan     bool   // the local network relay runs
+	waiting []byte // what waits for an answer, for a relay that connects later
+	closed  bool
+	seen    map[string]time.Time
 }
 
 func newRendezvous(room, self string, urls []string, lan bool, d dialer) *rendezvous {
@@ -79,7 +79,6 @@ func newRendezvous(room, self string, urls []string, lan bool, d dialer) *rendez
 		topic: topicFor(room),
 		self:  self,
 		in:    make(chan wireMsg, 64),
-		upCh:  make(chan struct{}, 1),
 		done:  make(chan struct{}),
 		seen:  map[string]time.Time{},
 	}
@@ -125,13 +124,15 @@ func (rv *rendezvous) startLAN() {
 		return
 	}
 	rv.mu.Lock()
-	defer rv.mu.Unlock()
 	if rv.closed {
+		rv.mu.Unlock()
 		r.close()
 		return
 	}
 	rv.relays = append(rv.relays, r)
+	rv.mu.Unlock()
 	log.Printf("relay: the local network joins in")
+	rv.relayUp(r)
 }
 
 func (rv *rendezvous) open(u string, d dialer) relay {
@@ -183,10 +184,31 @@ func (rv *rendezvous) deliver(raw []byte) {
 }
 
 func (rv *rendezvous) publish(m wireMsg) {
+	rv.send(m, false)
+}
+
+// ask publishes a message that waits for an answer: a relay that connects later gets it too.
+func (rv *rendezvous) ask(m wireMsg) {
+	rv.send(m, true)
+}
+
+// answered stops giving the last asked message to relays that connect later.
+func (rv *rendezvous) answered() {
+	rv.mu.Lock()
+	rv.waiting = nil
+	rv.mu.Unlock()
+}
+
+func (rv *rendezvous) send(m wireMsg, wait bool) {
 	m.V, m.R, m.F, m.ID = 1, rv.topic, rv.self, randHex(8)
 	b, err := json.Marshal(m)
 	if err != nil {
 		return
+	}
+	if wait {
+		rv.mu.Lock()
+		rv.waiting = b
+		rv.mu.Unlock()
 	}
 	for _, r := range rv.list() {
 		r.publish(b)
@@ -199,12 +221,14 @@ func (rv *rendezvous) list() []relay {
 	return append([]relay(nil), rv.relays...)
 }
 
-// relayUp is called by a relay that just connected: whatever waits for an answer is said
-// again right away instead of at the next repeat.
-func (rv *rendezvous) relayUp() {
-	select {
-	case rv.upCh <- struct{}{}:
-	default:
+// relayUp is called by a relay that just connected: whatever waits for an answer goes to it
+// right away, and only to it, since the relays that were up already have it.
+func (rv *rendezvous) relayUp(r relay) {
+	rv.mu.Lock()
+	b := rv.waiting
+	rv.mu.Unlock()
+	if b != nil {
+		r.publish(b)
 	}
 }
 

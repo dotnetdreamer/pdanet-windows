@@ -88,7 +88,7 @@ func (r *mqttRelay) session() error {
 		return err
 	}
 	r.isUp.Store(true)
-	r.rv.relayUp()
+	r.rv.relayUp(r)
 
 	done := make(chan struct{})
 	defer close(done)
