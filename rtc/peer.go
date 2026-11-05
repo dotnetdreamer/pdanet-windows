@@ -302,31 +302,57 @@ func (p *peer) waitRelay(gathered <-chan struct{}) {
 	}
 }
 
-// candidateKinds lists the kinds of address an SDP offers, such as "host srflx", or "none".
-// A side without "srflx" heard nothing back from the STUN servers: its network keeps it off
-// the internet over UDP, and with that from a direct link.
+// candidateKinds lists the kinds of address an SDP offers, such as "host srflx", or "none":
+// "host" is an address on the PC's own network, "public" one the internet reaches with no NAT
+// in between, "srflx" the address a STUN server saw, "relay" one on a TURN server. "partial"
+// follows when the side sent its addresses before it was done looking, so a kind it lacks may
+// only have been late. A side done looking with none of public, srflx or relay heard nothing
+// back from the STUN servers, likely because its network keeps it off the internet over UDP.
+// That stays a guess: ICE says what it found, not why. It also leaves out a srflx that would
+// only repeat a public address.
 func candidateKinds(sdp string) string {
 	var kinds []string
+	done := false
 	for _, line := range strings.Split(sdp, "\n") {
-		if !strings.HasPrefix(line, "a=candidate:") {
+		line = strings.TrimSpace(line)
+		if line == "a=end-of-candidates" {
+			done = true
 			continue
 		}
+		// a=candidate:<foundation> <component> <transport> <priority> <address> <port> typ <kind> ...
 		f := strings.Fields(line)
-		for i := 0; i+1 < len(f); i++ {
-			if f[i] == "typ" && !slices.Contains(kinds, f[i+1]) {
-				kinds = append(kinds, f[i+1])
-			}
+		if !strings.HasPrefix(line, "a=candidate:") || len(f) < 8 || f[6] != "typ" {
+			continue
+		}
+		kind := f[7]
+		if ip := net.ParseIP(f[4]); kind == "host" && ip != nil && publicIP(ip) {
+			kind = "public"
+		}
+		if !slices.Contains(kinds, kind) {
+			kinds = append(kinds, kind)
 		}
 	}
-	if len(kinds) == 0 {
-		return "none"
-	}
 	slices.Sort(kinds)
+	if len(kinds) == 0 {
+		kinds = []string{"none"}
+	}
+	if !done {
+		kinds = append(kinds, "partial")
+	}
 	return strings.Join(kinds, " ")
 }
 
+// sharedSpace is 100.64.0.0/10, which carriers use behind their NAT: not reachable from the internet.
+var sharedSpace = net.IPNet{IP: net.IPv4(100, 64, 0, 0), Mask: net.CIDRMask(10, 32)}
+
+// publicIP tells an address the internet can reach without a NAT in between.
+func publicIP(ip net.IP) bool {
+	return ip.IsGlobalUnicast() && !ip.IsPrivate() && !sharedSpace.Contains(ip)
+}
+
 // noteCandidates keeps the kinds of address one side offered. Once both sides are known it
-// tells PdaNet and the log, so a session that finds no path can say whose network blocks it.
+// tells PdaNet and the log, so a session that finds no path can say whose network likely
+// blocks it.
 func (p *peer) noteCandidates(local bool, sdp string) {
 	kinds := candidateKinds(sdp)
 	p.mu.Lock()

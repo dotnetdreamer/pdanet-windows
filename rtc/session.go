@@ -46,6 +46,15 @@ type options struct {
 	TurnKey   *turnKey    `json:"turnKey,omitempty"`   // a Cloudflare TURN key, traded for credentials
 	RelayOnly bool        `json:"relayOnly,omitempty"` // only through the TURN servers, to test them
 	NoLAN     bool        `json:"noLan,omitempty"`
+	Tries     *tries      `json:"tries,omitempty"` // how the easy access code stands, as PdaNet kept it
+}
+
+// tries is how an easy access code stands against wrong tries. The helper reports every change
+// and PdaNet keeps it, so a lockout and its doubling outlast a restart of the helper or of PdaNet.
+type tries struct {
+	Wrong    int   `json:"wrong"`           // tries that went wrong this round
+	Lockouts int   `json:"lockouts"`        // rounds that ended in a lockout, see lockFor
+	Until    int64 `json:"until,omitempty"` // Unix seconds until which no try is answered
 }
 
 // sdpBox is what the sealed offers and answers carry.
@@ -304,6 +313,25 @@ func (s *session) host() {
 	pending := map[string]*attempt{}
 	wrong, lockouts := 0, 0
 	var lockedUntil time.Time
+	if t := s.opt.Tries; fixed && t != nil {
+		wrong, lockouts = min(max(t.Wrong, 0), maxWrongTries-1), max(t.Lockouts, 0)
+		if t.Until > 0 {
+			lockedUntil = time.Unix(t.Until, 0)
+		}
+		if wait := time.Until(lockedUntil); wait > 0 {
+			s.link.event(event{Ev: "locked", Wait: int(wait.Seconds())})
+		}
+	}
+	// report tells PdaNet how the easy access code stands, for it to keep.
+	report := func() {
+		if fixed {
+			t := tries{Wrong: wrong, Lockouts: lockouts}
+			if !lockedUntil.IsZero() {
+				t.Until = lockedUntil.Unix()
+			}
+			s.link.event(event{Ev: "tries", Tries: &t})
+		}
+	}
 	var partner string
 	answers := make(chan wireMsg, 1)
 	restarts := make(chan wireMsg, 1)
@@ -313,6 +341,7 @@ func (s *session) host() {
 	countWrong := func() {
 		wrong++
 		if wrong < maxWrongTries {
+			report()
 			s.link.event(event{Ev: "wrongtry", Left: maxWrongTries - wrong})
 			return
 		}
@@ -324,6 +353,7 @@ func (s *session) host() {
 			wait := lockFor(lockouts)
 			lockouts++
 			lockedUntil = time.Now().Add(wait)
+			report()
 			s.link.event(event{Ev: "locked", Wait: int(wait.Seconds())})
 			return
 		}
@@ -354,8 +384,11 @@ func (s *session) host() {
 					}
 					continue
 				}
-				if len(pending) >= 8 {
-					continue // a flood, keep the code working for the right PC
+				// Each answer lets whoever asked test one guess at the code, so no more go out
+				// than wrong tries are left this round: a stranger gets maxWrongTries guesses
+				// before the code changes, or easy access waits.
+				if wrong+len(pending) >= maxWrongTries {
+					continue
 				}
 				sp, err := newSpake2(false, code.w(), nil)
 				if err != nil {
@@ -398,14 +431,17 @@ func (s *session) host() {
 				if err != nil || json.Unmarshal(plain, &offer) != nil || offer.SDP == "" {
 					continue
 				}
-				// The code is used: nobody else gets in with it.
+				// The code is used: nobody else gets in with it. The others each got an answer,
+				// so each tested a guess, and counts as a wrong try.
 				partner = m.F
 				at.working = true
 				for id := range pending {
 					if id != partner {
 						delete(pending, id)
+						wrong++
 					}
 				}
+				report()
 				s.setPartner(partner, bx)
 				s.link.event(event{Ev: "paired", Peer: cleanName(offer.Name)})
 				viewer := partner

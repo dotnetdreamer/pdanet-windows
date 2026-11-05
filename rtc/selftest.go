@@ -11,6 +11,7 @@ import (
 	"math/big"
 	"net"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -66,6 +67,7 @@ func runSelftest(args []string) int {
 	check("a wrong code fails the key confirmation", wrongCode())
 	check("sealed messages", boxRoundTrip())
 	check("repeats, kinds of address, easy access waits", spacingAndKinds())
+	check("wrong guesses at an easy access code, and a restart", wrongTries())
 	_, err := loopback(route{Mode: "direct"}, route{Mode: "direct"}, options{Stun: []string{"none"}})
 	check("a whole session on this PC", err)
 	_, err = loopback(route{Mode: "direct"}, route{Mode: "direct"}, options{Stun: []string{"none"}, Code: "5550123456"})
@@ -100,18 +102,148 @@ func spacingAndKinds() error {
 	sdp := "v=0\r\n" +
 		"a=candidate:1 1 udp 2130706431 192.168.1.20 50000 typ host\r\n" +
 		"a=candidate:2 1 udp 1694498815 203.0.113.7 50000 typ srflx raddr 0.0.0.0 rport 50000\r\n" +
-		"a=candidate:3 1 udp 2130706431 10.0.0.5 50002 typ host\r\n"
-	if k := candidateKinds(sdp); k != "host srflx" {
-		return fmt.Errorf("kinds %q, want \"host srflx\"", k)
-	}
-	if k := candidateKinds("v=0\r\n"); k != "none" {
-		return fmt.Errorf("kinds %q without candidates, want \"none\"", k)
+		"a=candidate:3 1 udp 2130706431 100.70.1.2 50002 typ host\r\n" +
+		"a=end-of-candidates\r\n"
+	for _, c := range []struct{ sdp, want string }{
+		{sdp, "host srflx"},
+		{strings.Replace(sdp, "a=end-of-candidates\r\n", "", 1), "host srflx partial"},
+		{"v=0\r\na=candidate:4 1 udp 2130706431 198.51.100.9 50004 typ host\r\na=end-of-candidates\r\n", "public"},
+		{"v=0\r\na=end-of-candidates\r\n", "none"},
+		{"v=0\r\n", "none partial"},
+	} {
+		if k := candidateKinds(c.sdp); k != c.want {
+			return fmt.Errorf("kinds %q, want %q", k, c.want)
+		}
 	}
 	locks := []time.Duration{lockFor(0), lockFor(1), lockFor(6), lockFor(7), lockFor(60)}
 	if !slices.Equal(locks, []time.Duration{15 * time.Minute, 30 * time.Minute, 16 * time.Hour, 24 * time.Hour, 24 * time.Hour}) {
 		return fmt.Errorf("easy access waits %v after wrong tries", locks)
 	}
 	return nil
+}
+
+// wrongTries plays strangers who know the first four digits of an easy access code: of eight
+// guesses sent at once only five get an answer, five wrong ones lock the code, and a host that
+// starts again with what PdaNet kept is still locked, and answers no guess.
+func wrongTries() error {
+	hub := "mem+selftest-" + randHex(4)
+	code := pairCode("5550123456")
+	opt := options{Op: "host", Name: "Sharing PC", Code: string(code), Route: route{Mode: "direct"},
+		Relays: []string{hub}, Stun: []string{"none"}, NoLAN: true}
+	host := startHelper(opt)
+	defer host.stop()
+	if _, err := host.waitFor("code", 5*time.Second); err != nil {
+		return fmt.Errorf("host: %w", err)
+	}
+	answered := guess(hub, code.room(), 8)
+	defer closeAll(answered)
+	if len(answered) != maxWrongTries {
+		return fmt.Errorf("%d of 8 guesses got an answer, want %d", len(answered), maxWrongTries)
+	}
+	// Each one that got an answer knows its guess is wrong, and goes on with a wrong offer.
+	for _, g := range answered {
+		g.rv.publish(wireMsg{T: "offer", To: g.host, CA: b64([]byte("wrong"))})
+	}
+	var kept *tries
+	for deadline := time.After(5 * time.Second); kept == nil || kept.Until == 0; {
+		select {
+		case e, ok := <-host.events:
+			if !ok {
+				return errors.New("host stopped")
+			}
+			if e.Ev == "tries" {
+				kept = e.Tries
+			}
+		case <-deadline:
+			return fmt.Errorf("five wrong guesses did not lock the code, kept %+v", kept)
+		}
+	}
+	if kept.Lockouts != 1 || time.Until(time.Unix(kept.Until, 0)) < 14*time.Minute {
+		return fmt.Errorf("after five wrong guesses PdaNet keeps %+v", *kept)
+	}
+	host.stop()
+
+	// PdaNet starts the helper again, with what it kept.
+	opt.Tries = kept
+	again := startHelper(opt)
+	defer again.stop()
+	if _, err := again.waitFor("locked", 5*time.Second); err != nil {
+		return fmt.Errorf("a host that starts again is not locked: %w", err)
+	}
+	late := guess(hub, code.room(), 1)
+	defer closeAll(late)
+	if len(late) != 0 {
+		return errors.New("a host that starts again answers guesses while locked")
+	}
+	return nil
+}
+
+// guesser is a PC that guessed the code, and the host that answered it.
+type guesser struct {
+	rv   *rendezvous
+	host string
+}
+
+// guess sends hellos at once from n PCs with a wrong code for the room, and gives back those
+// that got an answer within a second and a half.
+func guess(hub, room string, n int) []guesser {
+	wrong := pairCode(room + "999999")
+	answers := make(chan guesser, n)
+	var all []*rendezvous
+	for range n {
+		rv := newRendezvous(room, "guess-"+randHex(6), []string{hub}, false, dialer{})
+		all = append(all, rv)
+		sp, err := newSpake2(true, wrong.w(), nil)
+		if err != nil {
+			continue
+		}
+		go func() {
+			for {
+				select {
+				case m := <-rv.in:
+					if m.T == "reply" && m.To == rv.self {
+						answers <- guesser{rv: rv, host: m.F}
+						return
+					}
+				case <-rv.done:
+					return
+				}
+			}
+		}()
+		rv.publish(wireMsg{T: "hello", PA: b64(sp.share)})
+	}
+	time.Sleep(1500 * time.Millisecond)
+	var got []guesser
+	for len(answers) > 0 {
+		got = append(got, <-answers)
+	}
+	for _, rv := range all {
+		if !slices.ContainsFunc(got, func(g guesser) bool { return g.rv == rv }) {
+			rv.close()
+		}
+	}
+	return got
+}
+
+func closeAll(gs []guesser) {
+	for _, g := range gs {
+		g.rv.close()
+	}
+}
+
+// stop ends a helper the way PdaNet does, and waits for it to go.
+func (f *fakePdaNet) stop() {
+	_ = f.link.write(kindJSON, []byte(`{"op":"stop"}`))
+	for deadline := time.After(3 * time.Second); ; {
+		select {
+		case _, ok := <-f.events:
+			if !ok {
+				return
+			}
+		case <-deadline:
+			return
+		}
+	}
 }
 
 func spakeVector(idA, idB, w, x, y, pA, pB, ke, cA, cB string) error {

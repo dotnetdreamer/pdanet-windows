@@ -311,8 +311,8 @@
                                             <TextBlock Text="Easy access, share whenever PdaNet runs" Style="{StaticResource T.Small}"
                                                        Foreground="{StaticResource B.Text2}" VerticalAlignment="Center" />
                                             <v:InfoTip Margin="8,0,0,0" Heading="Easy access"
-                                                       Body="PdaNet shares this screen each time it starts, and again after each session, with a code that stays the same. From another PC you connect with that code, nobody needs to be here. Turn on Start with Windows in Settings to reach this PC after a restart"
-                                                       Tip="Anyone with the code can see this screen. After wrong codes, easy access waits before it takes more tries. Turning it off forgets the code" />
+                                                       Body="PdaNet shares this screen each time it starts, and again after each session, with a code that stays the same. From another PC you connect with that code, nobody needs to be here. With Start with Windows in Settings, PdaNet starts when you sign in, so after a restart this PC is reachable once someone signs in"
+                                                       Tip="Anyone with the code can see this screen. Easy access cannot show or use the Windows sign-in, lock or UAC screens, and the mouse and keyboard do not reach apps that run as administrator. After wrong codes it waits before it takes more tries. Turning it off forgets the code" />
                                         </StackPanel>
                                     </DockPanel>
                                 </StackPanel>

@@ -61,6 +61,8 @@ public class AppConfig
     // with Windows DPAPI, for this Windows user only, and forgotten when easy access goes off.
     [JsonPropertyName("share_easy_access")] public bool ShareEasyAccess { get; set; } = false;
     [JsonPropertyName("share_easy_code")] public string? ShareEasyCode { get; set; }
+    // How the easy access code stands against wrong tries, so a lockout holds when PdaNet starts again.
+    [JsonPropertyName("share_easy_tries")] public ShareTries? ShareEasyTries { get; set; }
     [JsonPropertyName("share_clipboard")] public bool ShareClipboard { get; set; } = true;
     // Relays (TURN) for screen sharing, for a PC whose network blocks direct links: a Cloudflare
     // Realtime TURN key, and servers of the person's own. The token and the password are kept
@@ -72,6 +74,17 @@ public class AppConfig
     [JsonPropertyName("share_relay_password")] public string ShareRelayPassword { get; set; } = "";
 
     public AppConfig Clone() => (AppConfig)MemberwiseClone();
+}
+
+/// <summary>
+/// How an easy access code stands against wrong tries, as the screen sharing helper reports it:
+/// wrong tries this round, rounds that ended in a lockout, and when the current lockout ends.
+/// </summary>
+public class ShareTries
+{
+    [JsonPropertyName("wrong")] public int Wrong { get; set; }
+    [JsonPropertyName("lockouts")] public int Lockouts { get; set; }
+    [JsonPropertyName("until")] public long Until { get; set; } // Unix seconds, 0 for none
 }
 
 /// <summary>A saved connection profile (mirrors README profiles schema).</summary>

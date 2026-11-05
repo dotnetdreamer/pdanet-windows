@@ -57,12 +57,12 @@ internal sealed class ShareSession
     private DateTime _phaseSince;
     private int _lastFrames;
     private bool _ending;
-    // The kinds of address each PC offered for a direct link, such as "host srflx". A PC
-    // without "srflx" got no answer from the STUN servers: its network blocks direct links.
+    // The kinds of address each PC offered for a link, such as "host srflx", see NoPathText.
     private string? _localKinds, _remoteKinds;
-    // Easy access: someone here stopped the session, it got as far as waiting with its code,
-    // PdaNet closes, and the timer that shares again after a session.
-    private bool _stoppedHere, _reachedWaiting, _closing;
+    // Easy access: someone here stopped it, which holds until they share again or PdaNet starts
+    // again, whatever sessions come between; the share got as far as waiting with its code;
+    // PdaNet closes; and the timer that shares again after a session.
+    private bool _easyHeld, _reachedWaiting, _closing;
     private readonly DispatcherTimer _easyAgain = new();
 
     public ShareRole Role { get; private set; }
@@ -128,12 +128,15 @@ internal sealed class ShareSession
         if (Active) return null;
         var (route, problem) = BuildRoute(viaPhone);
         if (problem != null) return problem;
+        _easyHeld = false; // sharing again lifts a Stop
         string? code = _cfg.ShareEasyAccess ? EasyCode() ?? NewEasyCode() : null;
         Begin(ShareRole.Host, viaPhone);
         Easy = code != null;
         AllowControl = _cfg.ShareAllowControl;
         var (turn, turnKey) = Relays();
-        Launch(new { op = "host", code, name = Environment.MachineName, route, turn, turnKey });
+        // With the easy access code goes how it stands against wrong tries, so a lockout holds.
+        var tries = Easy ? _cfg.ShareEasyTries : null;
+        Launch(new { op = "host", code, name = Environment.MachineName, route, turn, turnKey, tries });
         return null;
     }
 
@@ -167,7 +170,7 @@ internal sealed class ShareSession
         ViaPhone = viaPhone;
         Code = Peer = Path = Notice = null;
         _localKinds = _remoteKinds = null;
-        Easy = _stoppedHere = _reachedWaiting = false;
+        Easy = _reachedWaiting = false;
         _easyAgain.Stop();
         LiveSince = null;
         RelaysUp = RelaysTotal = 0;
@@ -205,13 +208,14 @@ internal sealed class ShareSession
     }
 
     /// <summary>
-    /// Ends the session from this PC: the other PC is told. Easy access stopped here waits until
-    /// PdaNet starts again or the person shares again.
+    /// Ends the session from this PC: the other PC is told. Easy access stopped here does not
+    /// share again until the person shares again or PdaNet starts again, even after this PC
+    /// views another one in between.
     /// </summary>
     public void Stop()
     {
         if (!Active || _ending) return;
-        _stoppedHere = true;
+        if (Role == ShareRole.Host && Easy) _easyHeld = true;
         _rtc?.Send(RtcHelper.KindCtl, MsgWriter.Bare(Msg.Bye));
         Finish(Role == ShareRole.Host ? "You stopped sharing your screen" : "You left the session", error: false);
     }
@@ -232,9 +236,9 @@ internal sealed class ShareSession
     {
         if (!Active || _ending) return;
         _ending = true;
-        // Easy access shares again once a session is over, unless someone here stopped it
-        // while it shared. After viewing another PC it comes back whoever ended that.
-        bool again = _cfg.ShareEasyAccess && !_closing && !(Role == ShareRole.Host && _stoppedHere);
+        // Easy access shares again once a session is over, unless someone here stopped it. After
+        // viewing another PC it comes back, whoever ended that, unless it was stopped before.
+        bool again = _cfg.ShareEasyAccess && !_closing && !_easyHeld;
         bool soon = _reachedWaiting || !error; // a share that never got its code waits longer
         _tick.Stop();
         _input?.ReleaseAll();
@@ -314,9 +318,10 @@ internal sealed class ShareSession
     public void SetEasyAccess(bool on)
     {
         _cfg.ShareEasyAccess = on;
-        if (!on) _cfg.ShareEasyCode = null;
+        if (!on) (_cfg.ShareEasyCode, _cfg.ShareEasyTries) = (null, null);
         ConfigManager.Instance.SaveConfig();
         if (on && EasyCode() == null) NewEasyCode();
+        if (on) _easyHeld = false;
         _log.Info(on ? "Easy access is on, this PC shares whenever PdaNet runs" : "Easy access is off, its code is forgotten");
         // A share that waits follows at once: on, it waits with the easy access code; off, it
         // ends, so nobody gets in with that code any more.
@@ -333,7 +338,7 @@ internal sealed class ShareSession
     /// </summary>
     public void StartEasy()
     {
-        if (!_cfg.ShareEasyAccess || Active || _closing) return;
+        if (!_cfg.ShareEasyAccess || Active || _closing || _easyHeld) return;
         // Through the phone while PdaNet is connected to it, as the Launchpad picks too.
         bool viaPhone = ConnectionManager.Instance.IsConnected;
         var problem = Share(viaPhone);
@@ -367,6 +372,7 @@ internal sealed class ShareSession
     {
         var code = NewCode();
         _cfg.ShareEasyCode = Protect(code);
+        _cfg.ShareEasyTries = null; // a new code starts with no wrong tries against it
         ConfigManager.Instance.SaveConfig();
         return code;
     }
@@ -432,6 +438,19 @@ internal sealed class ShareSession
                 var until = DateTime.Now.AddSeconds(Int(e, "wait"));
                 Notice = $"Wrong codes were tried, so easy access takes no tries until {until.ToString(until.Date == DateTime.Today ? "HH:mm" : "ddd HH:mm")}";
                 _log.Warning("Screen sharing: " + Notice);
+                break;
+            case "tries":
+                // Kept, so a lockout and its doubling outlast a restart of the helper or of PdaNet.
+                if (Easy && e.TryGetProperty("tries", out var t))
+                {
+                    _cfg.ShareEasyTries = new ShareTries
+                    {
+                        Wrong = Int(t, "wrong"),
+                        Lockouts = Int(t, "lockouts"),
+                        Until = t.TryGetProperty("until", out var u) && u.TryGetInt64(out var s) ? s : 0,
+                    };
+                    ConfigManager.Instance.SaveConfig();
+                }
                 break;
             case "found":
                 SetPhase(SharePhase.Pairing);
@@ -784,36 +803,41 @@ internal sealed class ShareSession
     };
 
     /// <summary>
-    /// Why the two PCs found no path, from the kinds of address each offered. A PC needs "srflx",
-    /// an answer from the STUN servers over UDP, or "relay", an address on a relay server: a
-    /// network that allows neither blocks the session whatever the other side does.
+    /// Why the two PCs found no path, as far as the kinds of address each offered tell. A PC that
+    /// was done looking yet has no address the internet reaches, no "srflx" from the STUN servers,
+    /// no "public" one of its own and no "relay" one, most likely sits on a network that blocks
+    /// UDP. That stays a likely reason, not a sure one: ICE says what it found, not why. So the
+    /// words say what was seen and what may help, not what the network does.
     /// </summary>
     private string NoPathText()
     {
         bool known = _localKinds != null && _remoteKinds != null;
         bool hereRelay = _localKinds?.Contains("relay") == true, thereRelay = _remoteKinds?.Contains("relay") == true;
-        bool here = hereRelay || _localKinds?.Contains("srflx") == true;
-        bool there = thereRelay || _remoteKinds?.Contains("srflx") == true;
+        bool hereShut = Unreached(_localKinds), thereShut = Unreached(_remoteKinds);
         var who = Peer is null or "the other PC" ? "The other PC" : Peer;
         const string SetUp = "set up a relay in Settings, Screen sharing";
         const string Test = "Press Test in Settings, Screen sharing";
         // A relay is set up here, but this PC got no address on it.
         bool relayDown = !hereRelay && ShareRelays.Configured(_cfg);
         if (ViaPhone)
-            return known && !here
-                ? "Your phone's network blocks direct links, try Direct"
+            return hereShut
+                ? "Through your phone this PC got no address the internet reaches, the mobile network may not allow direct links, try Direct"
                 : "The two PCs could not reach each other through your phone. Some mobile networks do not allow direct links, try Direct";
         if (!known)
             return relayDown
                 ? $"The two PCs could not reach each other, and the relay set up on this PC did not answer. {Test}"
                 : $"The two PCs could not reach each other. Some company and school networks block direct links, on such a PC {SetUp}";
-        if (!here && relayDown) return $"This PC's network blocks direct links, and the relay set up on this PC did not answer. {Test}";
-        if (!here && !there) return $"The networks of both PCs block direct links. On both PCs, {SetUp}";
-        if (!there) return $"{who}'s network blocks direct links. On that PC, {SetUp}";
-        if (!here) return $"This PC's network blocks direct links. On this PC, {SetUp}";
+        if (hereShut && relayDown) return $"This PC got no address the internet reaches, and the relay set up on this PC did not answer. {Test}";
+        if (hereShut && thereShut) return $"Neither PC got an address the internet reaches, both networks may block direct links. On both PCs, {SetUp}";
+        if (thereShut) return $"{who} got no address the internet reaches, its network may block direct links. On that PC, {SetUp}";
+        if (hereShut) return $"This PC got no address the internet reaches, its network may block direct links. On this PC, {SetUp}";
         if (hereRelay || thereRelay) return $"The two PCs could not link up, not even through the relay. {Test}";
-        return $"The two networks do not let these PCs link up directly. On one of them, {SetUp}";
+        return $"The two PCs could not link up directly, some networks do not allow it. On one of them, {SetUp}";
     }
+
+    /// <summary>A side done looking for addresses that found none the internet reaches.</summary>
+    private static bool Unreached(string? kinds) =>
+        kinds != null && !kinds.Contains("partial") && !kinds.Contains("srflx") && !kinds.Contains("public") && !kinds.Contains("relay");
 
     private string EndText(string reason) => reason switch
     {

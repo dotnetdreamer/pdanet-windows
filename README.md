@@ -321,14 +321,14 @@ A relay server, for networks that block direct links
 Easy access
 
 - Turn on Easy access under Share this screen, and PdaNet shares this screen each time it starts, and again after each session, with a code that stays the same. From another PC you connect with that code, nobody needs to be at this one
-- Turn on Start with Windows in Settings as well, to reach this PC after a restart
+- With Start with Windows in Settings, PdaNet starts when you sign in to Windows, so after a restart this PC is reachable once someone signs in. PdaNet runs as your Windows user, not as a service, so easy access cannot show or use the Windows sign-in, lock or UAC screens, and the mouse and keyboard do not reach apps that run as administrator
 - While easy access waits, Connect to a screen still works. Easy access pauses while this PC views another one, and comes back after
-- Stop, here or in the tray, stops sharing until PdaNet starts again. Turning easy access off forgets the code, turning it on again makes a new one
+- Stop, here or in the tray, stops easy access until you share again or PdaNet starts again, also when this PC views another one in between. Turning easy access off forgets the code, turning it on again makes a new one
 
 Safe by design
 
-- The code works once and only while you share. After five wrong tries the code changes
-- An easy access code stays the same, so after five wrong tries easy access takes no tries for a quarter of an hour, twice as long each time after, a day at most. The code is kept encrypted with Windows, for your Windows user only
+- The code works once and only while you share. It answers at most five guesses, after five wrong ones the code changes
+- An easy access code stays the same, so it answers at most five guesses at a time, and after five wrong ones it takes no tries for a quarter of an hour, twice as long each time after, a day at most. This holds when PdaNet starts again. The code is kept encrypted with Windows, for your Windows user only
 - Everything between the two PCs is encrypted end to end. The last six digits of the code never leave the two PCs, both prove they know them without sending them
 - To find each other, the two PCs leave sealed notes on public relays (Nostr, MQTT and ntfy). The relays never see the code, the screen or anything you type. Without internet, two PCs on the same network find each other there
 
