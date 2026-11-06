@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO;
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -53,6 +54,19 @@ internal static class ShareRelays
     }
 
     public static bool Configured(AppConfig cfg) => Read(cfg).Any;
+
+    /// <summary>
+    /// The relay used when Settings has none: an https address that hands out short lived TURN
+    /// credentials, set by the release build (ShareRelayUrl). Empty in other builds.
+    /// </summary>
+    public static string BuiltIn { get; } = ReadBuiltIn();
+
+    private static string ReadBuiltIn()
+    {
+        var url = typeof(ShareRelays).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>()
+            .FirstOrDefault(a => a.Key == "ShareRelayUrl")?.Value ?? "";
+        return Uri.TryCreate(url, UriKind.Absolute, out var u) && u.Scheme == Uri.UriSchemeHttps ? url : "";
+    }
 
     /// <summary>What is wrong with the settings, or null when the helper can use them.</summary>
     public static string? Problem(Settings s)

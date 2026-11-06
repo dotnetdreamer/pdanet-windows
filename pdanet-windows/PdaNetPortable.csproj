@@ -49,6 +49,11 @@
     <Resource Include="Resources\app.ico" />
   </ItemGroup>
 
+  <!-- Screen sharing's default relay, see ShareRelays.BuiltIn. The release workflow passes it in from a secret -->
+  <ItemGroup Condition="'$(ShareRelayUrl)' != ''">
+    <AssemblyMetadata Include="ShareRelayUrl" Value="$(ShareRelayUrl)" />
+  </ItemGroup>
+
   <ItemGroup>
     <!-- The PdaNet browser on the Launchpad, it runs on the Microsoft Edge WebView2 Runtime that ships with Windows -->
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4314.35" />

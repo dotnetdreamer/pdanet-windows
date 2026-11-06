@@ -31,7 +31,8 @@ import (
 // PdaNet gives the helper TURN servers with their credentials, a Cloudflare Realtime TURN key, or
 // both. The helper trades the key for credentials that expire after a day, so the key itself
 // never leaves this PC. Over TLS on port 443 a relay looks like any secure website, which gets it
-// through most company networks.
+// through most company networks. A release build may also carry an https address that hands out
+// short lived credentials, such as a coturn REST endpoint, used when Settings has no relay.
 
 // iceServer is a TURN server and its credentials, as WebRTC takes them.
 type iceServer struct {
@@ -125,6 +126,68 @@ func cloudflareServers(ctx context.Context, d dialer, k turnKey) ([]iceServer, e
 		return nil, errors.New("Cloudflare sent no TURN servers")
 	}
 	return list, nil
+}
+
+// fetchedServers asks an https address for TURN servers with short lived credentials, the
+// {"iceServers": [...], "ttl": seconds} answer of a coturn REST endpoint, and says how long they hold.
+func fetchedServers(ctx context.Context, d dialer, from string) ([]iceServer, time.Duration, error) {
+	u, err := url.Parse(from)
+	if err != nil || u.Scheme != "https" || u.Host == "" {
+		return nil, 0, errors.New("the relay address is not an https address")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return nil, 0, err
+	}
+	req.Header.Set("User-Agent", "PdaNet/"+version)
+	res, err := d.httpClient().Do(req)
+	if err != nil {
+		return nil, 0, fmt.Errorf("could not reach %s", u.Host)
+	}
+	defer res.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(res.Body, 64<<10))
+	if res.StatusCode/100 != 2 {
+		return nil, 0, fmt.Errorf("%s answered %s", u.Host, res.Status)
+	}
+	var out struct {
+		ICEServers []struct {
+			URLs       json.RawMessage `json:"urls"` // one address or a list
+			Username   string          `json:"username"`
+			Credential string          `json:"credential"`
+		} `json:"iceServers"`
+		TTL int `json:"ttl"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, 0, fmt.Errorf("%s sent an answer PdaNet cannot read", u.Host)
+	}
+	var list []iceServer
+	for _, s := range out.ICEServers {
+		var urls []string
+		if json.Unmarshal(s.URLs, &urls) != nil {
+			var one string
+			if json.Unmarshal(s.URLs, &one) != nil {
+				continue
+			}
+			urls = []string{one}
+		}
+		// The STUN servers come from PdaNet's own list.
+		urls = slices.DeleteFunc(urls, func(u string) bool {
+			uri, err := stun.ParseURI(u)
+			return err != nil || (uri.Scheme != stun.SchemeTypeTURN && uri.Scheme != stun.SchemeTypeTURNS)
+		})
+		if len(urls) > 0 {
+			list = append(list, iceServer{URLs: urls, Username: s.Username, Credential: s.Credential})
+		}
+	}
+	list = cleanTURN(list)
+	if len(list) == 0 {
+		return nil, 0, fmt.Errorf("%s sent no TURN servers", u.Host)
+	}
+	ttl := time.Duration(out.TTL) * time.Second
+	if ttl <= 0 {
+		ttl = time.Hour
+	}
+	return list, ttl, nil
 }
 
 // turnURLs lists the relay addresses, without credentials, for the log.

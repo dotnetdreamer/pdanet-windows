@@ -45,6 +45,7 @@ type options struct {
 	Stun      []string    `json:"stun,omitempty"`
 	Turn      []iceServer `json:"turn,omitempty"`      // TURN servers with their credentials, see turn.go
 	TurnKey   *turnKey    `json:"turnKey,omitempty"`   // a Cloudflare TURN key, traded for credentials
+	TurnFrom  string      `json:"turnFrom,omitempty"`  // an https address that hands out TURN credentials
 	RelayOnly bool        `json:"relayOnly,omitempty"` // only through the TURN servers, to test them
 	NoLAN     bool        `json:"noLan,omitempty"`
 	Tries     *tries      `json:"tries,omitempty"` // how the easy access code stands, as PdaNet kept it
@@ -85,14 +86,14 @@ type session struct {
 	opt  options
 	self string
 
-	pnet     *phoneNet
-	keepIP   func(net.IP) bool
-	phoneIPs []net.IP
-	stun     []string
-	turn     []iceServer // ready once turnDone closes, see startTURN
-	turnAt   time.Time
-	turnDone chan struct{}
-	dial     dialer
+	pnet      *phoneNet
+	keepIP    func(net.IP) bool
+	phoneIPs  []net.IP
+	stun      []string
+	turn      []iceServer // ready once turnDone closes, see startTURN
+	turnRenew time.Time   // when to ask for credentials again, zero when they do not expire
+	turnDone  chan struct{}
+	dial      dialer
 
 	mu      sync.Mutex
 	rv      *rendezvous
@@ -218,9 +219,11 @@ func (s *session) startTURN() {
 	}()
 }
 
-// fetchTURN gives the TURN servers PdaNet passed, and those a Cloudflare key brings.
+// fetchTURN gives the TURN servers PdaNet passed, those a Cloudflare key brings, and those the
+// turnFrom address hands out.
 func (s *session) fetchTURN() []iceServer {
 	list := cleanTURN(s.opt.Turn)
+	var renew time.Time
 	if k := s.opt.TurnKey; k != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), turnFetchWait)
 		defer cancel()
@@ -230,23 +233,38 @@ func (s *session) fetchTURN() []iceServer {
 			s.link.event(event{Ev: "relay", Reason: "key", Detail: err.Error()})
 		}
 		list = append(list, cf...)
+		renew = time.Now().Add(turnTTL * time.Second / 2)
+	}
+	if from := s.opt.TurnFrom; from != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), turnFetchWait)
+		defer cancel()
+		got, ttl, err := fetchedServers(ctx, s.dial, from)
+		at := time.Now().Add(ttl / 2) // ttl is 0 on failure, so the next peer asks again
+		if err != nil {
+			log.Printf("relay: %v", err)
+			s.link.event(event{Ev: "relay", Reason: "from", Detail: err.Error()})
+		}
+		if renew.IsZero() || at.Before(renew) {
+			renew = at
+		}
+		list = append(list, got...)
 	}
 	if len(list) > 0 {
 		log.Printf("relay: %s", turnURLs(list))
 	}
-	s.turnAt = time.Now()
+	s.turnRenew = renew
 	return list
 }
 
-// turnServers waits for startTURN. Cloudflare's credentials last a day and an easy access share
-// can wait longer for the other PC, so then it asks for new ones.
+// turnServers waits for startTURN. Fetched credentials expire, and an easy access share can wait
+// longer than they hold for the other PC, so past half their life it asks for new ones.
 func (s *session) turnServers() []iceServer {
 	select {
 	case <-s.turnDone:
 	case <-s.done:
 		return nil
 	}
-	if s.opt.TurnKey != nil && time.Since(s.turnAt) > turnTTL*time.Second/2 {
+	if !s.turnRenew.IsZero() && time.Now().After(s.turnRenew) {
 		s.turn = s.fetchTURN()
 	}
 	return s.turn

@@ -74,10 +74,13 @@ jobs:
 
       - name: Build portable exe
         shell: pwsh
-        run: >
-          dotnet publish pdanet-windows/PdaNetPortable.csproj
-          -c Release -o dist
-          -p:Version=${{ steps.ver.outputs.version }}
+        env:
+          # Screen sharing's default relay: an https address that hands out TURN credentials.
+          SHARE_RELAY_URL: ${{ secrets.SHARE_RELAY_URL }}
+        run: |
+          if (-not $env:SHARE_RELAY_URL) { Write-Host '::warning::SHARE_RELAY_URL is not set, so this release has no default screen sharing relay' }
+          dotnet publish pdanet-windows/PdaNetPortable.csproj -c Release -o dist `
+            -p:Version=${{ steps.ver.outputs.version }} "-p:ShareRelayUrl=$env:SHARE_RELAY_URL"
 
       - name: Package portable zip
         id: pack

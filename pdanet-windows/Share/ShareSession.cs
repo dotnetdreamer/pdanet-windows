@@ -133,10 +133,10 @@ internal sealed class ShareSession
         Begin(ShareRole.Host, viaPhone);
         Easy = code != null;
         AllowControl = _cfg.ShareAllowControl;
-        var (turn, turnKey) = Relays();
+        var (turn, turnKey, turnFrom) = Relays();
         // With the easy access code goes how it stands against wrong tries, so a lockout holds.
         var tries = Easy ? _cfg.ShareEasyTries : null;
-        Launch(new { op = "host", code, name = Environment.MachineName, route, turn, turnKey, tries });
+        Launch(new { op = "host", code, name = Environment.MachineName, route, turn, turnKey, turnFrom, tries });
         return null;
     }
 
@@ -152,16 +152,17 @@ internal sealed class ShareSession
         if (problem != null) return problem;
         Begin(ShareRole.Viewer, viaPhone);
         Code = digits;
-        var (turn, turnKey) = Relays();
-        Launch(new { op = "join", code = digits, name = Environment.MachineName, route, turn, turnKey });
+        var (turn, turnKey, turnFrom) = Relays();
+        Launch(new { op = "join", code = digits, name = Environment.MachineName, route, turn, turnKey, turnFrom });
         return null;
     }
 
-    /// <summary>The relays set up in Settings, as the helper takes them.</summary>
-    private (object[]? Servers, object? Key) Relays()
+    /// <summary>The relays set up in Settings as the helper takes them, or the built in one when Settings has none it can use.</summary>
+    private (object[]? Servers, object? Key, string? From) Relays()
     {
         var s = ShareRelays.Read(_cfg);
-        return ShareRelays.Problem(s) == null ? (ShareRelays.Servers(s), ShareRelays.Key(s)) : (null, null);
+        if (s.Any && ShareRelays.Problem(s) == null) return (ShareRelays.Servers(s), ShareRelays.Key(s), null);
+        return (null, null, ShareRelays.BuiltIn.Length > 0 ? ShareRelays.BuiltIn : null);
     }
 
     private void Begin(ShareRole role, bool viaPhone)
@@ -471,8 +472,10 @@ internal sealed class ShareSession
                 _remoteKinds = Str(e, "remote");
                 break;
             case "relay":
-                // The Cloudflare key did not bring relays: the session goes on without them.
-                Notice = $"The relay in Settings could not be used: {Str(e, "detail")}";
+                // The relay brought no servers: the session goes on without them.
+                Notice = Str(e, "reason") == "from"
+                    ? $"PdaNet's relay could not be used: {Str(e, "detail")}"
+                    : $"The relay in Settings could not be used: {Str(e, "detail")}";
                 _log.Warning("Screen sharing: " + Notice);
                 break;
             case "connected":
