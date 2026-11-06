@@ -64,6 +64,7 @@ public partial class MainWindow : Window
         InitializeComponent();
         FitToScreen();
         VersionText.Text = $"v{Constants.AppVersion}";
+        UpdateCloseTip();
 
         ConnectPage.Attach(this);
         AppsPage.Attach(this);
@@ -288,16 +289,23 @@ public partial class MainWindow : Window
     /// <summary>Opens the window with the other PC's screen, or brings it forward.</summary>
     public void ShowRemote()
     {
+        // A window left open on a session that ended follows no other one, a new session gets a new window.
+        if (_remote is { HasEnded: true } ended && ShareSession.Instance.Role == ShareRole.Viewer)
+        {
+            _remote = null;
+            ended.Close();
+        }
         if (_remote == null)
         {
-            _remote = new RemoteWindow();
-            _remote.Closed += (_, _) =>
+            var remote = new RemoteWindow();
+            _remote = remote;
+            remote.Closed += (_, _) =>
             {
-                _remote = null;
+                if (_remote == remote) _remote = null;
                 ShareSession.ReturnMemorySoon(); // its picture, once the window is gone
             };
-            _remote.Show();
-            _remote.Activate();
+            remote.Show();
+            remote.Activate();
         }
         else _remote.Reveal();
     }
@@ -306,7 +314,7 @@ public partial class MainWindow : Window
     {
         var s = ShareSession.Instance;
         // The PC that views gets its window as soon as the code checks out.
-        if (s.Role == ShareRole.Viewer && s.Phase >= SharePhase.Pairing && _remote == null) ShowRemote();
+        if (s.Role == ShareRole.Viewer && s.Phase >= SharePhase.Pairing && _remote is null or { HasEnded: true }) ShowRemote();
 
         // The PC that shares shows a bar on its screen while someone can see it.
         bool bar = s.Role == ShareRole.Host && s.Phase is SharePhase.Connecting or SharePhase.Live or SharePhase.Reconnecting;
@@ -362,6 +370,7 @@ public partial class MainWindow : Window
     {
         _log.SetLevel(_config.LogLevel);
         _cm.AutoReconnectEnabled = _config.AutoReconnect;
+        UpdateCloseTip();
         OnUiTick();
     }
 
@@ -483,6 +492,7 @@ public partial class MainWindow : Window
         else if (sheet == "phones") OpenPhones();
         else if (sheet == "pair") OpenPair();
         else if (sheet == "webapp") OpenWebAppSheet(null);
+        else if (sheet == "quit") AskClose();
 
         // "browser:open" opens the browser on the start page, "browser:a|b" opens the addresses a and b in tabs.
         if (browser.Length > 0)
@@ -776,6 +786,19 @@ public partial class MainWindow : Window
 
     private void OnCloseClick(object sender, RoutedEventArgs e) => Close();
 
+    /// <summary>The close button says what closing does, as Settings has it.</summary>
+    private void UpdateCloseTip()
+    {
+        var (tip, name) = _config.CloseAction switch
+        {
+            "tray" => ("Close to the tray, PdaNet keeps running", "Close to tray"),
+            "quit" => ("Quit PdaNet", "Quit PdaNet"),
+            _ => ("Close, PdaNet asks whether to keep running in the tray", "Close"),
+        };
+        CloseBtn.ToolTip = tip;
+        AutomationProperties.SetName(CloseBtn, name);
+    }
+
     protected override void OnStateChanged(EventArgs e)
     {
         base.OnStateChanged(e);
@@ -961,12 +984,54 @@ public partial class MainWindow : Window
         Close();
     }
 
+    /// <summary>Asks whether closing the window keeps PdaNet running in the tray or quits it.</summary>
+    private void AskClose()
+    {
+        ShowFromTray();
+        if (OverlaySlot.Content is QuitSheet) return;
+        CloseSheet();
+        var sheet = new QuitSheet(QuitEnds());
+        sheet.Picked += (quit, remember) =>
+        {
+            CloseSheet();
+            if (remember)
+            {
+                _config.CloseAction = quit ? "quit" : "tray";
+                ConfigManager.Instance.SaveConfig();
+                SettingsPage.RefreshClose();
+                UpdateCloseTip();
+            }
+            if (quit) ExitApp();
+            else HideToTray();
+        };
+        sheet.Cancelled += CloseSheet;
+        ShowSheet(sheet);
+    }
+
+    /// <summary>What quitting ends right now, as the question says it.</summary>
+    private List<string> QuitEnds()
+    {
+        var ends = new List<string>();
+        if (_cm.State is ConnectionState.Connected or ConnectionState.Connecting) ends.Add("disconnects you from your phone");
+        var share = ShareSession.Instance;
+        string peer = share.Peer ?? "the other PC";
+        if (share.EasyWaiting) ends.Add("stops easy access until PdaNet runs again");
+        else if (share.Role == ShareRole.Host)
+            ends.Add(share.Phase is SharePhase.Starting or SharePhase.Waiting ? "stops sharing your screen" : $"ends the screen share with {peer}");
+        else if (share.Role == ShareRole.Viewer) ends.Add($"leaves the screen share with {peer}");
+        if (_browser != null) ends.Add("closes the PdaNet browser");
+        return ends;
+    }
+
     protected override void OnClosing(CancelEventArgs e)
     {
+        if (!_reallyExit && _config.CloseAction == "quit") _reallyExit = true;
         if (!_reallyExit)
         {
             e.Cancel = true;
-            HideToTray();
+            if (_config.CloseAction == "tray") HideToTray();
+            // Asked once the close is called off, a window that is closing cannot be shown.
+            else Dispatcher.BeginInvoke(AskClose);
             return;
         }
 

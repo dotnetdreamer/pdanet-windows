@@ -236,6 +236,7 @@
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
 
                         <!-- Title -->
@@ -434,6 +435,63 @@
                             <TextBlock x:Name="ShareRouteText" Style="{StaticResource T.Small}" Margin="14,0,0,0" VerticalAlignment="Center"
                                        TextTrimming="CharacterEllipsis" />
                         </DockPanel>
+
+                        <!-- The last sessions, newest first, one for each PC -->
+                        <StackPanel x:Name="RecentShares" Grid.Row="3" Margin="0,18,0,0" Visibility="Collapsed">
+                            <DockPanel Margin="2,0,0,8" MinHeight="31">
+                                <Button x:Name="ClearSharesBtn" DockPanel.Dock="Right" Style="{StaticResource Btn.Ghost}" Tag="&#xE74D;" Content="Clear"
+                                        Padding="10,5" Click="OnClearShares" ToolTip="Clear the list of recent sessions, and the codes kept with it" />
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                    <TextBlock Text="RECENT SESSIONS" Style="{StaticResource T.Eyebrow}" VerticalAlignment="Center" />
+                                    <v:InfoTip x:Name="RecentSharesTip" Margin="8,0,0,0" Heading="Recent sessions"
+                                               Tip="The codes are kept encrypted with Windows, for your Windows user only. Clear forgets them" />
+                                </StackPanel>
+                            </DockPanel>
+                            <Border CornerRadius="12" Background="{StaticResource B.Bg1}" BorderBrush="{StaticResource B.Line}" BorderThickness="1"
+                                    Padding="6">
+                                <ItemsControl x:Name="ShareList" Focusable="False">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <UniformGrid Columns="2" />
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Button Style="{StaticResource RecentRow}" Click="OnShareAgain" ToolTip="{Binding Tip}"
+                                                    AutomationProperties.Name="{Binding Spoken}" ContextMenuOpening="OnShareMenu">
+                                                <Button.ContextMenu>
+                                                    <ContextMenu />
+                                                </Button.ContextMenu>
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <Grid Width="30" Height="30" VerticalAlignment="Center">
+                                                        <Border CornerRadius="8" Background="{StaticResource B.CyanSoft}" BorderBrush="#5546D7F8" BorderThickness="1" />
+                                                        <TextBlock Text="{Binding Glyph}" Style="{StaticResource T.Icon}" FontSize="14"
+                                                                   Foreground="{StaticResource B.Cyan}" HorizontalAlignment="Center" />
+                                                    </Grid>
+                                                    <StackPanel Grid.Column="1" Margin="11,0,10,0" VerticalAlignment="Center">
+                                                        <TextBlock Text="{Binding Name}" FontSize="12.5" FontWeight="SemiBold" Foreground="{StaticResource B.Text}"
+                                                                   TextTrimming="CharacterEllipsis" />
+                                                        <TextBlock Text="{Binding Detail}" Style="{StaticResource T.Small}" FontSize="11" Margin="0,2,0,0"
+                                                                   TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" />
+                                                    </StackPanel>
+                                                    <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                                                        <TextBlock Text="{Binding When}" Style="{StaticResource T.Mono}" FontSize="10.5"
+                                                                   Foreground="{StaticResource B.Text3}" VerticalAlignment="Center" />
+                                                        <TextBlock Text="&#xE8A7;" Style="{StaticResource T.Icon}" FontSize="12" Foreground="{StaticResource B.Accent}"
+                                                                   Margin="10,0,2,0" Visibility="{Binding ConnectVisibility}" />
+                                                    </StackPanel>
+                                                </Grid>
+                                            </Button>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </Border>
+                        </StackPanel>
                     </Grid>
                 </Grid>
             </Border>

@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
@@ -32,14 +33,19 @@ public partial class LaunchpadView : UserControl, IPage
     private readonly DispatcherTimer _tick = new() { Interval = TimeSpan.FromSeconds(2) };
     private readonly DispatcherTimer _confirmTimer = new() { Interval = TimeSpan.FromSeconds(4) };
     private MainWindow? _shell;
-    private bool _stale, _confirming, _orbiting;
+    private bool _stale, _orbiting;
+    private Button? _confirming;
     private bool? _breathing;
     private string? _runtime;
 
     public LaunchpadView()
     {
         InitializeComponent();
-        _tick.Tick += (_, _) => UpdateStatus();
+        _tick.Tick += (_, _) =>
+        {
+            UpdateStatus();
+            if (ShareList.ItemsSource is List<ShareRow> rows) foreach (var row in rows) row.Tick();
+        };
         _confirmTimer.Tick += (_, _) => ResetClear();
     }
 
@@ -55,8 +61,10 @@ public partial class LaunchpadView : UserControl, IPage
         });
         _share.Changed += UpdateShare;
         _share.Ended += OnShareEnded;
+        ShareHistory.Changed += LoadShares;
+        RecentSharesTip.Body = $"The last {ShareHistory.Limit} sessions, newest first, one for each PC. A PC that shares with easy access keeps its code, so one click connects again";
         AllowControl.IsChecked = _cfg.ShareAllowControl;
-        UpdateShare();
+        LoadShares();
         IsVisibleChanged += (_, _) =>
         {
             if (IsVisible)
@@ -64,7 +72,7 @@ public partial class LaunchpadView : UserControl, IPage
                 if (_stale) Load();
                 CheckRuntime();
                 UpdateStatus();
-                UpdateShare();
+                LoadShares(); // and how long ago each session was
                 StartOrbit();
                 _tick.Start();
             }
@@ -308,26 +316,33 @@ public partial class LaunchpadView : UserControl, IPage
         menu.Items.Add(MenuEntry($"Remove {row.Detail} from recent", () => _store.Forget(row.Detail), danger: true));
     }
 
-    // Clearing the list takes a second click, like unblocking everything.
     private void OnClearRecent(object sender, RoutedEventArgs e)
     {
-        if (!_confirming)
-        {
-            _confirming = true;
-            ClearRecentBtn.Content = "Click again to clear";
-            _confirmTimer.Start();
-            return;
-        }
-        ResetClear();
+        if (!ConfirmClear(ClearRecentBtn)) return;
         _store.ClearRecent();
         _shell?.Toast("Recent websites cleared", ToastKind.Info);
+    }
+
+    // Clearing a list takes a second click, like unblocking everything.
+    private bool ConfirmClear(Button button)
+    {
+        if (_confirming != button)
+        {
+            ResetClear();
+            _confirming = button;
+            button.Content = "Click again to clear";
+            _confirmTimer.Start();
+            return false;
+        }
+        ResetClear();
+        return true;
     }
 
     private void ResetClear()
     {
         _confirmTimer.Stop();
-        _confirming = false;
-        ClearRecentBtn.Content = "Clear";
+        if (_confirming != null) _confirming.Content = "Clear";
+        _confirming = null;
     }
 
     private void CopyText(string text, string done = "Web address copied")
@@ -358,9 +373,11 @@ public partial class LaunchpadView : UserControl, IPage
         if (problem != null) _shell?.Toast(problem, ToastKind.Warning);
     }
 
-    private void OnJoin(object sender, RoutedEventArgs e)
+    private void OnJoin(object sender, RoutedEventArgs e) => JoinWith(CodeBox.Text);
+
+    private void JoinWith(string code)
     {
-        var problem = _share.Join(CodeBox.Text, ViaPhone);
+        var problem = _share.Join(code, ViaPhone);
         if (problem != null)
         {
             ShowJoinHint(problem, "B.Red");
@@ -374,6 +391,49 @@ public partial class LaunchpadView : UserControl, IPage
     }
 
     private void OnStop(object sender, RoutedEventArgs e) => _share.Stop();
+
+    // ============================ Recent sessions ============================
+    private void LoadShares()
+    {
+        ShareList.ItemsSource = ShareHistory.All.Select(p => new ShareRow(p)).ToList();
+        UpdateShare();
+    }
+
+    /// <summary>Connects again with the easy access code kept, else says how to get back to that PC.</summary>
+    private void OnShareAgain(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not ShareRow row) return;
+        if (ShareHistory.CodeOf(row.Past) is { } code) JoinWith(code);
+        else if (row.Past.Viewed)
+        {
+            ShowJoinHint($"The code from {row.Name} worked once, type the new code they give you", "B.Text2");
+            CodeBox.Focus();
+        }
+        else _shell?.Toast($"To show {row.Name} this screen again, press Share my screen and read them the code", ToastKind.Info);
+    }
+
+    private void OnShareMenu(object sender, ContextMenuEventArgs e)
+    {
+        if (sender is not Button { DataContext: ShareRow row, ContextMenu: { } menu })
+        {
+            e.Handled = true;
+            return;
+        }
+        menu.Items.Clear();
+        if (row.CanConnect)
+        {
+            menu.Items.Add(MenuEntry("Connect again", () => OnShareAgain(sender, e)));
+            menu.Items.Add(new Separator { Style = (Style)FindResource("MenuLine") });
+        }
+        menu.Items.Add(MenuEntry("Remove from recent sessions", () => ShareHistory.Remove(row.Past), danger: true));
+    }
+
+    private void OnClearShares(object sender, RoutedEventArgs e)
+    {
+        if (!ConfirmClear(ClearSharesBtn)) return;
+        ShareHistory.Clear();
+        _shell?.Toast("Recent sessions cleared", ToastKind.Info);
+    }
 
     private void OnShowRemote(object sender, RoutedEventArgs e) => _shell?.ShowRemote();
 
@@ -578,6 +638,7 @@ public partial class LaunchpadView : UserControl, IPage
         FollowConnection();
         bool phoneReady = _cm.IsConnected;
         bool free = !s.Active || easy;
+        RecentShares.Visibility = free && ShareHistory.All.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         RouteDirect.IsEnabled = RoutePhone.IsEnabled = free;
         if (!phoneReady && free) RoutePhone.IsEnabled = ViaPhone; // keep it pickable to switch back
         ShareRouteText.Text = !free
@@ -618,4 +679,54 @@ public partial class LaunchpadView : UserControl, IPage
         item.Click += (_, _) => act();
         return item;
     }
+}
+
+/// <summary>A line under Recent sessions on the Launchpad.</summary>
+internal sealed class ShareRow : INotifyPropertyChanged
+{
+    public ShareRow(PastShare past)
+    {
+        Past = past;
+        Name = past.Peer is "" or "the other PC" ? "The other PC" : past.Peer;
+        CanConnect = past.Viewed && ShareHistory.CodeOf(past) != null;
+        var length = Length(past.Seconds);
+        Detail = past.Viewed ? $"You viewed it for {length}" : $"Saw your screen for {length}";
+        When = AppsView.Ago(past.Ended);
+        Glyph = past.Viewed ? "" : "";
+        var what = past.Viewed ? "You viewed its screen" : "It saw your screen";
+        var next = CanConnect ? "Click to connect again, PdaNet kept its easy access code"
+            : past.Viewed ? "Its code worked once, connecting again takes a new code"
+            : "Share my screen gives a new code to read to them";
+        Tip = $"{Name}{Environment.NewLine}{what} on {past.At:ddd d MMM 'at' HH:mm} for {length}, {ShareSession.PathWords(past.Path)}{Environment.NewLine}{next}";
+    }
+
+    public PastShare Past { get; }
+    public string Name { get; }
+    public string Detail { get; }
+    public string When { get; private set; }
+    public string Glyph { get; }
+    public string Tip { get; }
+    public bool CanConnect { get; }
+    public Visibility ConnectVisibility => CanConnect ? Visibility.Visible : Visibility.Collapsed;
+    /// <summary>What a screen reader says for the line.</summary>
+    public string Spoken => CanConnect ? $"{Name}, {Detail}, {When}, connect again" : $"{Name}, {Detail}, {When}";
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    /// <summary>Keeps how long ago up to date while the Launchpad stays open.</summary>
+    public void Tick()
+    {
+        var when = AppsView.Ago(Past.Ended);
+        if (when == When) return;
+        When = when;
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(When)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Spoken)));
+    }
+
+    private static string Length(int seconds) => seconds switch
+    {
+        < 60 => "under a minute",
+        < 3600 => $"{seconds / 60} min",
+        _ => $"{seconds / 3600} h {seconds / 60 % 60} min",
+    };
 }

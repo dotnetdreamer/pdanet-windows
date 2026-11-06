@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
@@ -21,7 +22,8 @@ namespace PdaNetPortable.Views;
 /// <summary>
 /// The other PC's screen, on the PC that views. Pictures go straight from the decoder into one
 /// bitmap the GPU scales, always the newest one. The mouse, the keyboard and the clipboard go to
-/// the other PC while the other person allows it. Closing the window ends the session.
+/// the other PC while the other person allows it. Closing the window ends the session, so while
+/// one runs the window asks first.
 /// </summary>
 public partial class RemoteWindow : Window
 {
@@ -37,6 +39,8 @@ public partial class RemoteWindow : Window
     private IntPtr _section, _pixels;
     private ViewerPipeline? _viewer;
     private bool _fit = true, _full, _ended, _hasPicture, _viewOnly, _renderQueued;
+    // The window asks before closing ends the session, and Disconnect closes it without asking.
+    private bool _asking, _leaving;
     private WindowState _stateBeforeFull;
     private ushort _mx, _my;
     private bool _movePending;
@@ -71,6 +75,12 @@ public partial class RemoteWindow : Window
             UpdateHook();
             ReleaseAll();
         };
+        PreviewKeyDown += (_, e) =>
+        {
+            if (!_asking || e.Key != Key.Escape) return;
+            OnStay(this, e);
+            e.Handled = true;
+        };
         _s.Changed += OnChanged;
         _s.PointerChanged += UpdatePointer;
         _s.Ended += OnEnded;
@@ -81,13 +91,17 @@ public partial class RemoteWindow : Window
             _s.Ended -= OnEnded;
             _hook.Dispose();
             if (_viewer != null) _viewer.FrameReady -= OnFrameReady;
-            if (_s.Role == ShareRole.Viewer) _s.Stop();
+            // A window whose session ended leaves the session that came after it alone.
+            if (!_ended && _s.Role == ShareRole.Viewer) _s.Stop();
             Picture.Source = null;
             FreePicture();
         };
         SizeWindow();
         OnChanged();
     }
+
+    /// <summary>Its session ended: the window shows that and follows no other session.</summary>
+    public bool HasEnded => _ended;
 
     public void Reveal()
     {
@@ -235,6 +249,8 @@ public partial class RemoteWindow : Window
     private void OnEnded(string text, bool error)
     {
         _ended = true;
+        _asking = false;
+        Ask.Visibility = Visibility.Collapsed;
         _hook.Stop();
         _moveTimer.Stop();
         RemotePointer.Visibility = Visibility.Collapsed;
@@ -496,7 +512,7 @@ public partial class RemoteWindow : Window
     // ============================ Keyboard ============================
     private void UpdateHook()
     {
-        if (IsActive && CanControl && !_ended) _hook.Start();
+        if (IsActive && CanControl && !_ended && !_asking) _hook.Start();
         else _hook.Stop();
     }
 
@@ -663,7 +679,50 @@ public partial class RemoteWindow : Window
         _stripTimer.Start();
     }
 
-    private void OnLeave(object sender, RoutedEventArgs e) => Close();
+    private void OnLeave(object sender, RoutedEventArgs e)
+    {
+        _leaving = true;
+        Close();
+    }
+
+    /// <summary>Closing the window ends the session, so while one runs the window asks first.</summary>
+    protected override void OnClosing(CancelEventArgs e)
+    {
+        base.OnClosing(e);
+        if (e.Cancel || _leaving || !Running) return;
+        e.Cancel = true;
+        // Asked once the close is called off, a window that is closing cannot be shown.
+        Dispatcher.BeginInvoke(AskLeave);
+    }
+
+    // Still looking for the other PC, closing loses nothing, so only a session that runs asks.
+    private bool Running => !_ended && _s.Role == ShareRole.Viewer && _s.Phase is SharePhase.Live or SharePhase.Reconnecting;
+
+    private void AskLeave()
+    {
+        if (!Running) return;
+        Reveal();
+        if (_asking) return;
+        _asking = true;
+        string peer = _s.Peer ?? "the other PC";
+        AskTitle.Text = $"Disconnect from {peer}?";
+        AskText.Text = _s.RemoteFlags.HasFlag(HostFlags.EasyAccess)
+            ? $"Closing this window ends the session. {peer} shares with easy access, so you can connect again from Recent sessions on the Launchpad"
+            : $"Closing this window ends the session. To see {peer} again, they share again and give you a new code";
+        Ask.Visibility = Visibility.Visible;
+        // The keys go to this window while it asks, not to the other PC.
+        ReleaseAll();
+        UpdateHook();
+        Dispatcher.BeginInvoke(DispatcherPriority.Input, () => AskLeaveBtn.Focus());
+    }
+
+    private void OnStay(object sender, RoutedEventArgs e)
+    {
+        _asking = false;
+        Ask.Visibility = Visibility.Collapsed;
+        UpdateHook();
+        InputLayer.Focus();
+    }
 
     // ============================ Window chrome ============================
     protected override void OnStateChanged(EventArgs e)

@@ -268,6 +268,16 @@ internal sealed class ShareSession
             rtc?.Dispose();
             ReturnMemorySoon();
         });
+        // A session that went live goes first under Recent sessions. The code goes with it only
+        // when the other PC shares with easy access, any other code works once.
+        if (LiveSince is { } since)
+            try
+            {
+                bool viewed = Role == ShareRole.Viewer;
+                ShareHistory.Add(Peer ?? "the other PC", viewed, viewed && RemoteFlags.HasFlag(HostFlags.EasyAccess) ? Code : null,
+                    since, DateTime.Now - since, Path);
+            }
+            catch (Exception e) { _log.Warning($"Screen sharing could not keep the session under Recent sessions: {e.Message}"); }
         Role = ShareRole.None;
         Code = null;
         LiveSince = null;
@@ -697,7 +707,7 @@ internal sealed class ShareSession
     private void SendHostState()
     {
         if (Role != ShareRole.Host) return;
-        var flags = (AllowControl ? HostFlags.ControlAllowed : 0) | (_host?.Hidden == true ? HostFlags.Hidden : 0);
+        var flags = (AllowControl ? HostFlags.ControlAllowed : 0) | (_host?.Hidden == true ? HostFlags.Hidden : 0) | (Easy ? HostFlags.EasyAccess : 0);
         _rtc?.Send(RtcHelper.KindCtl, MsgWriter.Byte(Msg.HostState, (byte)flags));
     }
 

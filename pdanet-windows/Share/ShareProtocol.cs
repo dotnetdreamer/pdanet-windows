@@ -46,6 +46,8 @@ internal enum HostFlags : byte
     ControlAllowed = 1,
     // The other PC shows a screen Windows keeps private, like a UAC prompt or the lock screen.
     Hidden = 2,
+    // The other PC shares with easy access, its code stays the same, so the code connects again.
+    EasyAccess = 4,
 }
 
 internal enum MouseButton : byte { Left, Right, Middle, X1, X2 }

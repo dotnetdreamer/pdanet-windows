@@ -71,6 +71,7 @@ public sealed class ConfigManager
         c.StatusUpdateInterval = Math.Clamp(c.StatusUpdateInterval, 100, 10000);
         var levels = new[] { "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL" };
         if (!levels.Contains(c.LogLevel.ToUpperInvariant())) c.LogLevel = "INFO";
+        if (c.CloseAction is not ("ask" or "tray" or "quit")) c.CloseAction = "ask";
     }
 
     // ---- Profiles ----

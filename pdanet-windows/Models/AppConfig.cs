@@ -10,6 +10,8 @@ public class AppConfig
 {
     [JsonPropertyName("auto_start")] public bool AutoStart { get; set; } = false;
     [JsonPropertyName("start_minimized")] public bool StartMinimized { get; set; } = false;
+    // What closing the window does: "ask" each time, "tray" to keep running in the tray, or "quit".
+    [JsonPropertyName("close_action")] public string CloseAction { get; set; } = "ask";
     [JsonPropertyName("auto_reconnect")] public bool AutoReconnect { get; set; } = true;
     [JsonPropertyName("reconnect_attempts")] public int ReconnectAttempts { get; set; } = 3;
     [JsonPropertyName("reconnect_delay")] public int ReconnectDelay { get; set; } = 5;

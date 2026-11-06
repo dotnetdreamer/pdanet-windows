@@ -168,6 +168,27 @@
                                 Click="OnLeave" />
                     </StackPanel>
                 </Border>
+
+                <!-- Closing the window while the session runs asks first -->
+                <Grid x:Name="Ask" Background="#CC05070A" Visibility="Collapsed">
+                    <Border HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="460" CornerRadius="16"
+                            Background="{StaticResource B.Bg1}" BorderBrush="{StaticResource B.Line2}" BorderThickness="1" Padding="28,24">
+                        <StackPanel>
+                            <Border Style="{StaticResource IconTile}" Width="44" Height="44" HorizontalAlignment="Left">
+                                <TextBlock Text="&#xE7F4;" Style="{StaticResource T.Icon}" FontSize="19" Foreground="{StaticResource B.Amber}"
+                                           HorizontalAlignment="Center" />
+                            </Border>
+                            <TextBlock x:Name="AskTitle" Style="{StaticResource T.H2}" FontSize="18" Margin="0,16,0,0" TextWrapping="Wrap" />
+                            <TextBlock x:Name="AskText" Style="{StaticResource T.Body}" Margin="0,8,0,0" TextWrapping="Wrap" />
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,20,0,0">
+                                <Button x:Name="StayBtn" Style="{StaticResource Btn.Ghost}" Content="Stay" Click="OnStay"
+                                        ToolTip="Keep the session and the window" />
+                                <Button x:Name="AskLeaveBtn" Style="{StaticResource Btn.Danger}" Tag="&#xE71A;" Content="Disconnect" Margin="8,0,0,0"
+                                        Click="OnLeave" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+                </Grid>
             </Grid>
         </Grid>
     </Border>

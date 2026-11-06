@@ -72,9 +72,9 @@
                             WindowChrome.IsHitTestVisibleInChrome="True" AutomationProperties.Name="Minimize" />
                     <Button x:Name="MaxBtn" Style="{StaticResource Btn.Chrome}" Content="&#xE922;" Click="OnMaximize" ToolTip="Maximize"
                             WindowChrome.IsHitTestVisibleInChrome="True" AutomationProperties.Name="Maximize" />
-                    <Button Style="{StaticResource Btn.ChromeClose}" Content="&#xE8BB;" Click="OnCloseClick"
-                            ToolTip="Close to the tray, PdaNet keeps running" WindowChrome.IsHitTestVisibleInChrome="True"
-                            AutomationProperties.Name="Close to tray" />
+                    <!-- Its tooltip and name follow what closing does, see UpdateCloseTip -->
+                    <Button x:Name="CloseBtn" Style="{StaticResource Btn.ChromeClose}" Content="&#xE8BB;" Click="OnCloseClick"
+                            WindowChrome.IsHitTestVisibleInChrome="True" />
                 </StackPanel>
             </Grid>
 

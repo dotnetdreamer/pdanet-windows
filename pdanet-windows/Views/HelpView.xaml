@@ -151,8 +151,8 @@
                 </Expander>
 
                 <Expander Style="{StaticResource Accordion}">
-                    <Expander.Header><TextBlock Text="Why does closing the window not quit?" Style="{StaticResource Q}" /></Expander.Header>
-                    <TextBlock Style="{StaticResource A}" Text="Closing tucks the app into the tray near the clock so your connection keeps running, to quit fully right click the tray icon and choose Quit, or press Ctrl and Q" />
+                    <Expander.Header><TextBlock Text="What happens when I close the window?" Style="{StaticResource Q}" /></Expander.Header>
+                    <TextBlock Style="{StaticResource A}" Text="The app asks whether to keep running in the tray near the clock, where your connection keeps going, or to quit. Turn on Do not ask again to keep your pick, and change it later in Settings, App and Windows. To quit from the tray, right click the tray icon and choose Quit, or press Ctrl and Q" />
                 </Expander>
             </StackPanel>
 

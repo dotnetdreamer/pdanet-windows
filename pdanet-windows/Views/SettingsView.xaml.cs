@@ -60,6 +60,7 @@ public partial class SettingsView : UserControl, IPage
 
         StartWithWindows.IsChecked = AutoStart.IsEnabled();
         StartMinimized.IsChecked = _cfg.StartMinimized;
+        RefreshClose();
         Notifications.IsChecked = _cfg.EnableNotifications;
         SingleInstance.IsChecked = _cfg.SingleInstance;
 
@@ -94,6 +95,11 @@ public partial class SettingsView : UserControl, IPage
             : $"{string.Join(" and ", parts)} blocked";
     }
 
+    // The question when the window closes can keep its answer, right away, not with the Save button.
+    public void RefreshClose() => ShowClose(_cfg.CloseAction);
+
+    private void ShowClose(string action) => (action switch { "tray" => CloseTray, "quit" => CloseQuit, _ => CloseAsk }).IsChecked = true;
+
     public void RefreshLocation()
     {
         var p = LocationMask.Find(LocationMask.ActiveCity);
@@ -127,6 +133,7 @@ public partial class SettingsView : UserControl, IPage
         ShareRelays.Write(_cfg, relay);
 
         _cfg.StartMinimized = StartMinimized.IsChecked == true;
+        _cfg.CloseAction = CloseTray.IsChecked == true ? "tray" : CloseQuit.IsChecked == true ? "quit" : "ask";
         _cfg.EnableNotifications = Notifications.IsChecked == true;
         _cfg.SingleInstance = SingleInstance.IsChecked == true;
 
@@ -172,6 +179,7 @@ public partial class SettingsView : UserControl, IPage
         WatchApps.IsChecked = fresh.WatchApps;
         StartWithWindows.IsChecked = false;
         StartMinimized.IsChecked = fresh.StartMinimized;
+        ShowClose(fresh.CloseAction);
         Notifications.IsChecked = fresh.EnableNotifications;
         SingleInstance.IsChecked = fresh.SingleInstance;
         ProxyIp.Text = fresh.ProxyIp;

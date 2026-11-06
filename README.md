@@ -302,6 +302,7 @@ In the window with the other PC's screen
 - Picture picks Auto, Sharp for text or Smooth for video
 - When the other PC has more than one screen, pick the one to see at the top
 - Copied text goes both ways while you may use the other PC's mouse and keyboard
+- Disconnect ends the session. Closing the window ends it too, so while a session runs the window asks first
 
 The connection
 
@@ -324,6 +325,12 @@ Easy access
 - With Start with Windows in Settings, PdaNet starts when you sign in to Windows, so after a restart this PC is reachable once someone signs in. PdaNet runs as your Windows user, not as a service, so easy access cannot show or use the Windows sign-in, lock or UAC screens, and the mouse and keyboard do not reach apps that run as administrator
 - While easy access waits, Connect to a screen still works. Easy access pauses while this PC views another one, and comes back after
 - Stop, here or in the tray, stops easy access until you share again or PdaNet starts again, also when this PC views another one in between. Turning easy access off forgets the code, turning it on again makes a new one
+
+Recent sessions
+
+- Under Recent sessions the Launchpad lists the last 10 sessions, newest first, one for each PC and way round: whose screen you viewed, and who saw yours, when and for how long
+- A PC that shares with easy access keeps its code, so a click on it connects again. Any other code works once, so the other person shares again and gives you a new code
+- The codes are kept encrypted with Windows, for your Windows user only. Right click a session to remove it, or press Clear to forget them all
 
 Safe by design
 

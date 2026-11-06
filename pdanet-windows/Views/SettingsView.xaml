@@ -460,6 +460,29 @@
                             </Grid.ColumnDefinitions>
                             <StackPanel Style="{StaticResource RowText}">
                                 <StackPanel Style="{StaticResource TitleRow}">
+                                    <TextBlock Text="Closing the window" Style="{StaticResource RowTitle}" />
+                                    <v:InfoTip Style="{StaticResource Info}" Heading="Closing the window"
+                                               Body="Ask lets you pick each time you close the window. Tray keeps PdaNet running by the clock, so your connection, screen share and easy access go on. Quit closes PdaNet completely"
+                                               Tip="Quit from the tray icon or with Ctrl and Q never asks" />
+                                </StackPanel>
+                                <TextBlock Text="What the close button of the window does" Style="{StaticResource RowHint}" />
+                            </StackPanel>
+                            <Border Grid.Column="1" Style="{StaticResource Seg.Host}">
+                                <StackPanel Orientation="Horizontal">
+                                    <RadioButton x:Name="CloseAsk" Style="{StaticResource Seg}" GroupName="CloseAction" Content="Ask" />
+                                    <RadioButton x:Name="CloseTray" Style="{StaticResource Seg}" GroupName="CloseAction" Content="Tray" />
+                                    <RadioButton x:Name="CloseQuit" Style="{StaticResource Seg}" GroupName="CloseAction" Content="Quit" />
+                                </StackPanel>
+                            </Border>
+                        </Grid>
+
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <StackPanel Style="{StaticResource TitleRow}">
                                     <TextBlock Text="Show desktop notifications" Style="{StaticResource RowTitle}" />
                                     <v:InfoTip Style="{StaticResource Info}" Heading="Desktop notifications"
                                                Body="Shows a small message in the corner when you go online, go offline, or get near your data limit, so you know what happened without opening the window" />
