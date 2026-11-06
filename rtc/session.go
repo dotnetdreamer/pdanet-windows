@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 )
@@ -51,8 +52,12 @@ type options struct {
 
 // tries is how an easy access code stands against wrong tries. The helper reports every change
 // and PdaNet keeps it, so a lockout and its doubling outlast a restart of the helper or of PdaNet.
+// So do the answers out: each lets whoever asked test a guess, so an answer only goes out once
+// PdaNet kept a report that counts it as open, and a helper that starts with open answers counts
+// them as wrong tries, since the helper that gave them stopped before their tries came back.
 type tries struct {
 	Wrong    int   `json:"wrong"`           // tries that went wrong this round
+	Open     int   `json:"open,omitempty"`  // answers out whose try has not come back
 	Lockouts int   `json:"lockouts"`        // rounds that ended in a lockout, see lockFor
 	Until    int64 `json:"until,omitempty"` // Unix seconds until which no try is answered
 }
@@ -96,6 +101,10 @@ type session struct {
 	box     *box
 	relayUp int
 
+	// The newest tries report PdaNet kept, and a note each time it keeps one, see tries.
+	kept     atomic.Int64
+	keptNote chan struct{}
+
 	done chan struct{}
 	once sync.Once
 }
@@ -116,7 +125,7 @@ func runSession(in io.Reader, out io.Writer) int {
 }
 
 func newSession(link *ipc, opt options) *session {
-	return &session{link: link, opt: opt, self: randHex(8), done: make(chan struct{})}
+	return &session{link: link, opt: opt, self: randHex(8), keptNote: make(chan struct{}, 1), done: make(chan struct{})}
 }
 
 func (s *session) run() int {
@@ -243,7 +252,8 @@ func (s *session) turnServers() []iceServer {
 	return s.turn
 }
 
-// readLoop takes what PdaNet sends: the screen, remote control and stop.
+// readLoop takes what PdaNet sends: the screen, remote control, word that it kept a tries
+// report, and stop.
 func (s *session) readLoop() {
 	for {
 		kind, payload, err := s.link.read()
@@ -255,12 +265,23 @@ func (s *session) readLoop() {
 		switch kind {
 		case kindJSON:
 			var c struct {
-				Op string `json:"op"`
+				Op  string `json:"op"`
+				Seq int64  `json:"seq"`
 			}
 			_ = json.Unmarshal(payload, &c)
 			switch c.Op {
 			case "stop":
 				s.end(event{Ev: "ended", Reason: "stopped"}, true)
+			case "kept":
+				// PdaNet kept the report with this number, and those before. This loop is
+				// the only one that writes it.
+				if c.Seq > s.kept.Load() {
+					s.kept.Store(c.Seq)
+				}
+				select {
+				case s.keptNote <- struct{}{}:
+				default:
+				}
 			case "keyframe":
 				if p != nil {
 					p.requestKeyframe()
@@ -288,6 +309,7 @@ type attempt struct {
 	pa         string
 	keys       *pakeKeys
 	reply      wireMsg
+	keep       int64 // the tries report PdaNet must keep before the reply goes out, 0 once it went
 	lastReply  time.Time
 	started    time.Time
 	working    bool
@@ -311,28 +333,54 @@ func (s *session) host() {
 	waitingSince := time.Now()
 
 	pending := map[string]*attempt{}
+	var partner string
 	wrong, lockouts := 0, 0
 	var lockedUntil time.Time
+	var reports int64
+	// report tells PdaNet how the easy access code stands, for it to keep, and gives the number
+	// PdaNet names once it kept it. Without easy access it tells nothing and gives 0.
+	report := func() int64 {
+		if !fixed {
+			return 0
+		}
+		t := tries{Wrong: wrong, Lockouts: lockouts}
+		for id := range pending {
+			if id != partner {
+				t.Open++
+			}
+		}
+		if !lockedUntil.IsZero() {
+			t.Until = lockedUntil.Unix()
+		}
+		reports++
+		s.link.event(event{Ev: "tries", Tries: &t, Seq: reports})
+		return reports
+	}
+	// lockOut ends a round of wrong tries at the easy access code. Its owner must still get in,
+	// so the code stays, and nobody gets another try for a while instead, longer each time.
+	lockOut := func() {
+		wait := lockFor(lockouts)
+		wrong, lockouts, lockedUntil = 0, lockouts+1, time.Now().Add(wait)
+		report()
+		s.link.event(event{Ev: "locked", Wait: int(wait.Seconds())})
+	}
 	if t := s.opt.Tries; fixed && t != nil {
-		wrong, lockouts = min(max(t.Wrong, 0), maxWrongTries-1), max(t.Lockouts, 0)
+		// The answers a helper before this one left open each let a guess be tested.
+		wrong, lockouts = max(t.Wrong, 0)+max(t.Open, 0), max(t.Lockouts, 0)
 		if t.Until > 0 {
 			lockedUntil = time.Unix(t.Until, 0)
 		}
-		if wait := time.Until(lockedUntil); wait > 0 {
-			s.link.event(event{Ev: "locked", Wait: int(wait.Seconds())})
-		}
-	}
-	// report tells PdaNet how the easy access code stands, for it to keep.
-	report := func() {
-		if fixed {
-			t := tries{Wrong: wrong, Lockouts: lockouts}
-			if !lockedUntil.IsZero() {
-				t.Until = lockedUntil.Unix()
+		if wrong >= maxWrongTries {
+			lockOut()
+		} else {
+			if t.Open > 0 {
+				report() // PdaNet keeps them as wrong tries now
 			}
-			s.link.event(event{Ev: "tries", Tries: &t})
+			if wait := time.Until(lockedUntil); wait > 0 {
+				s.link.event(event{Ev: "locked", Wait: int(wait.Seconds())})
+			}
 		}
 	}
-	var partner string
 	answers := make(chan wireMsg, 1)
 	restarts := make(chan wireMsg, 1)
 	var restartSDP string
@@ -345,19 +393,13 @@ func (s *session) host() {
 			s.link.event(event{Ev: "wrongtry", Left: maxWrongTries - wrong})
 			return
 		}
-		wrong = 0
 		clear(pending)
 		if fixed {
-			// The owner of an easy access code must still get in, so the code stays, and
-			// nobody gets another try for a while instead, longer each time.
-			wait := lockFor(lockouts)
-			lockouts++
-			lockedUntil = time.Now().Add(wait)
-			report()
-			s.link.event(event{Ev: "locked", Wait: int(wait.Seconds())})
+			lockOut()
 			return
 		}
 		// Too many wrong tries: whoever tries learns nothing more from this code.
+		wrong = 0
 		code = newCode()
 		rv = s.openRendezvous(code.room())
 		waitingSince = time.Now()
@@ -378,7 +420,7 @@ func (s *session) host() {
 					continue
 				}
 				if at := pending[m.F]; at != nil {
-					if at.pa == m.PA && time.Since(at.lastReply) > repeatEvery/2 {
+					if at.keep == 0 && at.pa == m.PA && time.Since(at.lastReply) > repeatEvery/2 {
 						at.lastReply = time.Now()
 						rv.publish(at.reply)
 					}
@@ -399,12 +441,18 @@ func (s *session) host() {
 					continue // not a real share, no try counted
 				}
 				reply := wireMsg{T: "reply", To: m.F, PB: b64(sp.share), CB: b64(keys.confirmB)}
-				pending[m.F] = &attempt{pa: m.PA, keys: keys, reply: reply, lastReply: time.Now(), started: time.Now()}
-				rv.publish(reply)
+				at := &attempt{pa: m.PA, keys: keys, reply: reply, started: time.Now()}
+				pending[m.F] = at
+				// With easy access the reply waits until PdaNet kept that it is out, so the guess
+				// counts even if this helper stops before the try comes back.
+				if at.keep = report(); at.keep == 0 {
+					at.lastReply = time.Now()
+					rv.publish(reply)
+				}
 
 			case "offer":
 				at := pending[m.F]
-				if m.To != s.self || at == nil || (partner != "" && partner != m.F) {
+				if m.To != s.self || at == nil || at.keep != 0 || (partner != "" && partner != m.F) {
 					continue
 				}
 				if at.answer != nil {
@@ -431,14 +479,16 @@ func (s *session) host() {
 				if err != nil || json.Unmarshal(plain, &offer) != nil || offer.SDP == "" {
 					continue
 				}
-				// The code is used: nobody else gets in with it. The others each got an answer,
-				// so each tested a guess, and counts as a wrong try.
+				// The code is used: nobody else gets in with it. Each of the others that got an
+				// answer tested a guess, and counts as a wrong try.
 				partner = m.F
 				at.working = true
-				for id := range pending {
+				for id, other := range pending {
 					if id != partner {
 						delete(pending, id)
-						wrong++
+						if other.keep == 0 {
+							wrong++
+						}
 					}
 				}
 				report()
@@ -500,6 +550,15 @@ func (s *session) host() {
 			restartAnswer = &a
 			rv.publish(a)
 
+		case <-s.keptNote:
+			kept := s.kept.Load()
+			for _, at := range pending {
+				if at.keep != 0 && at.keep <= kept {
+					at.keep, at.lastReply = 0, time.Now()
+					rv.publish(at.reply)
+				}
+			}
+
 		case <-tick.C:
 			s.reportRelays(rv)
 			if partner == "" && len(pending) == 0 && time.Since(waitingSince) > 20*time.Second {
@@ -507,9 +566,14 @@ func (s *session) host() {
 			}
 			if partner == "" {
 				for id, at := range pending {
-					if time.Since(at.started) > attemptTTL {
-						delete(pending, id)
+					if time.Since(at.started) <= attemptTTL {
+						continue
+					}
+					delete(pending, id)
+					if at.keep == 0 {
 						countWrong()
+					} else {
+						report() // never answered, so no guess was tested
 					}
 				}
 			} else if p := s.currentPeer(); p != nil && p.lostFor() > lostTimeout {

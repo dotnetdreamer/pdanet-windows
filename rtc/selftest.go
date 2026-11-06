@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pion/logging"
@@ -68,6 +69,7 @@ func runSelftest(args []string) int {
 	check("sealed messages", boxRoundTrip())
 	check("repeats, kinds of address, easy access waits", spacingAndKinds())
 	check("wrong guesses at an easy access code, and a restart", wrongTries())
+	check("answers out count when an easy access host stops", openTries())
 	_, err := loopback(route{Mode: "direct"}, route{Mode: "direct"}, options{Stun: []string{"none"}})
 	check("a whole session on this PC", err)
 	_, err = loopback(route{Mode: "direct"}, route{Mode: "direct"}, options{Stun: []string{"none"}, Code: "5550123456"})
@@ -178,6 +180,49 @@ func wrongTries() error {
 	return nil
 }
 
+// openTries plays strangers who test their guesses quietly, with no offer back, at a host that
+// stops before their tries time out, as PdaNet stops it to follow the phone or to view another
+// PC: the answers it gave count all the same. Three guesses get an answer, the host stops;
+// started again with what PdaNet kept, it answers two of five, stops, and once more started
+// again it is locked. And a host answers nobody before PdaNet kept that it does.
+func openTries() error {
+	hub := "mem+selftest-" + randHex(4)
+	code := pairCode("5550123456")
+	opt := options{Op: "host", Name: "Sharing PC", Code: string(code), Route: route{Mode: "direct"},
+		Relays: []string{hub}, Stun: []string{"none"}, NoLAN: true}
+	for _, r := range []struct{ guesses, answers int }{{3, 3}, {5, 2}, {5, 0}} {
+		host := startHelper(opt)
+		if _, err := host.waitFor("code", 5*time.Second); err != nil {
+			host.stop()
+			return fmt.Errorf("host: %w", err)
+		}
+		got := guess(hub, code.room(), r.guesses)
+		host.stop()
+		closeAll(got)
+		opt.Tries = host.keptTries()
+		if len(got) != r.answers {
+			return fmt.Errorf("of %d guesses %d got an answer, want %d, PdaNet keeps %+v", r.guesses, len(got), r.answers, opt.Tries)
+		}
+	}
+	if t := opt.Tries; t == nil || t.Lockouts != 1 || t.Open != 0 || time.Until(time.Unix(t.Until, 0)) < 14*time.Minute {
+		return fmt.Errorf("after five answers out PdaNet keeps %+v", opt.Tries)
+	}
+
+	opt.Tries = nil
+	host := startHelper(opt)
+	host.hold.Store(true)
+	defer host.stop()
+	if _, err := host.waitFor("code", 5*time.Second); err != nil {
+		return fmt.Errorf("host: %w", err)
+	}
+	got := guess(hub, code.room(), 1)
+	defer closeAll(got)
+	if len(got) != 0 {
+		return errors.New("a host answered before PdaNet kept that it did")
+	}
+	return nil
+}
+
 // guesser is a PC that guessed the code, and the host that answered it.
 type guesser struct {
 	rv   *rendezvous
@@ -229,6 +274,13 @@ func closeAll(gs []guesser) {
 	for _, g := range gs {
 		g.rv.close()
 	}
+}
+
+// keptTries is the newest tries report the fake PdaNet kept.
+func (f *fakePdaNet) keptTries() *tries {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.kept
 }
 
 // stop ends a helper the way PdaNet does, and waits for it to go.
@@ -328,12 +380,16 @@ func boxRoundTrip() error {
 	return nil
 }
 
-// fakePdaNet is the PdaNet side of a helper in this process.
+// fakePdaNet is the PdaNet side of a helper in this process. Like PdaNet it keeps each tries
+// report and says so, unless hold is set.
 type fakePdaNet struct {
 	link   *ipc
 	events chan event
 	ctl    chan []byte
 	video  chan []byte
+	hold   atomic.Bool
+	mu     sync.Mutex
+	kept   *tries
 }
 
 func startHelper(opt options) *fakePdaNet {
@@ -345,7 +401,7 @@ func startHelper(opt options) *fakePdaNet {
 		ctl:    make(chan []byte, 8),
 		video:  make(chan []byte, 8),
 	}
-	go func() { runSession(toHelperR, fromHelperW); _ = fromHelperW.Close() }()
+	go func() { runSession(toHelperR, fromHelperW); _ = fromHelperW.Close(); _ = toHelperR.Close() }()
 	start, _ := json.Marshal(opt)
 	_ = f.link.write(kindJSON, start)
 	go func() {
@@ -360,6 +416,13 @@ func startHelper(opt options) *fakePdaNet {
 			case kindJSON:
 				var e event
 				_ = json.Unmarshal(b, &e)
+				if e.Ev == "tries" && !f.hold.Load() {
+					f.mu.Lock()
+					f.kept = e.Tries
+					f.mu.Unlock()
+					// Not from this loop, which must go on reading: the pipes hold nothing.
+					go func() { _ = f.link.write(kindJSON, fmt.Appendf(nil, `{"op":"kept","seq":%d}`, e.Seq)) }()
+				}
 				f.events <- e
 			case kindCtl:
 				f.ctl <- b

@@ -440,16 +440,22 @@ internal sealed class ShareSession
                 _log.Warning("Screen sharing: " + Notice);
                 break;
             case "tries":
-                // Kept, so a lockout and its doubling outlast a restart of the helper or of PdaNet.
+                // Kept, so a lockout and its doubling outlast a restart of the helper or of PdaNet,
+                // and so does each guess an answer let someone test: the helper answers nobody until
+                // it hears this is saved. A helper this session let go never hears it.
                 if (Easy && e.TryGetProperty("tries", out var t))
                 {
                     _cfg.ShareEasyTries = new ShareTries
                     {
                         Wrong = Int(t, "wrong"),
+                        Open = Int(t, "open"),
                         Lockouts = Int(t, "lockouts"),
                         Until = t.TryGetProperty("until", out var u) && u.TryGetInt64(out var s) ? s : 0,
                     };
-                    ConfigManager.Instance.SaveConfig();
+                    if (ConfigManager.Instance.SaveConfig())
+                        _rtc?.SendJson(new { op = "kept", seq = e.TryGetProperty("seq", out var q) && q.TryGetInt64(out var n) ? n : 0 });
+                    else
+                        Notice = "PdaNet cannot save its settings, so easy access lets nobody in until it can";
                 }
                 break;
             case "found":
@@ -804,10 +810,11 @@ internal sealed class ShareSession
 
     /// <summary>
     /// Why the two PCs found no path, as far as the kinds of address each offered tell. A PC that
-    /// was done looking yet has no address the internet reaches, no "srflx" from the STUN servers,
-    /// no "public" one of its own and no "relay" one, most likely sits on a network that blocks
-    /// UDP. That stays a likely reason, not a sure one: ICE says what it found, not why. So the
-    /// words say what was seen and what may help, not what the network does.
+    /// was done looking yet found no public address, no "srflx" from the STUN servers, no "public"
+    /// one of its own and no "relay" one, most likely sits on a network that blocks UDP. That stays
+    /// a likely reason, not a sure one: ICE says what it found, not why. Nor does a public address
+    /// tell that the internet gets through to it, a firewall may keep it out. So the words say what
+    /// was seen and what may help, not what the network does.
     /// </summary>
     private string NoPathText()
     {
@@ -821,21 +828,21 @@ internal sealed class ShareSession
         bool relayDown = !hereRelay && ShareRelays.Configured(_cfg);
         if (ViaPhone)
             return hereShut
-                ? "Through your phone this PC got no address the internet reaches, the mobile network may not allow direct links, try Direct"
+                ? "Through your phone this PC found no public address, the mobile network may not allow direct links, try Direct"
                 : "The two PCs could not reach each other through your phone. Some mobile networks do not allow direct links, try Direct";
         if (!known)
             return relayDown
                 ? $"The two PCs could not reach each other, and the relay set up on this PC did not answer. {Test}"
                 : $"The two PCs could not reach each other. Some company and school networks block direct links, on such a PC {SetUp}";
-        if (hereShut && relayDown) return $"This PC got no address the internet reaches, and the relay set up on this PC did not answer. {Test}";
-        if (hereShut && thereShut) return $"Neither PC got an address the internet reaches, both networks may block direct links. On both PCs, {SetUp}";
-        if (thereShut) return $"{who} got no address the internet reaches, its network may block direct links. On that PC, {SetUp}";
-        if (hereShut) return $"This PC got no address the internet reaches, its network may block direct links. On this PC, {SetUp}";
+        if (hereShut && relayDown) return $"This PC found no public address, and the relay set up on this PC did not answer. {Test}";
+        if (hereShut && thereShut) return $"Neither PC found a public address, both networks may block direct links. On both PCs, {SetUp}";
+        if (thereShut) return $"{who} found no public address, its network may block direct links. On that PC, {SetUp}";
+        if (hereShut) return $"This PC found no public address, its network may block direct links. On this PC, {SetUp}";
         if (hereRelay || thereRelay) return $"The two PCs could not link up, not even through the relay. {Test}";
         return $"The two PCs could not link up directly, some networks do not allow it. On one of them, {SetUp}";
     }
 
-    /// <summary>A side done looking for addresses that found none the internet reaches.</summary>
+    /// <summary>A side done looking for addresses that found no public one.</summary>
     private static bool Unreached(string? kinds) =>
         kinds != null && !kinds.Contains("partial") && !kinds.Contains("srflx") && !kinds.Contains("public") && !kinds.Contains("relay");
 

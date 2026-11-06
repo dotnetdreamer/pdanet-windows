@@ -308,7 +308,7 @@ The connection
 - Direct links the two PCs the shortest way, straight across your network when they share one, else over the internet
 - Through your phone sends the screen through the phone PdaNet is connected to, in every mode, Phone VPN included, so it takes the phone's network and VPN. This counts against your mobile data. A still screen sends almost nothing, video and scrolling send the most
 - While PdaNet is connected to your phone, Through your phone is picked for you, else Direct. You can pick the other one before you start
-- When the two PCs cannot link up, PdaNet says whose network blocks it. A company or school network often does, on that PC set up a relay server, see below
+- When the two PCs cannot link up, PdaNet says which PC found no public address. Its network likely blocks direct links, as company and school networks often do. On that PC, set up a relay server, see below
 
 A relay server, for networks that block direct links
 
@@ -328,7 +328,7 @@ Easy access
 Safe by design
 
 - The code works once and only while you share. It answers at most five guesses, after five wrong ones the code changes
-- An easy access code stays the same, so it answers at most five guesses at a time, and after five wrong ones it takes no tries for a quarter of an hour, twice as long each time after, a day at most. This holds when PdaNet starts again. The code is kept encrypted with Windows, for your Windows user only
+- An easy access code stays the same, so after five wrong guesses it takes no tries for a quarter of an hour, twice as long each time after, a day at most. A guess counts from the moment it is answered, and PdaNet saves that first, so this holds when PdaNet starts again, even in the middle of a guess. The code is kept encrypted with Windows, for your Windows user only
 - Everything between the two PCs is encrypted end to end. The last six digits of the code never leave the two PCs, both prove they know them without sending them
 - To find each other, the two PCs leave sealed notes on public relays (Nostr, MQTT and ntfy). The relays never see the code, the screen or anything you type. Without internet, two PCs on the same network find each other there
 

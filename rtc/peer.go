@@ -303,8 +303,9 @@ func (p *peer) waitRelay(gathered <-chan struct{}) {
 }
 
 // candidateKinds lists the kinds of address an SDP offers, such as "host srflx", or "none":
-// "host" is an address on the PC's own network, "public" one the internet reaches with no NAT
-// in between, "srflx" the address a STUN server saw, "relay" one on a TURN server. "partial"
+// "host" is an address on the PC's own network, "public" one of the PC's own that is a public
+// address, which a firewall may still keep the internet from, "srflx" the address a STUN server
+// saw, "relay" one on a TURN server. "partial"
 // follows when the side sent its addresses before it was done looking, so a kind it lacks may
 // only have been late. A side done looking with none of public, srflx or relay heard nothing
 // back from the STUN servers, likely because its network keeps it off the internet over UDP.
@@ -342,17 +343,17 @@ func candidateKinds(sdp string) string {
 	return strings.Join(kinds, " ")
 }
 
-// sharedSpace is 100.64.0.0/10, which carriers use behind their NAT: not reachable from the internet.
+// sharedSpace is 100.64.0.0/10, which carriers use behind their NAT: the internet does not route it.
 var sharedSpace = net.IPNet{IP: net.IPv4(100, 64, 0, 0), Mask: net.CIDRMask(10, 32)}
 
-// publicIP tells an address the internet can reach without a NAT in between.
+// publicIP tells a public address, one the internet routes to with no NAT in between. It says
+// nothing of firewalls, so it does not tell that the internet gets through to it.
 func publicIP(ip net.IP) bool {
 	return ip.IsGlobalUnicast() && !ip.IsPrivate() && !sharedSpace.Contains(ip)
 }
 
 // noteCandidates keeps the kinds of address one side offered. Once both sides are known it
-// tells PdaNet and the log, so a session that finds no path can say whose network likely
-// blocks it.
+// tells PdaNet and the log, so a session that finds no path can say what each PC found.
 func (p *peer) noteCandidates(local bool, sdp string) {
 	kinds := candidateKinds(sdp)
 	p.mu.Lock()

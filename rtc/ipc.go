@@ -14,6 +14,8 @@ import (
 //	u32 little endian length of what follows | u8 kind | payload
 //
 // kindJSON frames are control messages: PdaNet sends {"op": ...}, the helper sends {"ev": ...}.
+// With easy access, PdaNet answers each {"ev":"tries","seq":n} with {"op":"kept","seq":n} once
+// it saved it, and the helper answers nobody before that, see tries.
 // kindVideo frames carry the screen. On the PC that shares, PdaNet sends u32 duration in
 // microseconds, u8 flags and H.264 Annex B. On the PC that views, the helper sends u8 flags,
 // u32 RTP timestamp and H.264 Annex B. kindCtl and kindLive frames are remote control
@@ -105,6 +107,7 @@ type event struct {
 	Left   int    `json:"left,omitempty"`
 	Wait   int    `json:"wait,omitempty"`  // seconds an easy access code takes no tries
 	Tries  *tries `json:"tries,omitempty"` // how the easy access code stands, for PdaNet to keep
+	Seq    int64  `json:"seq,omitempty"`   // the tries report's number, PdaNet answers {"op":"kept","seq":n}
 	Bps    int    `json:"bps,omitempty"`
 
 	// Stats, sent about once a second while connected.

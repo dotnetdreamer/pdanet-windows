@@ -78,11 +78,15 @@ public class AppConfig
 
 /// <summary>
 /// How an easy access code stands against wrong tries, as the screen sharing helper reports it:
-/// wrong tries this round, rounds that ended in a lockout, and when the current lockout ends.
+/// wrong tries this round, answers out whose try has not come back, rounds that ended in a
+/// lockout, and when the current lockout ends. An answer lets whoever asked test a guess, so the
+/// helper answers only once this is saved, and a helper that starts with answers open counts
+/// them as wrong tries.
 /// </summary>
 public class ShareTries
 {
     [JsonPropertyName("wrong")] public int Wrong { get; set; }
+    [JsonPropertyName("open")] public int Open { get; set; }
     [JsonPropertyName("lockouts")] public int Lockouts { get; set; }
     [JsonPropertyName("until")] public long Until { get; set; } // Unix seconds, 0 for none
 }

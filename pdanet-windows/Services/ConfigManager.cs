@@ -53,10 +53,11 @@ public sealed class ConfigManager
         return new AppConfig();
     }
 
-    public void SaveConfig()
+    /// <summary>Saves the settings, and tells whether they reached the disk.</summary>
+    public bool SaveConfig()
     {
         Validate(Config);
-        AtomicWrite(AppPaths.Config, JsonSerializer.Serialize(Config, JsonOpts));
+        return AtomicWrite(AppPaths.Config, JsonSerializer.Serialize(Config, JsonOpts));
     }
 
     private static void Validate(AppConfig c)
@@ -135,17 +136,19 @@ public sealed class ConfigManager
         return fallback;
     }
 
-    private static void AtomicWrite(string path, string content)
+    private static bool AtomicWrite(string path, string content)
     {
         try
         {
             var tmp = path + ".tmp";
             File.WriteAllText(tmp, content);
             File.Move(tmp, path, true);
+            return true;
         }
         catch (Exception e)
         {
             Logger.Instance.Error($"Could not save {Path.GetFileName(path)}: {e.Message}");
+            return false;
         }
     }
 }
