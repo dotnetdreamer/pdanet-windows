@@ -4,6 +4,7 @@ import (
 	"errors"
 	"maps"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pion/interceptor"
@@ -16,39 +17,62 @@ import (
 // A screen sends in bursts: nothing while it is still, a big frame when a window opens. The
 // pacer that comes with GCC sends at exactly the estimate, which makes a keyframe late by
 // its size. This one sends at 2.5 times the estimate, like browsers do, and lets a frame of a
-// few packets through at once. A packet never waits longer than maxQueueDelay: when the
-// estimate lags behind, a late packet is worse than a burst.
+// few packets through at once. When the estimate lags behind and packets pile up, it drains the
+// pile within drainTime instead of the estimate: never all at once, which a slow link would drop.
+//
+// Packets the viewer asked for again go before the screen's new ones: the viewer holds every
+// frame after a lost packet until the packet comes, and gives up after frameWait. Packets
+// leave numbered in the order they leave (the transport wide sequence number): moving a resend
+// ahead would otherwise look like loss and reordering in the feedback.
 //
 // The rate is GCC's estimate, or the floor the link meter allows when GCC lags behind what the
 // link showed it carries, see peer.target. Each packet that leaves is noted in the meter, which
 // times its arrival from the feedback.
 type burstPacer struct {
-	mu      sync.Mutex
-	writers map[uint32]interceptor.RTPWriter
-	queue   []pacedPacket
-	gcc     int     // bits per second GCC asks for
-	floor   int     // bits per second the link meter allows, 0 for none
-	rate    float64 // bytes per second
-	tokens  float64 // bytes that may go now, below zero means in debt
-	last    time.Time
-	meter   *linkMeter
-	wake    chan struct{}
-	done    chan struct{}
-	once    sync.Once
+	mu       sync.Mutex
+	writers  map[uint32]interceptor.RTPWriter
+	resend   []pacedPacket // asked for again, these go first
+	queue    []pacedPacket
+	queued   int  // bytes waiting in both
+	flushing bool // a batch is on its way out, new packets wait behind it
+	newest   map[uint32]uint16
+	gcc      int     // bits per second GCC asks for
+	floor    int     // bits per second the link meter allows, 0 for none
+	rate     float64 // bytes per second
+	tokens   float64 // bytes that may go now, below zero means in debt
+	last     time.Time
+	meter    *linkMeter
+
+	wmu  sync.Mutex    // held while a packet leaves, so the numbers go out in order
+	ext  atomic.Uint32 // the header extension of the transport wide sequence number, 0 until known
+	twcc uint16        // the next transport wide sequence number
+
+	wake chan struct{}
+	done chan struct{}
+	once sync.Once
 }
 
 type pacedPacket struct {
 	header  rtp.Header
 	payload []byte
 	attrs   interceptor.Attributes
+	size    int
 	at      time.Time
+	resend  resendTracker
+}
+
+// resendTracker is the handle Pion's NACK responder passes with a packet it sends again: it
+// lets the next resend of that packet wait until this one left.
+type resendTracker interface {
+	Retain()
+	Release(sent bool)
 }
 
 const (
 	pacingFactor  = 2.5
 	burstTime     = 25 * time.Millisecond
 	minBurstBytes = 16 * 1200
-	maxQueueDelay = 150 * time.Millisecond
+	drainTime     = 250 * time.Millisecond
 )
 
 var errUnknownSSRC = errors.New("pacer: unknown ssrc")
@@ -56,6 +80,7 @@ var errUnknownSSRC = errors.New("pacer: unknown ssrc")
 func newBurstPacer(bps int, meter *linkMeter) *burstPacer {
 	p := &burstPacer{
 		writers: map[uint32]interceptor.RTPWriter{},
+		newest:  map[uint32]uint16{},
 		meter:   meter,
 		wake:    make(chan struct{}, 1),
 		done:    make(chan struct{}),
@@ -69,6 +94,11 @@ func newBurstPacer(bps int, meter *linkMeter) *burstPacer {
 
 func (p *burstPacer) capacity() float64 {
 	return max(p.rate*burstTime.Seconds(), minBurstBytes)
+}
+
+// setExt names the header extension of the transport wide sequence number, once negotiated.
+func (p *burstPacer) setExt(id uint8) {
+	p.ext.Store(uint32(id))
 }
 
 // SetTargetBitrate takes GCC's estimate.
@@ -98,33 +128,79 @@ func (p *burstPacer) AddStream(ssrc uint32, w interceptor.RTPWriter) {
 	p.mu.Unlock()
 }
 
-// refill adds the tokens earned since the last call. Callers hold mu.
+// refill adds the tokens earned since the last call, faster while a pile waits: fast enough that
+// the oldest packet leaves within drainTime of when it came. Callers hold mu.
 func (p *burstPacer) refill(now time.Time) {
-	p.tokens = min(p.tokens+now.Sub(p.last).Seconds()*p.rate, p.capacity())
+	rate := p.rate
+	if p.queued > 0 {
+		oldest := now
+		if len(p.resend) > 0 {
+			oldest = p.resend[0].at
+		}
+		if len(p.queue) > 0 && p.queue[0].at.Before(oldest) {
+			oldest = p.queue[0].at
+		}
+		left := max(drainTime-now.Sub(oldest), 50*time.Millisecond)
+		rate = max(rate, float64(p.queued)/left.Seconds())
+	}
+	p.tokens = min(p.tokens+now.Sub(p.last).Seconds()*rate, max(p.capacity(), rate*burstTime.Seconds()))
 	p.last = now
+}
+
+// isResend tells a packet sent again: Pion's responder hands it with a resendTracker, and its
+// sequence number is not newer than the newest of its stream. Callers hold mu.
+func (p *burstPacer) isResend(h *rtp.Header, tr resendTracker) bool {
+	newest, ok := p.newest[h.SSRC]
+	if tr != nil || (ok && int16(h.SequenceNumber-newest) <= 0) {
+		return true
+	}
+	p.newest[h.SSRC] = h.SequenceNumber
+	return false
+}
+
+// trackerOf finds the responder's handle among the attributes, whose key type Pion keeps to itself.
+func trackerOf(attrs interceptor.Attributes) resendTracker {
+	for _, v := range attrs {
+		if tr, ok := v.(resendTracker); ok {
+			return tr
+		}
+	}
+	return nil
 }
 
 func (p *burstPacer) Write(h *rtp.Header, payload []byte, attrs interceptor.Attributes) (int, error) {
 	size := h.MarshalSize() + len(payload)
+	tr := trackerOf(attrs)
 	now := time.Now()
 	p.mu.Lock()
+	again := p.isResend(h, tr)
 	p.refill(now)
-	if len(p.queue) == 0 && p.tokens >= 0 {
+	if !p.flushing && len(p.queue) == 0 && len(p.resend) == 0 && p.tokens >= 0 {
 		p.tokens -= float64(size)
 		w := p.writers[h.SSRC]
 		p.mu.Unlock()
 		if w == nil {
 			return 0, errUnknownSSRC
 		}
-		p.note(h, len(payload))
-		return w.Write(h, payload, attrs)
+		return p.send(w, h, payload, attrs)
 	}
-	p.queue = append(p.queue, pacedPacket{
+	pk := pacedPacket{
 		header:  h.Clone(),
 		payload: append([]byte(nil), payload...),
 		attrs:   maps.Clone(attrs),
+		size:    size,
 		at:      now,
-	})
+	}
+	if tr != nil {
+		tr.Retain() // the responder lets go when Write returns, the packet has not left yet
+		pk.resend = tr
+	}
+	if again {
+		p.resend = append(p.resend, pk)
+	} else {
+		p.queue = append(p.queue, pk)
+	}
+	p.queued += size
 	p.mu.Unlock()
 	select {
 	case p.wake <- struct{}{}:
@@ -133,11 +209,18 @@ func (p *burstPacer) Write(h *rtp.Header, payload []byte, attrs interceptor.Attr
 	return size, nil
 }
 
-// note tells the meter a packet leaves now.
-func (p *burstPacer) note(h *rtp.Header, payload int) {
-	if p.meter != nil {
-		p.meter.onSent(h, payload)
+// send writes one packet with the next transport wide sequence number, and notes it in the meter.
+func (p *burstPacer) send(w interceptor.RTPWriter, h *rtp.Header, payload []byte, attrs interceptor.Attributes) (int, error) {
+	p.wmu.Lock()
+	defer p.wmu.Unlock()
+	if ext := uint8(p.ext.Load()); ext != 0 && len(h.GetExtension(ext)) >= 2 {
+		_ = h.SetExtension(ext, []byte{byte(p.twcc >> 8), byte(p.twcc)})
+		p.twcc++
 	}
+	if p.meter != nil {
+		p.meter.onSent(h, len(payload))
+	}
+	return w.Write(h, payload, attrs)
 }
 
 func (p *burstPacer) run() {
@@ -145,7 +228,7 @@ func (p *burstPacer) run() {
 	defer t.Stop()
 	for {
 		p.mu.Lock()
-		empty := len(p.queue) == 0
+		empty := len(p.queue) == 0 && len(p.resend) == 0
 		p.mu.Unlock()
 		if empty {
 			select {
@@ -167,25 +250,50 @@ func (p *burstPacer) flush() {
 	now := time.Now()
 	p.mu.Lock()
 	p.refill(now)
-	n := 0
-	for n < len(p.queue) && (p.tokens >= 0 || now.Sub(p.queue[n].at) > maxQueueDelay) {
-		p.tokens -= float64(p.queue[n].header.MarshalSize() + len(p.queue[n].payload))
-		n++
+	var batch []pacedPacket
+	nr, nq := 0, 0
+	for p.tokens >= 0 {
+		var pk pacedPacket
+		switch {
+		case nr < len(p.resend):
+			pk = p.resend[nr]
+			nr++
+		case nq < len(p.queue):
+			pk = p.queue[nq]
+			nq++
+		}
+		if pk.size == 0 {
+			break
+		}
+		p.tokens -= float64(pk.size)
+		p.queued -= pk.size
+		batch = append(batch, pk)
 	}
-	send := make([]pacedPacket, n)
-	to := make([]interceptor.RTPWriter, n)
-	copy(send, p.queue[:n])
-	for i := range send {
-		to[i] = p.writers[send[i].header.SSRC]
+	p.resend = append(p.resend[:0], p.resend[nr:]...)
+	p.queue = append(p.queue[:0], p.queue[nq:]...)
+	if len(batch) == 0 {
+		p.mu.Unlock()
+		return
 	}
-	p.queue = append(p.queue[:0], p.queue[n:]...)
+	to := make([]interceptor.RTPWriter, len(batch))
+	for i := range batch {
+		to[i] = p.writers[batch[i].header.SSRC]
+	}
+	p.flushing = true
 	p.mu.Unlock()
-	for i := range send {
+	for i := range batch {
+		sent := false
 		if to[i] != nil {
-			p.note(&send[i].header, len(send[i].payload))
-			_, _ = to[i].Write(&send[i].header, send[i].payload, send[i].attrs)
+			_, err := p.send(to[i], &batch[i].header, batch[i].payload, batch[i].attrs)
+			sent = err == nil
+		}
+		if batch[i].resend != nil {
+			batch[i].resend.Release(sent)
 		}
 	}
+	p.mu.Lock()
+	p.flushing = false
+	p.mu.Unlock()
 }
 
 func (p *burstPacer) Close() error {

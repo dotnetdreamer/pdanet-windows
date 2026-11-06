@@ -8,15 +8,16 @@ using PdaNetPortable.Share.Media;
 namespace PdaNetPortable.Share;
 
 /// <summary>
-/// The other PC's screen, from the link to a picture, on its own thread. Frames wait in a short
-/// queue; when this PC falls behind, frames are dropped instead of piling up delay. After a lost
-/// frame the picture holds still until the next keyframe, it never shows a damaged picture. The
-/// window takes the newest picture when it is ready to draw, from three buffers that rotate, so
-/// decoding never waits for drawing.
+/// The other PC's screen, from the link to a picture, on its own thread. Frames wait in a queue
+/// that holds the run of frames a resent packet lets go at once (each one is needed to decode the
+/// next); when this PC falls further behind, frames are dropped instead of piling up delay. After
+/// a lost frame the picture holds still until the next keyframe, it never shows a damaged picture.
+/// The window takes the newest picture when it is ready to draw, from three buffers that rotate,
+/// so decoding never waits for drawing.
 /// </summary>
 internal sealed class ViewerPipeline : IDisposable
 {
-    private readonly BlockingCollection<(byte[] Buffer, int Length)> _queue = new(new ConcurrentQueue<(byte[], int)>(), 4);
+    private readonly BlockingCollection<(byte[] Buffer, int Length)> _queue = new(new ConcurrentQueue<(byte[], int)>(), 120);
     private readonly Thread _thread;
     private readonly Action _askKeyframe;
     private readonly object _gate = new();

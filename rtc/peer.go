@@ -14,6 +14,7 @@ import (
 	"github.com/pion/interceptor"
 	"github.com/pion/interceptor/pkg/cc"
 	"github.com/pion/interceptor/pkg/gcc"
+	"github.com/pion/interceptor/pkg/nack"
 	"github.com/pion/rtcp"
 	"github.com/pion/rtp/codecs"
 	"github.com/pion/webrtc/v4"
@@ -39,6 +40,21 @@ const (
 	gatherWait   = 2500 * time.Millisecond // then send the candidates found so far, the local ones come first
 	relayWait    = 6 * time.Second         // with TURN servers, the most to wait for a relay address
 	keyGap       = 300 * time.Millisecond  // at most one keyframe request this often
+
+	// How long the PC that views holds the frames after a lost packet for the packet to come again,
+	// before it gives the frame up and asks for a keyframe. Through the phone and a relay a resend
+	// takes 300 to 900 ms, and the phone's link stalls for a second at times (2026-11-06); after
+	// 400 ms, as before, nearly every lost packet cost a keyframe, and keyframes, the largest
+	// frames, lost packets the most.
+	frameWait = 2 * time.Second
+	// Packets the PC that shares keeps to send again: frameWait at 16 Mbit/s.
+	resendKeep = 4096
+	// SRTP drops a packet that comes more than this many packets late as a replay. Pion's 64
+	// dropped most resends at a megabit and more, see nackGen.
+	srtpWindow = 4096
+	// Frames handed to PdaNet wait here: after a resend the frames held behind it come all at
+	// once, and each one is needed to decode the next.
+	videoQueue = 256
 
 	// The floor the link meter puts under GCC's estimate, see target.
 	floorShare = 0.8                   // of the best burst of the last seconds
@@ -82,6 +98,7 @@ type peer struct {
 	meter   *linkMeter // what the link carries, on the PC that shares
 	pacer   atomic.Pointer[burstPacer]
 	gccBps  atomic.Int64
+	rtt     atomic.Int64  // the round trip in nanoseconds, from the stats, for nackGen
 	ssrc    atomic.Uint32 // the screen's SSRC, on the PC that views
 	video   chan videoOut
 	videoMu sync.Mutex
@@ -155,12 +172,31 @@ func newPeer(cfg peerConfig) (*peer, error) {
 			return nil, err
 		}
 	}
-	// NACK (lost packets are sent again), RTCP reports and TWCC feedback.
-	if err := webrtc.RegisterDefaultInterceptors(m, reg); err != nil {
+	// Pion's default interceptors, with nackGen in place of Pion's NACK generator: lost packets
+	// are asked for and sent again, RTCP reports, stats and TWCC feedback.
+	responder, err := nack.NewResponderInterceptor(nack.ResponderSize(resendKeep))
+	if err != nil {
+		return nil, err
+	}
+	m.RegisterFeedback(webrtc.RTCPFeedback{Type: "nack"}, webrtc.RTPCodecTypeVideo)
+	m.RegisterFeedback(webrtc.RTCPFeedback{Type: "nack", Parameter: "pli"}, webrtc.RTPCodecTypeVideo)
+	reg.Add(responder)
+	reg.Add(&nackGenFactory{rtt: func() time.Duration { return time.Duration(p.rtt.Load()) }})
+	if err := webrtc.ConfigureRTCPReports(reg); err != nil {
+		return nil, err
+	}
+	if err := webrtc.ConfigureSimulcastExtensionHeaders(m); err != nil {
+		return nil, err
+	}
+	if err := webrtc.ConfigureStatsInterceptor(reg); err != nil {
+		return nil, err
+	}
+	if err := webrtc.ConfigureTWCCSender(m, reg); err != nil {
 		return nil, err
 	}
 
 	var se webrtc.SettingEngine
+	se.SetSRTPReplayProtectionWindow(srtpWindow)
 	se.SetICETimeouts(3*time.Second, 12*time.Second, time.Second)
 	se.SetICEMulticastDNSMode(ice.MulticastDNSModeDisabled)
 	se.SetSTUNGatherTimeout(3 * time.Second)
@@ -226,7 +262,7 @@ func newPeer(cfg peerConfig) (*peer, error) {
 	}
 	p.adopt(ctl)
 	p.adopt(live)
-	p.video = make(chan videoOut, 6)
+	p.video = make(chan videoOut, videoQueue)
 	go p.videoWriter()
 	pc.OnTrack(p.receive)
 	return p, nil
@@ -266,6 +302,9 @@ func (p *peer) answer(offer string) (string, error) {
 	for _, e := range sender.GetParameters().HeaderExtensions {
 		if e.URI == transportCC && e.ID > 0 && e.ID < 256 {
 			p.meter.setExt(uint8(e.ID))
+			if pc := p.pacer.Load(); pc != nil {
+				pc.setExt(uint8(e.ID))
+			}
 		}
 	}
 	return sdp, nil
@@ -622,11 +661,11 @@ func (p *peer) receive(tr *webrtc.TrackRemote, rx *webrtc.RTPReceiver) {
 		}
 	}()
 
-	// Frames wait for late or resent packets up to 400 ms, then the frame is given up and the
+	// Frames wait for late or resent packets up to frameWait, then the frame is given up and the
 	// next one asks for a keyframe. The builder hands a frame out once the first packet of the
 	// next one is in, so the PC that shares follows the last frame before a rest with a seal
 	// frame, see FramePlanner and TestBuilderHoldsTheLastFrame.
-	sb := samplebuilder.New(2048, &codecs.H264Packet{}, 90000, samplebuilder.WithMaxTimeDelay(400*time.Millisecond))
+	sb := samplebuilder.New(4096, &codecs.H264Packet{}, 90000, samplebuilder.WithMaxTimeDelay(frameWait))
 	p.requestKeyframe()
 	for {
 		pkt, _, err := tr.ReadRTP()
@@ -648,8 +687,9 @@ func (p *peer) receive(tr *webrtc.TrackRemote, rx *webrtc.RTPReceiver) {
 	}
 }
 
-// queueVideo hands a frame to the writer. When PdaNet falls behind, the frame is dropped
-// instead of piling up delay, and the next frame says so.
+// queueVideo hands a frame to the writer. When PdaNet falls far behind, the frame is dropped
+// instead of piling up delay, and the next frame says so. A run of frames that a resend let go
+// at once fits in the queue.
 func (p *peer) queueVideo(v videoOut) {
 	p.videoMu.Lock()
 	defer p.videoMu.Unlock()
@@ -896,6 +936,9 @@ func (p *peer) statsLoop() {
 				if v.Nominated && v.State == webrtc.StatsICECandidatePairStateSucceeded {
 					e.RTT = float64(int(v.CurrentRoundTripTime*10000)) / 10
 					sent, recv = v.BytesSent, v.BytesReceived
+					if v.CurrentRoundTripTime > 0 {
+						p.rtt.Store(int64(v.CurrentRoundTripTime * float64(time.Second)))
+					}
 				}
 			case webrtc.InboundRTPStreamStats:
 				lost, pkts = v.PacketsLost, v.PacketsReceived

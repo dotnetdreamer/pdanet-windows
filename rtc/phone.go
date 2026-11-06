@@ -273,6 +273,11 @@ func (n *phoneNet) lookup(host string) ([]net.IP, error) {
 	return ips, nil
 }
 
+// tunnelQueue is how many datagrams from the phone may wait for WebRTC to read them. The phone
+// helper's link sometimes stalls for a second and then hands over everything at once; at a few
+// megabits that is several hundred datagrams, and each one dropped here costs a resend.
+const tunnelQueue = 4096
+
 // tunnelConn is one UDP socket on the phone.
 type tunnelConn struct {
 	tcp    net.Conn
@@ -328,7 +333,7 @@ func dialTunnel(agent string) (*tunnelConn, error) {
 	t := &tunnelConn{
 		tcp:    c,
 		local:  local,
-		in:     make(chan datagram, 256),
+		in:     make(chan datagram, tunnelQueue),
 		dns:    make(chan string, 2),
 		rdl:    deadline.New(),
 		closed: make(chan struct{}),

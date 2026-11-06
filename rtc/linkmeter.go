@@ -39,12 +39,10 @@ type linkMeter struct {
 	capacity float64      // bits per second the link carried, 0 while unknown
 	target   int          // the bitrate the encoder has now, bounds what one burst may show
 
-	base      [baseBuckets]delayBucket // the lowest one way delay of each of the last seconds
-	standing  time.Duration            // how far above that lowest delay the latest burst started
-	standAt   time.Time
-	loss      float64 // the share of packets lost lately
-	reports   int
-	lostTotal int
+	base     [baseBuckets]delayBucket // the lowest one way delay of each of the last seconds
+	standing time.Duration            // how far above that lowest delay the latest burst started
+	standAt  time.Time
+	loss     float64 // the share of packets lost lately, see lossLocked
 }
 
 type sentPacket struct {
@@ -53,7 +51,13 @@ type sentPacket struct {
 	at    time.Duration // since the meter started
 	size  int
 	burst uint32
+	fate  byte // what the feedback said of it: 0 nothing yet, fateReceived or fateLost
 }
+
+const (
+	fateReceived byte = 1
+	fateLost     byte = 2
+)
 
 // burstAcc adds up the feedback of one burst.
 type burstAcc struct {
@@ -64,6 +68,8 @@ type burstAcc struct {
 	sendFirst, sendLast time.Duration
 	arrFirst, arrLast   time.Duration
 	minDelay            time.Duration
+	prevSend, prevArr   time.Duration // the packet before, by sequence number
+	bunched             int           // packets in the same arrival tick as the one before, though sent apart
 }
 
 type rateSample struct {
@@ -85,10 +91,13 @@ const (
 	sampleKeep     = 60 * time.Second       // a resting screen keeps its last burst this long
 	minSamplePkts  = 6
 	minSampleBytes = 8000
-	minArrSpan     = 2 * time.Millisecond // arrivals come in 250 µs steps, shorter spans are too coarse
-	minSendSpan    = 2 * time.Millisecond // a burst must have been spread out by the pacer, see finish
-	baseBuckets    = 10                   // the lowest delay over ten one second buckets
-	standingKeep   = 2 * time.Second      // a queue no burst measured again for this long counts as drained
+	arrivalTick    = 250 * time.Microsecond // the feedback tells arrivals in these steps
+	minArrSpan     = 2 * time.Millisecond   // shorter spans are too coarse for those steps
+	minSendSpan    = 2 * time.Millisecond   // a burst must have been spread out by the pacer, see finish
+	baseBuckets    = 10                     // the lowest delay over ten one second buckets
+	standingKeep   = 2 * time.Second        // a queue no burst measured again for this long counts as drained
+	lossWindow     = 2 * time.Second        // the loss counts the packets sent this lately
+	lossMinPkts    = 10                     // fewer with a known fate say nothing
 )
 
 func newLinkMeter() *linkMeter {
@@ -147,9 +156,11 @@ func (m *linkMeter) onFeedback(fb *rtcp.TransportLayerCC) {
 	deltas := fb.RecvDeltas
 	seq := fb.BaseSequenceNumber
 	left := int(fb.PacketStatusCount)
-	total, lost := 0, 0
+	// A packet can be in two feedbacks: Pion's recorder says again what it said before when a
+	// late packet comes in. Each counts once, and a late arrival turns a loss into an arrival.
 	visit := func(symbol uint16) {
-		p := m.sent[seq%sentRing]
+		slot := &m.sent[seq%sentRing]
+		p := *slot
 		known := p.ok && p.seq == seq
 		switch symbol {
 		case rtcp.TypeTCCPacketReceivedSmallDelta, rtcp.TypeTCCPacketReceivedLargeDelta:
@@ -157,14 +168,15 @@ func (m *linkMeter) onFeedback(fb *rtcp.TransportLayerCC) {
 				arrival += time.Duration(deltas[0].Delta) * time.Microsecond
 				deltas = deltas[1:]
 			}
-			if known {
-				total++
-				m.add(p, arrival, true)
+			if known && p.fate != fateReceived {
+				if p.fate == 0 {
+					m.add(p, arrival, true)
+				}
+				slot.fate = fateReceived
 			}
 		case rtcp.TypeTCCPacketNotReceived:
-			if known {
-				total++
-				lost++
+			if known && p.fate == 0 {
+				slot.fate = fateLost
 				m.add(p, 0, false)
 			}
 		}
@@ -185,11 +197,6 @@ func (m *linkMeter) onFeedback(fb *rtcp.TransportLayerCC) {
 				visit(s)
 			}
 		}
-	}
-	if total > 0 {
-		m.loss += (float64(lost)/float64(total) - m.loss) * 0.2
-		m.reports++
-		m.lostTotal += lost
 	}
 	// The newest burst is whole once the last packet sent is in and nothing followed it.
 	if m.cur.on && m.cur.id == m.burst && seq-1 == m.lastSeq && time.Since(m.start)-m.lastSend > burstGap {
@@ -221,7 +228,11 @@ func (m *linkMeter) add(p sentPacket, arrival time.Duration, received bool) {
 		c.sendFirst, c.sendLast = min(c.sendFirst, p.at), max(c.sendLast, p.at)
 		c.arrFirst, c.arrLast = min(c.arrFirst, arrival), max(c.arrLast, arrival)
 		c.minDelay = min(c.minDelay, delay)
+		if arrival-c.prevArr < arrivalTick && p.at-c.prevSend >= 2*arrivalTick {
+			c.bunched++
+		}
 	}
+	c.prevSend, c.prevArr = p.at, arrival
 	c.n++
 	c.bytes += p.size
 	m.noteDelay(p.at, delay)
@@ -244,12 +255,21 @@ func (m *linkMeter) finish() {
 	if c.n < minSamplePkts || c.bytes < minSampleBytes || c.lost*5 > c.n+c.lost {
 		return
 	}
+	// Packets the pacer sent apart that arrive in the same tick came out of a batch, not off the
+	// link: the phone helper's tunnel on the PC that views hands them over that way, and so does
+	// the one on the PC that shares in the phone lab. Their spacing says nothing.
+	if c.bunched*4 > c.n {
+		return
+	}
 	// Only a burst the pacer spread out tells what the link carries, and never more than it was
 	// sent at. A burst that left at once can also arrive at once: the phone helper's tunnel hands
 	// datagrams over in batches, which made bursts look like 20 to 75 Mbit/s on a link that
-	// carried half a megabit (2026-11-06).
+	// carried half a megabit (2026-11-06). A link spreads a burst out or keeps its spacing; one
+	// that arrives closer together than it left was held up and let go at once, by the phone's
+	// tunnel or a queue, and says nothing of the link either: those made the floor double the
+	// bitrate again and again until a queue stopped it (2026-11-06, the phone lab).
 	span, sendSpan := c.arrLast-c.arrFirst, c.sendLast-c.sendFirst
-	if span < minArrSpan || sendSpan < minSendSpan {
+	if span < minArrSpan || sendSpan < minSendSpan || span < sendSpan*4/5 {
 		return
 	}
 	bits := float64(c.bytes-c.firstSize) * 8
@@ -311,7 +331,32 @@ func (m *linkMeter) snapshot() (capacity float64, standing time.Duration, loss f
 	if time.Since(m.standAt) <= standingKeep {
 		standing = max(standing, m.standing)
 	}
-	return m.capacity, standing, m.loss
+	return m.capacity, standing, m.lossLocked()
+}
+
+// lossLocked is the share lost of the packets sent in the last lossWindow whose fate the
+// feedback told, or the last share while too few are known. Callers hold mu.
+func (m *linkMeter) lossLocked() float64 {
+	now := time.Since(m.start)
+	got, lost := 0, 0
+	seq := m.lastSeq
+	for range sentRing {
+		p := m.sent[seq%sentRing]
+		if !p.ok || p.seq != seq || now-p.at > lossWindow {
+			break
+		}
+		switch p.fate {
+		case fateReceived:
+			got++
+		case fateLost:
+			lost++
+		}
+		seq--
+	}
+	if got+lost >= lossMinPkts {
+		m.loss = float64(lost) / float64(got+lost)
+	}
+	return m.loss
 }
 
 // congested forgets the bursts measured so far: the link got slower than they showed.

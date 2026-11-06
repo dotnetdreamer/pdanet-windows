@@ -99,7 +99,8 @@ func TestBurstInTwoFeedbacks(t *testing.T) {
 }
 
 // A small burst says nothing of the link, nor does one whose arrivals are too close to time, nor
-// one that left all at once: that one can arrive all at once behind a tunnel that batches.
+// one that left all at once: that one can arrive all at once behind a tunnel that batches. Nor
+// does one that arrives closer together than it left.
 func TestBurstsThatSayNothing(t *testing.T) {
 	m := newTestMeter()
 	sendBurst(m, 1, 3, 0, paced)
@@ -111,6 +112,43 @@ func TestBurstsThatSayNothing(t *testing.T) {
 	sendBurst(m, 24, 20, 40*time.Millisecond, 0)
 	settle(m)
 	m.onFeedback(feedback(24, 20, 10, 40*time.Millisecond, time.Millisecond, nil))
+	// Spread over 19 ms by the pacer, in over 9.5 ms: held up on the way and let go at once.
+	sendBurst(m, 44, 20, 60*time.Millisecond, time.Millisecond)
+	settle(m)
+	m.onFeedback(feedback(44, 20, 10, 80*time.Millisecond, paced, nil))
+	if capacity, _, _ := m.snapshot(); capacity != 0 {
+		t.Fatalf("capacity %.0f, want none", capacity)
+	}
+}
+
+// A burst the pacer spread out that arrives in batches, several packets in one tick, came out of
+// a tunnel that held them, not off the link: it says nothing, however its batches are spaced.
+func TestBatchedBurstSaysNothing(t *testing.T) {
+	m := newTestMeter()
+	sendBurst(m, 1, 20, 0, time.Millisecond)
+	settle(m)
+	var arrivals []time.Duration
+	for i := 0; i < 20; i++ {
+		arrivals = append(arrivals, time.Duration(i/5)*6*time.Millisecond) // 4 batches of 5, 6 ms apart
+	}
+	fb := &rtcp.TransportLayerCC{BaseSequenceNumber: 1, PacketStatusCount: 20, ReferenceTime: 10}
+	var symbols []uint16
+	prev := time.Duration(0)
+	for _, at := range arrivals {
+		symbols = append(symbols, rtcp.TypeTCCPacketReceivedLargeDelta)
+		fb.RecvDeltas = append(fb.RecvDeltas, &rtcp.RecvDelta{Type: rtcp.TypeTCCPacketReceivedLargeDelta, Delta: int64((at - prev) / time.Microsecond)})
+		prev = at
+	}
+	for len(symbols) > 0 {
+		k := min(7, len(symbols))
+		list := append([]uint16(nil), symbols[:k]...)
+		for len(list) < 7 {
+			list = append(list, rtcp.TypeTCCPacketNotReceived)
+		}
+		fb.PacketChunks = append(fb.PacketChunks, &rtcp.StatusVectorChunk{SymbolSize: rtcp.TypeTCCSymbolSizeTwoBit, SymbolList: list})
+		symbols = symbols[k:]
+	}
+	m.onFeedback(fb)
 	if capacity, _, _ := m.snapshot(); capacity != 0 {
 		t.Fatalf("capacity %.0f, want none", capacity)
 	}
@@ -151,8 +189,25 @@ func TestLoss(t *testing.T) {
 	sendBurst(m, 1, 10, 0, paced)
 	settle(m)
 	m.onFeedback(feedback(1, 10, 10, 0, time.Millisecond, map[int]bool{2: true, 5: true, 7: true, 8: true, 9: true}))
-	if _, _, loss := m.snapshot(); loss < 0.09 || loss > 0.11 {
-		t.Fatalf("loss %v, want 0.1 (half the packets lost, averaged in at 0.2)", loss)
+	if _, _, loss := m.snapshot(); loss != 0.5 {
+		t.Fatalf("loss %v, want 0.5: half the packets lost", loss)
+	}
+}
+
+// A packet in two feedbacks counts once, and one said lost that came in late counts as come:
+// Pion's recorder says a stretch again when a late packet arrives.
+func TestLossCountsEachPacketOnce(t *testing.T) {
+	m := newTestMeter()
+	sendBurst(m, 1, 20, 0, paced)
+	settle(m)
+	m.onFeedback(feedback(1, 20, 10, 0, time.Millisecond, map[int]bool{4: true}))
+	m.onFeedback(feedback(1, 20, 10, 0, time.Millisecond, map[int]bool{4: true})) // the same again
+	if _, _, loss := m.snapshot(); loss != 0.05 {
+		t.Fatalf("loss %v, want 0.05: 1 of 20, counted once", loss)
+	}
+	m.onFeedback(feedback(1, 20, 10, 0, time.Millisecond, nil)) // packet 5 came in late after all
+	if _, _, loss := m.snapshot(); loss != 0 {
+		t.Fatalf("loss %v after the late arrival, want 0", loss)
 	}
 }
 
