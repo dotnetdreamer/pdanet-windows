@@ -6,12 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/pion/stun/v4"
 	"github.com/pion/transport/v5"
 	"github.com/pion/transport/v5/deadline"
 	"github.com/pion/transport/v5/stdnet"
@@ -42,6 +44,8 @@ type phoneNet struct {
 
 	mu  sync.Mutex
 	dns map[string][]net.IP
+
+	has6 bool // the phone has a public IPv6 address of its own, see findIPv6
 }
 
 func newPhoneNet(agent string) (*phoneNet, error) {
@@ -65,7 +69,96 @@ func newPhoneNet(agent string) (*phoneNet, error) {
 		Index: 1, MTU: 1400, Name: "phone", Flags: net.FlagUp | net.FlagRunning | net.FlagBroadcast,
 	})
 	ifc.AddAddress(&net.IPNet{IP: local.To4(), Mask: net.CIDRMask(32, 32)})
-	return &phoneNet{Net: std, agent: agent, iface: ifc, dns: map[string][]net.IP{}}, nil
+	n := &phoneNet{Net: std, agent: agent, iface: ifc, dns: map[string][]net.IP{}}
+	if ip := n.findIPv6(); ip != nil {
+		ifc.AddAddress(&net.IPNet{IP: ip, Mask: net.CIDRMask(128, 128)})
+		n.has6 = true
+		log.Printf("phone: the mobile network gives the phone IPv6, the other PC may be reached straight over it")
+	}
+	return n, nil
+}
+
+// findIPv6 asks a STUN server over IPv6, through the phone, which address it sees. Mobile
+// networks put IPv4 behind the carrier's NAT, where two PCs rarely reach each other without a
+// relay, but many give each phone a public IPv6 address with no NAT in front of it. The phone
+// helper's sockets take both kinds, so the phone's IPv6 address becomes one more address of
+// this network, and a PC on the other side with IPv6 can link up with it straight. The phone
+// only looks up IPv6 addresses for names when it has IPv6 itself, so on a network without it
+// the answer comes at once. The address is returned only when it is a public one.
+func (n *phoneNet) findIPv6() net.IP {
+	for _, server := range []string{"stun.l.google.com:19302", "stun.cloudflare.com:3478"} {
+		host, portText, _ := net.SplitHostPort(server)
+		port, _ := strconv.Atoi(portText)
+		ips, err := n.lookup(host)
+		if err != nil {
+			continue
+		}
+		var to net.IP
+		for _, ip := range ips {
+			if ip.To4() == nil && ip.IsGlobalUnicast() {
+				to = ip
+				break
+			}
+		}
+		if to == nil {
+			return nil // the phone looked up no IPv6 address: it has no IPv6
+		}
+		if ip := n.stunIPv6(&net.UDPAddr{IP: to, Port: port}); ip != nil {
+			return ip
+		}
+	}
+	return nil
+}
+
+// stunIPv6 sends a STUN binding request through the phone, three times within 1.2 seconds, and
+// reads the address the server saw.
+func (n *phoneNet) stunIPv6(server *net.UDPAddr) net.IP {
+	t, err := dialTunnel(n.agent)
+	if err != nil {
+		return nil
+	}
+	defer t.Close()
+	msg, err := stun.Build(stun.TransactionID, stun.BindingRequest)
+	if err != nil {
+		return nil
+	}
+	got := make(chan net.IP, 1)
+	go func() {
+		buf := make([]byte, 1500)
+		for {
+			k, _, err := t.ReadFrom(buf)
+			if err != nil {
+				return
+			}
+			reply := &stun.Message{Raw: append([]byte(nil), buf[:k]...)}
+			if reply.Decode() != nil || reply.TransactionID != msg.TransactionID {
+				continue
+			}
+			var xor stun.XORMappedAddress
+			if xor.GetFrom(reply) == nil {
+				got <- xor.IP
+				return
+			}
+		}
+	}()
+	deadline := time.After(1200 * time.Millisecond)
+	for try := 0; ; try++ {
+		if try < 3 {
+			if _, err := t.WriteTo(msg.Raw, server); err != nil {
+				return nil
+			}
+		}
+		select {
+		case ip := <-got:
+			if ip.To4() == nil && ip.IsGlobalUnicast() && !ip.IsPrivate() {
+				return ip
+			}
+			return nil
+		case <-deadline:
+			return nil
+		case <-time.After(400 * time.Millisecond):
+		}
+	}
 }
 
 func (n *phoneNet) Interfaces() ([]*transport.Interface, error) {

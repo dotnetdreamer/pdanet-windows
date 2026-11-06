@@ -116,6 +116,11 @@ type event struct {
 	Recv   int     `json:"recv,omitempty"`   // kbit/s
 	Target int     `json:"target,omitempty"` // kbit/s the link can take, on the PC that shares
 	Loss   float64 `json:"loss,omitempty"`   // percent
+
+	// On the PC that shares, what the target comes from, see peer.target.
+	Gcc      int `json:"gcc,omitempty"`      // kbit/s Google Congestion Control estimates
+	Capacity int `json:"capacity,omitempty"` // kbit/s the best recent burst arrived at
+	Queue    int `json:"queue,omitempty"`    // milliseconds of queue that does not drain
 }
 
 func (p *ipc) event(e event) {

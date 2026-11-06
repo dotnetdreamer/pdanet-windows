@@ -63,6 +63,8 @@ public partial class RemoteWindow : Window
             _dpi = e.NewDpi.DpiScaleX;
             if (_bitmap != null) SizePicture(_bitmap.PixelWidth, _bitmap.PixelHeight);
         };
+        Fitter.SizeChanged += (_, _) => UpdateScaling();
+        Surface.SizeChanged += (_, _) => UpdateScaling();
         Activated += (_, _) => UpdateHook();
         Deactivated += (_, _) =>
         {
@@ -136,7 +138,9 @@ public partial class RemoteWindow : Window
         var color = ((SolidColorBrush)Ui.Brush(key)).Color;
         StatusPill.Background = new SolidColorBrush(Ui.WithAlpha(color, 0x18));
         StatusPill.BorderBrush = new SolidColorBrush(Ui.WithAlpha(color, 0x55));
-        StatusPill.ToolTip = _s.Phase == SharePhase.Live ? $"{_s.Stats.Detail}, {_s.Stats.Fps} pictures a second" : null;
+        StatusPill.ToolTip = _s.Phase == SharePhase.Live
+            ? $"{_s.Stats.Detail}, {_s.Stats.Fps} pictures a second{ShareSession.DetailWords(_s.PathDetail)}"
+            : null;
 
         UpdateScreens();
         UpdateOverlay();
@@ -290,6 +294,23 @@ public partial class RemoteWindow : Window
     {
         Picture.Width = width / _dpi;
         Picture.Height = height / _dpi;
+        UpdateScaling();
+    }
+
+    /// <summary>
+    /// How the GPU scales the picture. Shown smaller, high quality (Fant) counts every pixel of
+    /// the picture into the pixel on screen, where linear filtering skips some and thin text
+    /// breaks up. At actual size, nearest neighbor keeps each pixel as it is, even where the
+    /// picture sits a fraction of a pixel off. Shown larger, linear is smooth enough.
+    /// </summary>
+    private void UpdateScaling()
+    {
+        if (_bitmap == null || Surface.ActualWidth <= 0 || Surface.ActualHeight <= 0) return;
+        double shown = !_fit ? 1 : Math.Min(Fitter.ActualWidth / Surface.ActualWidth, Fitter.ActualHeight / Surface.ActualHeight);
+        var mode = Math.Abs(shown - 1) < 0.01 ? BitmapScalingMode.NearestNeighbor
+            : shown < 1 ? BitmapScalingMode.HighQuality
+            : BitmapScalingMode.Linear;
+        if (RenderOptions.GetBitmapScalingMode(Picture) != mode) RenderOptions.SetBitmapScalingMode(Picture, mode);
     }
 
     private void FreePicture()
@@ -590,6 +611,7 @@ public partial class RemoteWindow : Window
         FitBtn.ToolTip = _fit ? "Actual size" : "Fit to the window";
         AutomationProperties.SetName(FitBtn, (string)FitBtn.ToolTip);
         Dispatcher.BeginInvoke(DispatcherPriority.Loaded, UpdatePointer);
+        Dispatcher.BeginInvoke(DispatcherPriority.Loaded, UpdateScaling);
     }
 
     private void OnFull(object sender, RoutedEventArgs e) => SetFull(!_full);

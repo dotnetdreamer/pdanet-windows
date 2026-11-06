@@ -21,6 +21,18 @@ internal sealed unsafe class H264Encoder : IVideoEncoder
     public bool OnGpu => _manager != null;
 
     /// <summary>
+    /// The encoder takes a quantizer for each frame (CODECAPI_AVEncVideoEncodeQP in quality mode,
+    /// as the GPUs' encoders and Microsoft's have it), else it runs constant bitrate.
+    /// </summary>
+    public bool ConstantQp { get; }
+
+    public int Qp
+    {
+        get => _qp;
+        set => _qp = Math.Clamp(value, 1, 51);
+    }
+
+    /// <summary>
     /// Each encoded frame: an H.264 access unit with start codes, its duration in 100 ns units and
     /// whether it is a keyframe. Valid during the call only. Raised the moment the encoder finishes
     /// a frame: on the encoder's own thread for a GPU encoder, inside Encode for the others.
@@ -48,9 +60,10 @@ internal sealed unsafe class H264Encoder : IVideoEncoder
     private byte[]? _sps, _pps;
     private readonly ArrayBufferWriter<byte> _encoded = new(256 << 10);
     private int _bitrate;
+    private int _qp = 30, _setQp = -1; // the quantizer asked for, and the one the encoder has
     private volatile bool _disposed;
 
-    private H264Encoder(IMFActivate activate, bool hardware, int width, int height, int fps, int bitrate, ID3D11Device? device)
+    private H264Encoder(IMFActivate activate, bool hardware, int width, int height, int fps, int bitrate, ID3D11Device? device, bool constantQp)
     {
         _activate = activate;
         Name = Mf.Name(activate);
@@ -83,8 +96,18 @@ internal sealed unsafe class H264Encoder : IVideoEncoder
         (_inId, _outId) = StreamIds(_mft);
         _api = CodecApi.Of(_mft);
         _api?.Set(CodecApi.LowLatencyMode, true);
-        _api?.Set(CodecApi.RateControlMode, CodecApi.RateCbr);
-        _api?.Set(CodecApi.MeanBitRate, (uint)bitrate);
+        // Constant QP where the encoder takes a quantizer for each frame: the app then makes a
+        // still screen sharp and a moving one fit the link, see FramePlanner. Else constant
+        // bitrate that follows the link.
+        ConstantQp = constantQp && _api != null && _api.IsSupported(CodecApi.EncodeQP)
+                     && _api.Set(CodecApi.RateControlMode, CodecApi.RateQuality)
+                     && _api.Set(CodecApi.EncodeQP, QpValue(_qp));
+        if (ConstantQp) _setQp = _qp;
+        else
+        {
+            _api?.Set(CodecApi.RateControlMode, CodecApi.RateCbr);
+            _api?.Set(CodecApi.MeanBitRate, (uint)bitrate);
+        }
         _api?.Set(CodecApi.BPictureCount, 0u);
         // Keyframes come on request, a long interval only bounds how long a damaged picture lasts.
         _api?.Set(CodecApi.GopSize, (uint)(fps * 60));
@@ -145,8 +168,10 @@ internal sealed unsafe class H264Encoder : IVideoEncoder
     /// <summary>
     /// Opens the best encoder for this size: the GPU's first, Microsoft's when that fails. With a
     /// <paramref name="device"/>, only a GPU encoder that reads textures from that device will do.
+    /// <paramref name="constantQp"/> false keeps constant bitrate, as the self-test compares.
     /// </summary>
-    public static H264Encoder Create(int width, int height, int fps, int bitrate, bool allowHardware = true, ID3D11Device? device = null)
+    public static H264Encoder Create(int width, int height, int fps, int bitrate, bool allowHardware = true, ID3D11Device? device = null,
+        bool constantQp = true)
     {
         Mf.Start();
         var tried = new List<string>();
@@ -155,7 +180,7 @@ internal sealed unsafe class H264Encoder : IVideoEncoder
             var flags = hardware ? EnumFlag.EnumFlagHardware : EnumFlag.EnumFlagSyncmft;
             foreach (var activate in Mf.Find(TransformCategoryGuids.VideoEncoder, flags, Mf.NV12, VideoFormatGuids.H264))
             {
-                try { return new H264Encoder(activate, hardware, width, height, fps, bitrate, device); }
+                try { return new H264Encoder(activate, hardware, width, height, fps, bitrate, device, constantQp); }
                 catch (Exception e)
                 {
                     tried.Add($"{Mf.Name(activate)}: {e.Message}");
@@ -187,7 +212,7 @@ internal sealed unsafe class H264Encoder : IVideoEncoder
     /// <summary>Follows the bitrate the link can take, small changes are skipped.</summary>
     public void SetBitrate(int bps)
     {
-        if (Math.Abs(bps - _bitrate) * 20 < _bitrate) return;
+        if (ConstantQp || Math.Abs(bps - _bitrate) * 20 < _bitrate) return;
         _bitrate = bps;
         _api?.Set(CodecApi.MeanBitRate, (uint)bps);
     }
@@ -226,6 +251,9 @@ internal sealed unsafe class H264Encoder : IVideoEncoder
         Submit(sample);
     }
 
+    /// <summary>The same quantizer in all four fields, for encoders that read the one of the frame type.</summary>
+    private static ulong QpValue(int qp) => (ulong)qp * 0x0001_0001_0001_0001UL;
+
     private void Submit(IMFSample sample)
     {
         if (_forceKey)
@@ -233,6 +261,7 @@ internal sealed unsafe class H264Encoder : IVideoEncoder
             _forceKey = false;
             _api?.Set(CodecApi.ForceKeyFrame, 1u);
         }
+        if (ConstantQp && _qp != _setQp && _api!.Set(CodecApi.EncodeQP, QpValue(_qp))) _setQp = _qp;
 
         if (_async)
         {

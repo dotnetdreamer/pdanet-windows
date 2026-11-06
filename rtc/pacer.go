@@ -18,13 +18,20 @@ import (
 // its size. This one sends at 2.5 times the estimate, like browsers do, and lets a frame of a
 // few packets through at once. A packet never waits longer than maxQueueDelay: when the
 // estimate lags behind, a late packet is worse than a burst.
+//
+// The rate is GCC's estimate, or the floor the link meter allows when GCC lags behind what the
+// link showed it carries, see peer.target. Each packet that leaves is noted in the meter, which
+// times its arrival from the feedback.
 type burstPacer struct {
 	mu      sync.Mutex
 	writers map[uint32]interceptor.RTPWriter
 	queue   []pacedPacket
+	gcc     int     // bits per second GCC asks for
+	floor   int     // bits per second the link meter allows, 0 for none
 	rate    float64 // bytes per second
 	tokens  float64 // bytes that may go now, below zero means in debt
 	last    time.Time
+	meter   *linkMeter
 	wake    chan struct{}
 	done    chan struct{}
 	once    sync.Once
@@ -46,9 +53,10 @@ const (
 
 var errUnknownSSRC = errors.New("pacer: unknown ssrc")
 
-func newBurstPacer(bps int) *burstPacer {
+func newBurstPacer(bps int, meter *linkMeter) *burstPacer {
 	p := &burstPacer{
 		writers: map[uint32]interceptor.RTPWriter{},
+		meter:   meter,
 		wake:    make(chan struct{}, 1),
 		done:    make(chan struct{}),
 		last:    time.Now(),
@@ -63,10 +71,25 @@ func (p *burstPacer) capacity() float64 {
 	return max(p.rate*burstTime.Seconds(), minBurstBytes)
 }
 
+// SetTargetBitrate takes GCC's estimate.
 func (p *burstPacer) SetTargetBitrate(bps int) {
 	p.mu.Lock()
-	p.rate = float64(bps) * pacingFactor / 8
+	p.gcc = bps
+	p.setRate()
 	p.mu.Unlock()
+}
+
+// SetFloor takes the rate the link meter allows, 0 for none.
+func (p *burstPacer) SetFloor(bps int) {
+	p.mu.Lock()
+	p.floor = bps
+	p.setRate()
+	p.mu.Unlock()
+}
+
+// setRate paces at the higher of the two. Callers hold mu.
+func (p *burstPacer) setRate() {
+	p.rate = float64(max(p.gcc, p.floor)) * pacingFactor / 8
 }
 
 func (p *burstPacer) AddStream(ssrc uint32, w interceptor.RTPWriter) {
@@ -93,6 +116,7 @@ func (p *burstPacer) Write(h *rtp.Header, payload []byte, attrs interceptor.Attr
 		if w == nil {
 			return 0, errUnknownSSRC
 		}
+		p.note(h, len(payload))
 		return w.Write(h, payload, attrs)
 	}
 	p.queue = append(p.queue, pacedPacket{
@@ -107,6 +131,13 @@ func (p *burstPacer) Write(h *rtp.Header, payload []byte, attrs interceptor.Attr
 	default:
 	}
 	return size, nil
+}
+
+// note tells the meter a packet leaves now.
+func (p *burstPacer) note(h *rtp.Header, payload int) {
+	if p.meter != nil {
+		p.meter.onSent(h, payload)
+	}
 }
 
 func (p *burstPacer) run() {
@@ -151,6 +182,7 @@ func (p *burstPacer) flush() {
 	p.mu.Unlock()
 	for i := range send {
 		if to[i] != nil {
+			p.note(&send[i].header, len(send[i].payload))
 			_, _ = to[i].Write(&send[i].header, send[i].payload, send[i].attrs)
 		}
 	}

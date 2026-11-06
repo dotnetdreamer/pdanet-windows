@@ -12,9 +12,10 @@ namespace PdaNetPortable.Share;
 /// The screen of the PC that shares, from capture to the link, on one thread.
 ///
 /// Nothing runs while the screen is still: Desktop Duplication wakes the thread when something
-/// changes and says what changed, only those rectangles are converted, and the encoder gets a
-/// frame at most at the frame rate. When the screen settles, two more frames of the same picture
-/// let the encoder sharpen it, so text ends up crisp. The bitrate follows what the link can take.
+/// changes and says what changed, only those rectangles are converted, and FramePlanner decides
+/// when the next frame goes and at which quantizer: moving content at what the link carries
+/// right then, and once the screen rests, refine frames that bring it to near lossless, so text
+/// ends up crisp. The bitrate follows what the link can take.
 /// </summary>
 internal sealed class HostPipeline : IDisposable
 {
@@ -26,6 +27,7 @@ internal sealed class HostPipeline : IDisposable
     private volatile Quality _quality = Quality.Auto;
     private volatile int _sourceWidth, _sourceHeight, _scale = 1;
     private volatile bool _hardware = true;
+    private volatile FramePlanner? _planner;
 
     public List<ShareScreen> Screens { get; private set; } = ShareScreen.All();
     public ShareScreen Screen => Screens[Math.Clamp(_screenIndex, 0, Screens.Count - 1)];
@@ -56,7 +58,11 @@ internal sealed class HostPipeline : IDisposable
     public void RequestKeyframe() => _keyframe = true;
 
     /// <summary>What the link can take, from the congestion control in the helper.</summary>
-    public void SetBitrate(int bps) => _bitrate = Math.Clamp(bps, 150_000, 40_000_000);
+    public void SetBitrate(int bps)
+    {
+        _bitrate = Math.Clamp(bps, 150_000, 40_000_000);
+        if (_planner is { } p) p.LinkBps = _bitrate;
+    }
 
     public void PickScreen(int index)
     {
@@ -65,11 +71,13 @@ internal sealed class HostPipeline : IDisposable
         _reopen = true;
     }
 
+    /// <summary>The trade of frames for sharpness the viewer picked. The planner follows at once; only a new size opens the encoder again.</summary>
     public void SetQuality(Quality q)
     {
         if (q == _quality) return;
         _quality = q;
-        _reopen = true;
+        if (_planner is { } p) p.Quality = q;
+        if (_sourceWidth > 0 && ScaleFor(_sourceWidth, _sourceHeight, _hardware) != _scale) _reopen = true;
     }
 
     /// <summary>The viewer's screen size: a screen twice as big is sent at half size, the viewer could not show more.</summary>
@@ -80,7 +88,11 @@ internal sealed class HostPipeline : IDisposable
         if (_sourceWidth > 0 && ScaleFor(_sourceWidth, _sourceHeight, _hardware) != _scale) _reopen = true;
     }
 
-    private int Fps => _quality switch { Quality.Smooth => 60, Quality.Sharp => 20, _ => 30 };
+    /// <summary>
+    /// The frame rate the encoder is set up for, the most the planner sends: 60, or 30 for a frame
+    /// too big for H.264 level 5.1 at 60, which decoders may hold the stream to.
+    /// </summary>
+    private static int EncoderFps(int width, int height) => (width + 15) / 16 * ((height + 15) / 16) * 60 <= 983_040 ? 60 : 30;
 
     private int ScaleFor(int width, int height, bool hardware)
     {
@@ -94,7 +106,7 @@ internal sealed class HostPipeline : IDisposable
     private void Run()
     {
         var dirty = new List<Dirty>(64);
-        var pending = new List<Dirty>(64);
+        var pending = new List<Dirty>(64); // what changed since the last frame, for the processor path
         int failures = 0;
         while (!_stop)
         {
@@ -115,17 +127,29 @@ internal sealed class HostPipeline : IDisposable
                     // The processor path: the picture comes to memory, ColorConvert turns it into NV12.
                     source = ScreenSources.Open(screen);
                     scale = ScaleFor(source.Width, source.Height, hardware: true);
-                    var mf = H264Encoder.Create((source.Width / scale) & ~1, (source.Height / scale) & ~1, Fps, Target());
+                    int w = (source.Width / scale) & ~1, h = (source.Height / scale) & ~1;
+                    var mf = H264Encoder.Create(w, h, EncoderFps(w, h), Target());
                     if (!mf.Hardware && scale == 1 && ScaleFor(source.Width, source.Height, hardware: false) == 2)
                     {
                         scale = 2;
                         mf.Dispose();
-                        mf = H264Encoder.Create((source.Width / 2) & ~1, (source.Height / 2) & ~1, Fps, Target(), allowHardware: false);
+                        (w, h) = ((source.Width / 2) & ~1, (source.Height / 2) & ~1);
+                        mf = H264Encoder.Create(w, h, EncoderFps(w, h), Target(), allowHardware: false);
                     }
                     encoder = mf;
                     frame = new Nv12Frame(encoder.Width, encoder.Height);
                 }
-                encoder.Output = Send;
+                var planner = new FramePlanner(encoder.Width, encoder.Height, scale, encoder.ConstantQp, EncoderFps(encoder.Width, encoder.Height))
+                {
+                    Quality = _quality,
+                    LinkBps = _bitrate,
+                };
+                _planner = planner;
+                encoder.Output = (au, duration, key) =>
+                {
+                    planner.Encoded(au.Length * 8);
+                    Send(au, duration, key);
+                };
                 (_sourceWidth, _sourceHeight, _scale, _hardware) = (source!.Width, source.Height, scale, encoder.Hardware);
                 Encoder = encoder.Name + (encoder.Hardware ? "" : " (software)");
                 Capture = source.Kind + (gpu != null ? ", all on the GPU" : "");
@@ -133,47 +157,42 @@ internal sealed class HostPipeline : IDisposable
                 Rotation = source.Rotation;
                 _cursor.Reset();
                 Changed?.Invoke();
-                Logger.Instance.Info($"Screen sharing {screen.DeviceName} at {Size}, {Fps} fps, with {Encoder} and {Capture}");
+                string rate = encoder is D3D12H264Encoder d ? d.RateMode : encoder.ConstantQp ? "constant QP" : "constant bitrate";
+                Logger.Instance.Info($"Screen sharing {screen.DeviceName} at {Size}, up to {EncoderFps(encoder.Width, encoder.Height)} fps, with {Encoder} ({rate}) and {Capture}");
 
                 pending.Clear();
                 var clock = Stopwatch.StartNew();
-                long last = -1, lastChange = -1;
-                int refines = 2, interval = 1000 / Fps;
+                long last = -1;
                 _keyframe = true;
                 while (!_stop && !_reopen)
                 {
                     long now = clock.ElapsedMilliseconds;
-                    // Sleep until the next frame may go, the next refine is due, or something changes.
-                    int wait = pending.Count > 0 ? (int)Math.Max(0, last + interval - now)
-                        : refines < 2 ? (int)Math.Max(0, lastChange + RefineDelay(refines) - now)
-                        : 100;
-                    dirty.Clear();
-                    var r = source.Next(Math.Min(wait, 100), dirty);
-                    _cursor.Poll(screen);
-                    if (r == CaptureResult.Lost)
+                    var plan = planner.Next(now, _keyframe);
+                    if (plan.Kind == FrameKind.None)
                     {
-                        lost = true;
-                        break;
-                    }
-                    now = clock.ElapsedMilliseconds;
-                    if (r == CaptureResult.Frame)
-                    {
-                        pending.AddRange(dirty);
-                        lastChange = now;
-                        refines = 0;
-                        // The screen shows again after a private one.
-                        failures = 0;
-                        if (Hidden)
+                        // Sleep until the planner wants to look again, or something changes.
+                        dirty.Clear();
+                        var r = source.Next(plan.WaitMs, dirty);
+                        _cursor.Poll(screen);
+                        if (r == CaptureResult.Lost)
                         {
-                            Hidden = false;
-                            Changed?.Invoke();
+                            lost = true;
+                            break;
                         }
+                        if (r == CaptureResult.Frame)
+                        {
+                            pending.AddRange(dirty);
+                            planner.Changed(dirty, clock.ElapsedMilliseconds);
+                            // The screen shows again after a private one.
+                            failures = 0;
+                            if (Hidden)
+                            {
+                                Hidden = false;
+                                Changed?.Invoke();
+                            }
+                        }
+                        continue;
                     }
-
-                    bool due = pending.Count > 0 && now - last >= interval;
-                    bool refine = pending.Count == 0 && refines < 2 && lastChange >= 0 && now - lastChange >= RefineDelay(refines);
-                    bool key = _keyframe;
-                    if (!due && !refine && !key) continue;
 
                     if (pending.Count > 0)
                     {
@@ -181,14 +200,15 @@ internal sealed class HostPipeline : IDisposable
                         if (frame != null) Convert(source, pending, frame, scale);
                         pending.Clear();
                     }
-                    if (refine) refines++;
-                    if (key)
+                    if (plan.Kind == FrameKind.Key)
                     {
                         _keyframe = false;
                         encoder.RequestKeyframe();
                     }
-                    encoder.SetBitrate(Target());
-                    long durationMs = last < 0 ? interval : Math.Clamp(now - last, 1, 1000);
+                    if (encoder.ConstantQp) encoder.Qp = plan.Qp;
+                    else encoder.SetBitrate(Target());
+                    long durationMs = last < 0 ? 33 : Math.Clamp(now - last, 1, 1000);
+                    planner.Sent(plan, now);
                     if (gpu != null) encoder.Encode(gpu.Convert(), now * 10_000, durationMs * 10_000);
                     else encoder.Encode(frame!, now * 10_000, durationMs * 10_000);
                     last = now;
@@ -202,6 +222,7 @@ internal sealed class HostPipeline : IDisposable
             }
             finally
             {
+                _planner = null;
                 frame?.Dispose();
                 encoder?.Dispose();
                 gpu?.Dispose();
@@ -226,7 +247,8 @@ internal sealed class HostPipeline : IDisposable
         }
     }
 
-    private static int RefineDelay(int refines) => refines == 0 ? 160 : 700;
+    /// <summary>What went over the last <paramref name="seconds"/>, for the log: frames, quantizers and bits.</summary>
+    public string? Describe(double seconds) => _planner?.Describe(seconds);
 
     private static bool _gpuChecked, _gpuWorks;
     private static string? _gpuProblem;
@@ -264,7 +286,7 @@ internal sealed class HostPipeline : IDisposable
                 D3D12H264Encoder? d3d12 = null;
                 try
                 {
-                    d3d12 = new D3D12H264Encoder(source.Device, source.Context, w, h, Fps, Target());
+                    d3d12 = new D3D12H264Encoder(source.Device, source.Context, w, h, EncoderFps(w, h), Target());
                     gpu = new GpuConverter(source.Device, source.Context, null, source.Width, source.Height, w, h, d3d12.Input);
                     source.FrameArrived = gpu.Convert;
                     return (source, gpu, d3d12, scale);
@@ -281,7 +303,7 @@ internal sealed class HostPipeline : IDisposable
                 }
             }
             gpu = new GpuConverter(source.Device, source.Context, source.Picture, source.Width, source.Height, w, h);
-            var encoder = H264Encoder.Create(w, h, Fps, Target(), device: source.Device);
+            var encoder = H264Encoder.Create(w, h, EncoderFps(w, h), Target(), device: source.Device);
             return (source, gpu, encoder, scale);
         }
         catch (Exception e)
@@ -307,7 +329,7 @@ internal sealed class HostPipeline : IDisposable
         Interlocked.Add(ref BytesSent, au.Length);
     }
 
-    /// <summary>The bitrate for the encoder: what the link takes, less the packet overhead.</summary>
+    /// <summary>The bitrate for an encoder that keeps it itself: what the link takes, less the packet overhead.</summary>
     private int Target()
     {
         double share = _quality == Quality.Sharp ? 0.92 : 0.88;

@@ -36,6 +36,15 @@ const (
 	gatherWait   = 2500 * time.Millisecond // then send the candidates found so far, the local ones come first
 	relayWait    = 6 * time.Second         // with TURN servers, the most to wait for a relay address
 	keyGap       = 300 * time.Millisecond  // at most one keyframe request this often
+
+	// The floor the link meter puts under GCC's estimate, see target.
+	floorShare = 0.8                   // of the best burst of the last seconds
+	queueOn    = 25 * time.Millisecond // the floor holds while the standing queue stays below this
+	queueOff   = 60 * time.Millisecond // and goes away above this, or with more loss than lossOff
+	lossOn     = 0.04
+	lossOff    = 0.10
+
+	transportCC = "http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01"
 )
 
 type peerConfig struct {
@@ -67,6 +76,9 @@ type peer struct {
 
 	track   *webrtc.TrackLocalStaticSample // the screen, on the PC that shares
 	bwe     atomic.Pointer[estimator]
+	meter   *linkMeter // what the link carries, on the PC that shares
+	pacer   atomic.Pointer[burstPacer]
+	gccBps  atomic.Int64
 	ssrc    atomic.Uint32 // the screen's SSRC, on the PC that views
 	video   chan videoOut
 	videoMu sync.Mutex
@@ -84,6 +96,7 @@ type peer struct {
 	lastKeyEv   time.Time
 	lastTarget  int
 	lastTargetT time.Time
+	floorOn     bool
 	statsOn     bool
 	closeOnce   sync.Once
 	closed      chan struct{}
@@ -92,7 +105,7 @@ type peer struct {
 type estimator struct{ cc.BandwidthEstimator }
 
 func newPeer(cfg peerConfig) (*peer, error) {
-	p := &peer{cfg: cfg, link: cfg.link, needRestart: make(chan struct{}, 1), closed: make(chan struct{})}
+	p := &peer{cfg: cfg, link: cfg.link, needRestart: make(chan struct{}, 1), closed: make(chan struct{}), floorOn: true}
 
 	m := &webrtc.MediaEngine{}
 	if err := m.RegisterCodec(webrtc.RTPCodecParameters{
@@ -112,13 +125,18 @@ func newPeer(cfg peerConfig) (*peer, error) {
 	reg := &interceptor.Registry{}
 	if cfg.host {
 		// Google Congestion Control: the PC that shares learns how much the link takes and tells
-		// PdaNet, which sets the encoder to match. The pacer smooths what the encoder sends.
+		// PdaNet, which sets the encoder to match. The pacer smooths what the encoder sends and
+		// notes each packet for the link meter, which keeps GCC from sinking below what the
+		// link shows it carries, see target.
+		p.meter = newLinkMeter()
 		ccf, err := cc.NewInterceptor(func() (cc.BandwidthEstimator, error) {
+			pacer := newBurstPacer(startBitrate, p.meter)
+			p.pacer.Store(pacer)
 			return gcc.NewSendSideBWE(
 				gcc.SendSideBWEInitialBitrate(startBitrate),
 				gcc.SendSideBWEMinBitrate(minBitrate),
 				gcc.SendSideBWEMaxBitrate(maxBitrate),
-				gcc.SendSideBWEPacer(newBurstPacer(startBitrate)),
+				gcc.SendSideBWEPacer(pacer),
 			)
 		})
 		if err != nil {
@@ -126,7 +144,8 @@ func newPeer(cfg peerConfig) (*peer, error) {
 		}
 		ccf.OnNewPeerConnection(func(_ string, e cc.BandwidthEstimator) {
 			p.bwe.Store(&estimator{e})
-			e.OnTargetBitrateChange(p.onTarget)
+			p.gccBps.Store(int64(e.GetTargetBitrate()))
+			e.OnTargetBitrateChange(p.onGCC)
 		})
 		reg.Add(ccf)
 		if err := webrtc.ConfigureTWCCHeaderExtensionSender(m, reg); err != nil {
@@ -145,7 +164,10 @@ func newPeer(cfg peerConfig) (*peer, error) {
 	types := []webrtc.NetworkType{webrtc.NetworkTypeUDP4, webrtc.NetworkTypeUDP6}
 	if cfg.pnet != nil {
 		se.SetNet(cfg.pnet)
-		types = types[:1]
+		// IPv6 only where the phone's mobile network gave the phone an address of its own there.
+		if !cfg.pnet.has6 {
+			types = types[:1]
+		}
 	}
 	se.SetNetworkTypes(types)
 	if cfg.keepIP != nil {
@@ -233,7 +255,17 @@ func (p *peer) answer(offer string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return p.local(a)
+	sdp, err := p.local(a)
+	if err != nil {
+		return "", err
+	}
+	// The link meter reads the transport wide sequence number of each packet it times.
+	for _, e := range sender.GetParameters().HeaderExtensions {
+		if e.URI == transportCC && e.ID > 0 && e.ID < 256 {
+			p.meter.setExt(uint8(e.ID))
+		}
+	}
+	return sdp, nil
 }
 
 // accept takes the answer on the PC that views.
@@ -343,6 +375,35 @@ func candidateKinds(sdp string) string {
 	return strings.Join(kinds, " ")
 }
 
+// candidateFamilies tells which address families an SDP offers candidates in: "IPv4", "IPv6"
+// or both, for the log, so a session that ends on a relay shows whether IPv6 could have linked
+// the two PCs straight.
+func candidateFamilies(sdp string) string {
+	var v4, v6 bool
+	for _, line := range strings.Split(sdp, "\n") {
+		f := strings.Fields(strings.TrimSpace(line))
+		if len(f) < 8 || !strings.HasPrefix(f[0], "a=candidate:") {
+			continue
+		}
+		if ip := net.ParseIP(f[4]); ip != nil {
+			if ip.To4() != nil {
+				v4 = true
+			} else {
+				v6 = true
+			}
+		}
+	}
+	switch {
+	case v4 && v6:
+		return "IPv4 and IPv6"
+	case v6:
+		return "IPv6"
+	case v4:
+		return "IPv4"
+	}
+	return "no address"
+}
+
 // sharedSpace is 100.64.0.0/10, which carriers use behind their NAT: the internet does not route it.
 var sharedSpace = net.IPNet{IP: net.IPv4(100, 64, 0, 0), Mask: net.CIDRMask(10, 32)}
 
@@ -356,6 +417,11 @@ func publicIP(ip net.IP) bool {
 // tells PdaNet and the log, so a session that finds no path can say what each PC found.
 func (p *peer) noteCandidates(local bool, sdp string) {
 	kinds := candidateKinds(sdp)
+	if fam := candidateFamilies(sdp); local {
+		log.Printf("ice: this PC offers addresses in %s", fam)
+	} else {
+		log.Printf("ice: the other PC offers addresses in %s", fam)
+	}
 	p.mu.Lock()
 	if local {
 		p.localKinds = kinds
@@ -434,7 +500,7 @@ func (p *peer) writeVideo(b []byte) {
 }
 
 // readRTCP watches what the PC that views says about the screen: a lost picture asks for a
-// keyframe.
+// keyframe, and the arrival times go to the link meter.
 func (p *peer) readRTCP(sender *webrtc.RTPSender) {
 	for {
 		pkts, _, err := sender.ReadRTCP()
@@ -442,7 +508,9 @@ func (p *peer) readRTCP(sender *webrtc.RTPSender) {
 			return
 		}
 		for _, pk := range pkts {
-			switch pk.(type) {
+			switch v := pk.(type) {
+			case *rtcp.TransportLayerCC:
+				p.meter.onFeedback(v)
 			case *rtcp.PictureLossIndication, *rtcp.FullIntraRequest:
 				p.mu.Lock()
 				fire := time.Since(p.lastKeyEv) >= keyGap
@@ -458,20 +526,79 @@ func (p *peer) readRTCP(sender *webrtc.RTPSender) {
 	}
 }
 
-func (p *peer) onTarget(bps int) {
+// onGCC takes Google Congestion Control's new estimate.
+func (p *peer) onGCC(bps int) {
+	p.gccBps.Store(int64(bps))
+	p.updateTarget()
+}
+
+// target is the bitrate for the encoder: GCC's estimate, raised to most of what the link
+// carried in its best recent burst while the link keeps no standing queue and loses little.
+// Past queueOff or lossOff the floor goes and the bursts measured so far are forgotten, so GCC
+// alone brings the bitrate down; the floor only comes back below queueOn and lossOn, with
+// bursts measured after that.
+func (p *peer) target() (final, floor int) {
+	gccBps := int(p.gccBps.Load())
+	capacity, standing, loss := p.meter.snapshot()
+	p.mu.Lock()
+	was := p.floorOn
+	switch {
+	case standing > queueOff || loss > lossOff:
+		p.floorOn = false
+	case standing < queueOn && loss < lossOn:
+		p.floorOn = true
+	}
+	on := p.floorOn
+	p.mu.Unlock()
+	if was && !on {
+		p.meter.congested()
+		capacity = 0
+		log.Printf("link: a queue builds up (%d ms) or packets get lost (%.1f %%), the bitrate follows GCC alone",
+			standing.Milliseconds(), loss*100)
+	}
+	if on && capacity > 0 {
+		floor = min(int(floorShare*capacity), maxBitrate)
+	}
+	final = min(max(gccBps, floor, minBitrate), maxBitrate)
+	return final, floor
+}
+
+// updateTarget sets the pacer and tells PdaNet the bitrate for the encoder when it changed
+// enough: 8 % at once, any change after 2 seconds.
+func (p *peer) updateTarget() {
+	final, floor := p.target()
+	if pc := p.pacer.Load(); pc != nil {
+		pc.SetFloor(floor)
+	}
 	p.mu.Lock()
 	last, at := p.lastTarget, p.lastTargetT
-	change := bps - last
+	change := final - last
 	if change < 0 {
 		change = -change
 	}
 	send := last == 0 || change*100 >= last*8 || (change > 0 && time.Since(at) > 2*time.Second)
 	if send {
-		p.lastTarget, p.lastTargetT = bps, time.Now()
+		p.lastTarget, p.lastTargetT = final, time.Now()
 	}
 	p.mu.Unlock()
 	if send {
-		p.link.event(event{Ev: "bitrate", Bps: bps})
+		p.link.event(event{Ev: "bitrate", Bps: final})
+	}
+}
+
+// targetLoop follows the link meter between GCC's own updates, on the PC that shares.
+func (p *peer) targetLoop() {
+	t := time.NewTicker(200 * time.Millisecond)
+	defer t.Stop()
+	for {
+		select {
+		case <-p.closed:
+			return
+		case <-t.C:
+			if p.isConnected() {
+				p.updateTarget()
+			}
+		}
 	}
 }
 
@@ -589,10 +716,14 @@ func (p *peer) onICEState(st webrtc.ICEConnectionState) {
 		startStats := !p.statsOn
 		p.statsOn = true
 		p.mu.Unlock()
-		path, local, remote := p.describePath()
-		p.link.event(event{Ev: "connected", Path: path, Local: local, Remote: remote})
+		path, local, remote, detail := p.describePath()
+		log.Printf("ice: connected %s, %s to %s, %s", path, local, remote, detail)
+		p.link.event(event{Ev: "connected", Path: path, Local: local, Remote: remote, Detail: detail})
 		if startStats {
 			go p.statsLoop()
+			if p.cfg.host {
+				go p.targetLoop()
+			}
 		}
 		return
 	case webrtc.ICEConnectionStateDisconnected:
@@ -652,8 +783,9 @@ func (p *peer) isConnected() bool {
 
 // describePath names the way the two PCs found: "lan" on the same network, "phone" through
 // the phone, "relay" through a TURN server, "internet" otherwise. local and remote are the ICE
-// candidate types.
-func (p *peer) describePath() (path, local, remote string) {
+// candidate types. detail says the address family, "ipv4" or "ipv6", and for a relay the way
+// this PC reaches it, such as "ipv4 relay udp".
+func (p *peer) describePath() (path, local, remote, detail string) {
 	path = "internet"
 	if p.cfg.viaPhone {
 		path = "phone"
@@ -667,16 +799,25 @@ func (p *peer) describePath() (path, local, remote string) {
 		return
 	}
 	local, remote = pair.Local.Typ.String(), pair.Remote.Typ.String()
+	lip, rip := net.ParseIP(pair.Local.Address), net.ParseIP(pair.Remote.Address)
+	detail = "ipv4"
+	if lip != nil && lip.To4() == nil {
+		detail = "ipv6"
+	}
 	if pair.Local.Typ == webrtc.ICECandidateTypeRelay || pair.Remote.Typ == webrtc.ICECandidateTypeRelay {
-		return "relay", local, remote
+		if proto := p.relayProtocol(); proto != "" {
+			detail += " relay " + proto
+		} else {
+			detail += " relay"
+		}
+		return "relay", local, remote, detail
 	}
 	if p.cfg.viaPhone {
 		return
 	}
-	lip, rip := net.ParseIP(pair.Local.Address), net.ParseIP(pair.Remote.Address)
 	for _, ip := range p.cfg.phoneIPs {
 		if ip.Equal(lip) {
-			return "phone", local, remote
+			return "phone", local, remote, detail
 		}
 	}
 	direct := pair.Local.Typ == webrtc.ICECandidateTypeHost &&
@@ -685,6 +826,21 @@ func (p *peer) describePath() (path, local, remote string) {
 		path = "lan"
 	}
 	return
+}
+
+// relayProtocol is how this PC reaches the TURN server of the chosen pair: "udp", "tcp" or "tls".
+func (p *peer) relayProtocol() string {
+	stats := p.pc.GetStats()
+	for _, s := range stats {
+		pair, ok := s.(webrtc.ICECandidatePairStats)
+		if !ok || !pair.Nominated || pair.State != webrtc.StatsICECandidatePairStateSucceeded {
+			continue
+		}
+		if c, ok := stats[pair.LocalCandidateID].(webrtc.ICECandidateStats); ok {
+			return c.RelayProtocol
+		}
+	}
+	return ""
 }
 
 // sameNetwork tells two addresses of one local network: private IPv4 on both ends, or IPv6 in
@@ -705,7 +861,7 @@ func sameNetwork(a, b net.IP) bool {
 	return false
 }
 
-// statsLoop tells PdaNet about once a second how the link does.
+// statsLoop tells PdaNet about once a second how the link does, and the log every ten seconds.
 func (p *peer) statsLoop() {
 	t := time.NewTicker(time.Second)
 	defer t.Stop()
@@ -713,6 +869,7 @@ func (p *peer) statsLoop() {
 	var lastLost int32
 	var lastPkts uint32
 	var lastAt time.Time
+	ticks := 0
 	for {
 		select {
 		case <-p.closed:
@@ -753,14 +910,24 @@ func (p *peer) statsLoop() {
 		}
 		lastSent, lastRecv, lastLost, lastPkts, lastAt = sent, recv, lost, pkts, now
 		if b := p.bwe.Load(); b != nil {
-			e.Target = b.GetTargetBitrate() / 1000
-			if st := b.GetStats(); st != nil {
-				if l, ok := st["averageLoss"].(float64); ok {
-					e.Loss = float64(int(l*1000)) / 10
-				}
-			}
+			p.mu.Lock()
+			e.Target = p.lastTarget / 1000
+			p.mu.Unlock()
+			e.Gcc = b.GetTargetBitrate() / 1000
+			capacity, standing, loss := p.meter.snapshot()
+			e.Capacity = int(capacity / 1000)
+			e.Queue = int(standing.Milliseconds())
+			e.Loss = float64(int(loss*1000)) / 10
 		}
 		p.link.event(e)
+		if ticks++; ticks%10 == 1 {
+			if p.cfg.host {
+				log.Printf("stats: rtt %.0f ms, sending %d kbit/s, target %d kbit/s (gcc %d, best burst %d), standing queue %d ms, loss %.1f %%",
+					e.RTT, e.Send, e.Target, e.Gcc, e.Capacity, e.Queue, e.Loss)
+			} else {
+				log.Printf("stats: rtt %.0f ms, receiving %d kbit/s, loss %.1f %%", e.RTT, e.Recv, e.Loss)
+			}
+		}
 	}
 }
 

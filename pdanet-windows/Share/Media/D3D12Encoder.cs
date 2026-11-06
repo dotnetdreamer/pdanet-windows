@@ -22,8 +22,9 @@ namespace PdaNetPortable.Share.Media;
 /// into a texture both GPU devices share, and a shared fence orders the two.
 ///
 /// Set up for remote desktop like H264Encoder: one reference frame, no B frames, keyframes on
-/// request, a variable bitrate that follows the link. The driver writes the slices, this class
-/// the sequence and picture headers that go with them.
+/// request, and constant QP where the GPU has it, the app picking each frame's quantizer, else a
+/// variable bitrate that follows the link. The driver writes the slices, this class the sequence
+/// and picture headers that go with them.
 /// </summary>
 internal sealed unsafe class D3D12H264Encoder : IVideoEncoder
 {
@@ -41,6 +42,22 @@ internal sealed unsafe class D3D12H264Encoder : IVideoEncoder
 
     /// <summary>This PC cannot use it, as found when it would not start.</summary>
     public static void MarkBroken() => Broken = true;
+
+    /// <summary>Constant QP: each frame at the quantizer <see cref="Qp"/> sets, see FramePlanner.</summary>
+    public bool ConstantQp => _cqp;
+
+    public int Qp
+    {
+        get => _qp;
+        set => _qp = Math.Clamp(value, 1, 51);
+    }
+
+    /// <summary>The average quantizer of the last frame, as the driver reports it.</summary>
+    public int LastQp { get; private set; }
+
+    /// <summary>How the bitrate is kept, for the log.</summary>
+    public string RateMode => !_cqp ? "variable bitrate"
+        : _canChangeRate ? "constant QP" : "constant QP, a new encoder object for each change";
 
     private const uint AllSubresources = 0xFFFFFFFF;
     private const uint StateCommon = 0, StateEncodeRead = 0x200000, StateEncodeWrite = 0x800000;
@@ -76,6 +93,12 @@ internal sealed unsafe class D3D12H264Encoder : IVideoEncoder
     private H264Config _config;
     private H264Gop _gop;
     private Vbr _rate;
+    private readonly bool _cqp;
+    private Cqp _qpConfig; // the quantizers the encoder runs with, in constant QP mode
+    private int _qp = 30;
+    private int _emptyFrames;  // frames in a row that came back without a picture
+    private int _qpFloor;      // after a frame too big for the buffer, the quantizer stays at least this
+    private long _floorUntil;  // until then, in Environment.TickCount64
     private VideoEncoderRateControlFlags _rateFlags;
     private readonly uint _fps;
     private readonly bool _canChangeRate; // in place; else a new encoder object takes the new rate
@@ -92,7 +115,8 @@ internal sealed unsafe class D3D12H264Encoder : IVideoEncoder
 
     /// <param name="device11">The capture's device, whose GpuConverter fills <see cref="Input"/>.</param>
     /// <param name="context11">Its immediate context.</param>
-    public D3D12H264Encoder(ID3D11Device device11, ID3D11DeviceContext context11, int width, int height, int fps, int bitrate)
+    /// <param name="constantQp">Constant QP where the GPU has it; false keeps the variable bitrate, as the self-test compares.</param>
+    public D3D12H264Encoder(ID3D11Device device11, ID3D11DeviceContext context11, int width, int height, int fps, int bitrate, bool constantQp = true)
     {
         Width = width;
         Height = height;
@@ -134,11 +158,15 @@ internal sealed unsafe class D3D12H264Encoder : IVideoEncoder
             var format = new InputFormatSupport { Codec = VideoEncoderCodec.H264, Profile = Of(&prof), Format = Format.NV12 };
             if (Check(FeatureVideo.EncoderInputFormat, ref format) < 0 || format.IsSupported == 0)
                 throw new NotSupportedException("the GPU's encoder does not take NV12");
-            // Variable bitrate: constant bitrate pads frames up to the bitrate, a still screen
-            // would cost as much as a film.
+            // Constant QP where the GPU has it: the app picks each frame's quantizer, so a still
+            // screen gets sharp and a moving one fits the link, see FramePlanner. Else variable
+            // bitrate: constant bitrate pads frames up to the bitrate, a still screen would cost as
+            // much as a film.
+            var cqp = new RateControlSupport { Codec = VideoEncoderCodec.H264, Mode = VideoEncoderRateControlMode.Cqp };
+            _cqp = constantQp && Check(FeatureVideo.EncoderRateControlMode, ref cqp) >= 0 && cqp.IsSupported != 0;
             var rate = new RateControlSupport { Codec = VideoEncoderCodec.H264, Mode = VideoEncoderRateControlMode.Vbr };
-            if (Check(FeatureVideo.EncoderRateControlMode, ref rate) < 0 || rate.IsSupported == 0)
-                throw new NotSupportedException("the GPU's encoder has no variable bitrate");
+            if (!_cqp && (Check(FeatureVideo.EncoderRateControlMode, ref rate) < 0 || rate.IsSupported == 0))
+                throw new NotSupportedException("the GPU's encoder has neither constant QP nor variable bitrate");
 
             var limits = new H264ConfigSupport();
             var config = new ConfigSupport { Codec = VideoEncoderCodec.H264, Profile = Of(&prof), Limits = Of(&limits) };
@@ -175,6 +203,7 @@ internal sealed unsafe class D3D12H264Encoder : IVideoEncoder
             // frame number where the driver allows, it saves a field in every slice.
             var res = new Resolution { Width = (uint)_codedWidth, Height = (uint)_codedHeight };
             _rate = new Vbr { TargetBitRate = (ulong)bitrate, PeakBitRate = (ulong)bitrate * 5 / 4 };
+            _qpConfig = new Cqp { Intra = (uint)_qp, Inter = (uint)_qp, Bidirectional = (uint)_qp };
             EncoderSupport support = default;
             foreach (byte pocType in new byte[] { 2, 0 })
             {
@@ -187,7 +216,7 @@ internal sealed unsafe class D3D12H264Encoder : IVideoEncoder
             // A cap on the size of a frame lets the buffer for it be small: a third of the
             // largest possible frame, and still several times a sharp keyframe at full bitrate.
             int frameCap = Math.Max(512 << 10, _codedWidth * _codedHeight / 2);
-            if ((support.Support & VideoEncoderSupportFlags.RateControlMaxFrameSizeAvailable) != 0)
+            if (!_cqp && (support.Support & VideoEncoderSupportFlags.RateControlMaxFrameSizeAvailable) != 0)
             {
                 _rateFlags = VideoEncoderRateControlFlags.EnableMaxFrameSize;
                 _rate.MaxFrameBitSize = (ulong)frameCap * 8 * 9 / 10;
@@ -293,11 +322,17 @@ internal sealed unsafe class D3D12H264Encoder : IVideoEncoder
         }
     }
 
+    /// <summary>The rate control as Direct3D 12 takes it, pointing at settings the caller holds.</summary>
+    private RateControl Rate(Cqp* cqp, Vbr* vbr) => _cqp
+        ? new RateControl { Mode = VideoEncoderRateControlMode.Cqp, Config = Of(cqp), FpsNumerator = _fps, FpsDenominator = 1 }
+        : new RateControl { Mode = VideoEncoderRateControlMode.Vbr, Flags = _rateFlags, Config = Of(vbr), FpsNumerator = _fps, FpsDenominator = 1 };
+
     private EncoderSupport Support(Resolution* res)
     {
         var cfg = _config;
         var gop = _gop;
         var rate = _rate;
+        var cqp = _qpConfig;
         VideoEncoderProfileH264 suggestedProfile = 0;
         VideoEncoderLevelsH264 suggestedLevel = 0;
         var limits = new ResolutionLimits();
@@ -307,7 +342,7 @@ internal sealed unsafe class D3D12H264Encoder : IVideoEncoder
             InputFormat = Format.NV12,
             CodecConfiguration = Of(&cfg),
             Gop = Of(&gop),
-            RateControl = new RateControl { Mode = VideoEncoderRateControlMode.Vbr, Flags = _rateFlags, Config = Of(&rate), FpsNumerator = _fps, FpsDenominator = 1 },
+            RateControl = Rate(&cqp, &rate),
             IntraRefresh = VideoEncoderIntraRefreshMode.None,
             Layout = VideoEncoderFrameSubregionLayoutMode.FullFrame,
             ResolutionsCount = 1,
@@ -325,7 +360,7 @@ internal sealed unsafe class D3D12H264Encoder : IVideoEncoder
 
     public void SetBitrate(int bps)
     {
-        if (Math.Abs(bps - _bitrate) * 20 < _bitrate) return;
+        if (_cqp || Math.Abs(bps - _bitrate) * 20 < _bitrate) return;
         _bitrate = bps;
         (_rate.TargetBitRate, _rate.PeakBitRate) = ((ulong)bps, (ulong)bps * 5 / 4);
         _rateChanged = true;
@@ -352,6 +387,17 @@ internal sealed unsafe class D3D12H264Encoder : IVideoEncoder
         _context4.Signal(_fence11, ++_fenceValue);
         _context11.Flush();
         _queue.Wait(_fence, _fenceValue).CheckError();
+
+        // A new quantizer is a new rate control, which travels with the frame.
+        if (_cqp)
+        {
+            uint qp = (uint)Math.Max(_qp, Environment.TickCount64 < _floorUntil ? _qpFloor : 0);
+            if (qp != _qpConfig.Inter)
+            {
+                _qpConfig = new Cqp { Intra = qp, Inter = qp, Bidirectional = qp };
+                _rateChanged = true;
+            }
+        }
 
         // Drivers that cannot change the rate of a running encoder take it on a new one, which
         // goes on from the same references: the rate travels with each frame, the encoder object
@@ -385,6 +431,7 @@ internal sealed unsafe class D3D12H264Encoder : IVideoEncoder
         var cfgProfile = _profile;
         var gop = _gop;
         var rate = _rate;
+        var cqp = _qpConfig;
         // One reference: the frame before, by its slot in the textures handed over.
         uint list0 = 0;
         var refDesc = new H264Reference { ReconIndex = 0, Poc = _refPoc, FrameNum = _refFrameNum };
@@ -406,7 +453,7 @@ internal sealed unsafe class D3D12H264Encoder : IVideoEncoder
             Sequence = new SequenceControl
             {
                 Flags = _rateChanged && !fresh ? VideoEncoderSequenceControlFlags.RateControlChange : 0,
-                RateControl = new RateControl { Mode = VideoEncoderRateControlMode.Vbr, Flags = _rateFlags, Config = Of(&rate), FpsNumerator = _fps, FpsDenominator = 1 },
+                RateControl = Rate(&cqp, &rate),
                 Resolution = new Resolution { Width = (uint)_codedWidth, Height = (uint)_codedHeight },
                 Layout = VideoEncoderFrameSubregionLayoutMode.FullFrame,
                 Gop = Of(&gop),
@@ -463,14 +510,36 @@ internal sealed unsafe class D3D12H264Encoder : IVideoEncoder
         }
         _rateChanged = false;
 
-        if (_result->ErrorFlags != 0)
+        if (_result->ErrorFlags != 0 || _result->WrittenBytes > _bitstreamSize)
         {
-            // Start over from a keyframe, nothing of this frame is used.
+            // Start over from a keyframe, nothing of this frame is used. A frame too big for the
+            // buffer comes back at a higher quantizer for a while.
             _forceKey = true;
-            Logger.Instance.Warning($"Screen sharing: the GPU's encoder failed a frame ({(VideoEncoderEncodeErrorFlags)_result->ErrorFlags})");
+            if (_cqp)
+            {
+                _qpFloor = Math.Min(51, Math.Max(_qpFloor, (int)_qpConfig.Inter) + 6);
+                _floorUntil = Environment.TickCount64 + 10_000;
+            }
+            Logger.Instance.Warning(_result->ErrorFlags != 0
+                ? $"Screen sharing: the GPU's encoder failed a frame ({(VideoEncoderEncodeErrorFlags)_result->ErrorFlags})"
+                : $"Screen sharing: a frame of {_result->WrittenBytes >> 10} KB did not fit the encoder's buffer");
             return;
         }
-        WriteOut(key, duration);
+        LastQp = (int)_result->AverageQp;
+        if (!WriteOut(key, duration))
+        {
+            // A frame with headers but no picture in it: an Intel driver of 2026 gives only those at
+            // a variable bitrate. Twice in a row and this GPU's encoder is not used again, Media
+            // Foundation's takes over when the pipeline opens again.
+            _forceKey = true;
+            if (++_emptyFrames >= 2)
+            {
+                Broken = true;
+                throw new InvalidOperationException("the GPU's Direct3D 12 encoder gives frames without a picture");
+            }
+            return;
+        }
+        _emptyFrames = 0;
 
         // What was built is the reference of the next frame.
         _forceKey = false;
@@ -484,28 +553,39 @@ internal sealed unsafe class D3D12H264Encoder : IVideoEncoder
         if (key) _idrId = (_idrId + 1) & 0xFFFF;
     }
 
-    /// <summary>The frame as one access unit: the headers before a keyframe, then the slices with their start codes.</summary>
-    private void WriteOut(bool key, long duration)
+    /// <summary>
+    /// The frame as one access unit: the headers before a keyframe, then the slices with their
+    /// start codes. False, and nothing goes out, when the driver wrote no slice data.
+    /// </summary>
+    private bool WriteOut(bool key, long duration)
     {
         _au.ResetWrittenCount();
         if (key) _au.Write(_headers);
         var regions = (SubregionMetadata*)(_result + 1);
-        ulong at = 0, total = _result->WrittenBytes;
+        ulong at = 0, total = _result->WrittenBytes, sliceBytes = 0;
         int count = (int)Math.Min(_result->Subregions, (4096UL - (ulong)sizeof(OutputMetadata)) / (ulong)sizeof(SubregionMetadata));
         for (int i = 0; i < count; i++)
         {
             at += regions[i].StartOffset;
             ulong size = regions[i].Size;
             if (at + size > _bitstreamSize) break;
+            if (size == 0) continue;
             var slice = new ReadOnlySpan<byte>(_bits + at, (int)size);
             // Drivers write the slices as NAL units with start codes; one that leaves them out gets them.
             if (!(slice.Length > 3 && slice[0] == 0 && slice[1] == 0 && (slice[2] == 1 || slice[2] == 0 && slice[3] == 1)))
                 _au.Write(StartCode);
             _au.Write(slice);
+            sliceBytes += size;
             at += size;
         }
-        if (count == 0 && total > 0 && total <= _bitstreamSize) _au.Write(new ReadOnlySpan<byte>(_bits, (int)total));
+        if (count == 0 && total > 0 && total <= _bitstreamSize)
+        {
+            _au.Write(new ReadOnlySpan<byte>(_bits, (int)total));
+            sliceBytes = total;
+        }
+        if (sliceBytes == 0) return false;
         Output?.Invoke(_au.WrittenMemory, duration, key);
+        return true;
     }
 
     private void ReconTransition(Barrier* b, ref int n, int slot, uint before, uint after)
@@ -737,6 +817,7 @@ internal sealed unsafe class D3D12H264Encoder : IVideoEncoder
     [StructLayout(LayoutKind.Sequential)] private struct H264Gop { public uint GopLength, PPicturePeriod; public byte PocType, Log2MaxFrameNumMinus4, Log2MaxPocLsbMinus4; }
 
     [StructLayout(LayoutKind.Sequential)] private struct Vbr { public uint InitialQP, MinQP, MaxQP; public ulong MaxFrameBitSize, TargetBitRate, PeakBitRate, VbvCapacity, InitialVbvFullness; }
+    [StructLayout(LayoutKind.Sequential)] private struct Cqp { public uint Intra, Inter, Bidirectional; }
     [StructLayout(LayoutKind.Sequential)] private struct RateControl { public VideoEncoderRateControlMode Mode; public VideoEncoderRateControlFlags Flags; public Blob Config; public uint FpsNumerator, FpsDenominator; }
     [StructLayout(LayoutKind.Sequential)] private struct RatiosCount { public uint NodeIndex; public VideoEncoderCodec Codec; public uint Count; }
     [StructLayout(LayoutKind.Sequential)] private struct OutputResolution { public uint NodeIndex; public VideoEncoderCodec Codec; public uint RatiosCount; public int IsSupported; public Resolution Min, Max; public uint WidthMultiple, HeightMultiple; public void* Ratios; }

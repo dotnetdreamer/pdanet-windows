@@ -101,16 +101,20 @@ internal sealed unsafe class CodecApi : IDisposable
     public static readonly Guid LowLatencyMode = new("9c27891a-ed7a-40e1-88e8-b22727a024ee");
     public static readonly Guid ForceKeyFrame = new("398c1b98-8353-475a-9ef2-8f265d260345");
     public static readonly Guid MinQP = new("0ee22c6a-a37c-4568-b5f1-9d4c2b3ab886");
+    public static readonly Guid MaxQP = new("3daf6f66-a6a7-45e0-a8e5-f2743f46a3a2");
+    /// <summary>The quantizer of the next frames in constant QP mode, four 16 bit fields: default, I, P and B frames.</summary>
+    public static readonly Guid EncodeQP = new("2cb5696b-23fb-4ce1-a0f9-ef5b90fd55ca");
 
-    public const uint RateCbr = 0, RateLowDelayVbr = 4;
+    public const uint RateCbr = 0, RateQuality = 3, RateLowDelayVbr = 4;
 
-    private const ushort VT_BOOL = 11, VT_UI4 = 19;
+    private const ushort VT_BOOL = 11, VT_UI4 = 19, VT_UI8 = 21;
 
     [StructLayout(LayoutKind.Explicit, Size = 24)]
     private struct Variant
     {
         [FieldOffset(0)] public ushort Type;
         [FieldOffset(8)] public uint UInt;
+        [FieldOffset(8)] public ulong ULong;
         [FieldOffset(8)] public short Bool;
     }
 
@@ -134,6 +138,21 @@ internal sealed unsafe class CodecApi : IDisposable
     {
         var v = new Variant { Type = VT_BOOL, Bool = (short)(value ? -1 : 0) };
         return Call(api, ref v);
+    }
+
+    public bool Set(Guid api, ulong value)
+    {
+        var v = new Variant { Type = VT_UI8, ULong = value };
+        return Call(api, ref v);
+    }
+
+    /// <summary>The encoder knows the setting: ICodecAPI::IsSupported, the 4th entry, says S_OK.</summary>
+    public bool IsSupported(Guid api)
+    {
+        if (_ptr == IntPtr.Zero) return false;
+        var vtbl = *(IntPtr**)_ptr;
+        var isSupported = (delegate* unmanaged[Stdcall]<IntPtr, Guid*, int>)vtbl[3];
+        return isSupported(_ptr, &api) == 0;
     }
 
     private bool Call(Guid api, ref Variant value)

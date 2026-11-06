@@ -33,6 +33,12 @@ internal sealed class ShareStats
     public double Loss { get; set; }
     public int Fps { get; set; }
     public string Detail { get; set; } = "";
+
+    // On the PC that shares, what the target comes from: Google Congestion Control's estimate, the
+    // rate the best recent burst arrived at, and the queue that does not drain.
+    public int GccKbps { get; set; }
+    public int CapacityKbps { get; set; }
+    public int QueueMs { get; set; }
 }
 
 /// <summary>
@@ -55,7 +61,7 @@ internal sealed class ShareSession
     private HostInput? _input;
     private ClipboardSync? _clip;
     private DateTime _phaseSince;
-    private int _lastFrames;
+    private int _lastFrames, _ticks;
     private bool _ending;
     // The kinds of address each PC offered for a link, such as "host srflx", see NoPathText.
     private string? _localKinds, _remoteKinds;
@@ -71,6 +77,8 @@ internal sealed class ShareSession
     public string? Peer { get; private set; }
     /// <summary>"lan", "internet", "phone" or "relay" once live.</summary>
     public string? Path { get; private set; }
+    /// <summary>The address family and, for a relay, how this PC reaches it, such as "ipv6" or "ipv4 relay udp".</summary>
+    public string? PathDetail { get; private set; }
     public bool ViaPhone { get; private set; }
     public DateTime? LiveSince { get; private set; }
     public int RelaysUp { get; private set; }
@@ -169,7 +177,7 @@ internal sealed class ShareSession
     {
         Role = role;
         ViaPhone = viaPhone;
-        Code = Peer = Path = Notice = null;
+        Code = Peer = Path = PathDetail = Notice = null;
         _localKinds = _remoteKinds = null;
         Easy = _reachedWaiting = false;
         _easyAgain.Stop();
@@ -480,6 +488,7 @@ internal sealed class ShareSession
                 break;
             case "connected":
                 Path = Str(e, "path");
+                PathDetail = Str(e, "detail") is { Length: > 0 } d ? d : null;
                 OnLive();
                 break;
             case "reconnecting":
@@ -501,6 +510,9 @@ internal sealed class ShareSession
                 Stats.RecvKbps = Int(e, "recv");
                 Stats.TargetKbps = Int(e, "target");
                 Stats.Loss = Dbl(e, "loss");
+                Stats.GccKbps = Int(e, "gcc");
+                Stats.CapacityKbps = Int(e, "capacity");
+                Stats.QueueMs = Int(e, "queue");
                 break;
             case "failed":
                 Finish(FailureText(Str(e, "reason"), Str(e, "detail")), error: true);
@@ -536,7 +548,7 @@ internal sealed class ShareSession
             host.Start();
             SendScreens();
             SendHostState();
-            _log.Ok($"Screen sharing: {Peer} sees this screen, {PathWords(Path)}");
+            _log.Ok($"Screen sharing: {Peer} sees this screen, {PathWords(Path)}{DetailWords(PathDetail)}");
         }
         else
         {
@@ -545,7 +557,7 @@ internal sealed class ShareSession
             Viewer.Failed += why => _ui.BeginInvoke(() => Finish($"This PC cannot show the screen: {why}", error: true));
             var screen = WinScreen.PrimaryScreen?.Bounds ?? new System.Drawing.Rectangle(0, 0, 1920, 1080);
             rtc.Send(RtcHelper.KindCtl, MsgWriter.Hello(screen.Width, screen.Height));
-            _log.Ok($"Screen sharing: you see {Peer}, {PathWords(Path)}");
+            _log.Ok($"Screen sharing: you see {Peer}, {PathWords(Path)}{DetailWords(PathDetail)}");
         }
 
         if (_cfg.ShareClipboard)
@@ -722,13 +734,28 @@ internal sealed class ShareSession
             _lastFrames = frames;
             Stats.Detail = Viewer.Decoder;
         }
+        // Every ten seconds of a live session a line in the log, so a picture that looks wrong can
+        // be told apart: a slow link, a link that loses packets, or a screen that never rests.
+        if (Phase == SharePhase.Live && ++_ticks % 10 == 0) LogStats();
         Changed?.Invoke();
+    }
+
+    private void LogStats()
+    {
+        var st = Stats;
+        string path = $"{PathWords(Path)}{DetailWords(PathDetail)}";
+        if (Role == ShareRole.Host && _host?.Describe(10) is { } frames)
+            _log.Debug($"Screen sharing: {frames}; link {st.TargetKbps} kbit/s (estimate {st.GccKbps}, best burst {st.CapacityKbps}), "
+                       + $"{st.Rtt:0} ms, {st.Loss:0.#} % lost, {st.QueueMs} ms queued, {path}");
+        else if (Role == ShareRole.Viewer)
+            _log.Debug($"Screen sharing: {Stats.Fps} pictures a second shown, {st.RecvKbps} kbit/s, {st.Rtt:0} ms, {st.Loss:0.#} % lost, {path}");
     }
 
     private void SetPhase(SharePhase phase)
     {
         if (Phase == phase) return;
         Phase = phase;
+        _ticks = 0;
         _phaseSince = DateTime.Now;
         _lastFrames = Role == ShareRole.Host ? _host?.FramesSent ?? 0 : Viewer?.FramesShown ?? 0;
         Changed?.Invoke();
@@ -800,6 +827,16 @@ internal sealed class ShareSession
         "relay" => "through a relay server",
         _ => "straight over the internet",
     };
+
+    /// <summary>The address family and the relay's transport, for the log and tooltips: ", over IPv6", ", over IPv4, the relay by TCP".</summary>
+    public static string DetailWords(string? detail)
+    {
+        if (string.IsNullOrEmpty(detail)) return "";
+        var parts = detail.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        string text = parts[0] switch { "ipv6" => ", over IPv6", "ipv4" => ", over IPv4", _ => "" };
+        if (parts.Length >= 3 && parts[1] == "relay") text += $", the relay by {parts[2].ToUpperInvariant()}";
+        return text;
+    }
 
     private string FailureText(string reason, string detail) => reason switch
     {

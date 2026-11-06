@@ -43,7 +43,9 @@ public static class Program
         if (args.Length > 0 && args[0] == "--selftest-share")
             return args.Contains("memory")
                 ? Share.ShareSelfTest.MemorySteps(args.Length > 2 ? args[2] : "d3d12")
-                : Share.ShareSelfTest.Run(online: args.Contains("online"));
+                : args.Contains("quality")
+                    ? args.Contains("vbr") ? Share.ShareQualityTest.Vbr() : Share.ShareQualityTest.Run(mf: args.Contains("mf"))
+                    : Share.ShareSelfTest.Run(online: args.Contains("online"));
 
         // MCP server mode: drive the PdaNet browser from an AI agent over stdio.
         // "--hidden" runs the browser off-screen; "--mcp-smoke [--show]" runs the built-in check.
