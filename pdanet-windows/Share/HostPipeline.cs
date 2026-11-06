@@ -23,7 +23,7 @@ internal sealed class HostPipeline : IDisposable
     private readonly Thread _thread;
     private readonly CursorWatch _cursor;
     private volatile bool _stop, _reopen, _keyframe;
-    private volatile int _screenIndex, _bitrate = 2_500_000, _viewerWidth, _viewerHeight;
+    private volatile int _screenIndex, _bitrate = 1_000_000, _viewerWidth, _viewerHeight; // the helper's start, rtc/peer.go
     private volatile Quality _quality = Quality.Auto;
     private volatile int _sourceWidth, _sourceHeight, _scale = 1;
     private volatile bool _hardware = true;

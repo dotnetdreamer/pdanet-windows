@@ -30,7 +30,10 @@ import (
 const h264Fmtp = "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=640034"
 
 const (
-	startBitrate = 2_500_000
+	// Low enough that the first keyframe gets through a slow or capped relay (the Ludo relay held
+	// each session to 512 kbit/s and dropped the rest, 2026-11-06); bursts the pacer spreads out
+	// raise it within a few frames where the link carries more, see linkMeter.
+	startBitrate = 1_000_000
 	minBitrate   = 200_000
 	maxBitrate   = 30_000_000
 	gatherWait   = 2500 * time.Millisecond // then send the candidates found so far, the local ones come first
@@ -570,6 +573,7 @@ func (p *peer) updateTarget() {
 	if pc := p.pacer.Load(); pc != nil {
 		pc.SetFloor(floor)
 	}
+	p.meter.setTarget(final)
 	p.mu.Lock()
 	last, at := p.lastTarget, p.lastTargetT
 	change := final - last

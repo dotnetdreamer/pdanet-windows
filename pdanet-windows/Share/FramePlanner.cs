@@ -78,10 +78,13 @@ internal sealed class FramePlanner
 
     private double _credit;
     private long _creditAt = -1;
-    private volatile int _linkBps = 2_500_000;
+    private volatile int _linkBps = 1_000_000; // the helper's start, see rtc/peer.go startBitrate
     private long _lastFrame = -1, _lastChange = -1; // the last frame with a picture in it (any but a seal), the last change
     private FrameKind _lastKind;                     // the kind of that frame
     private bool _sealed;                            // a seal frame followed it
+    private long _lastKeyAt = -1;                    // when the last keyframe went, see KeyHeld
+    private double _lastKeyBits;                     // and how large it was
+    private int _keyStreak;                          // keyframes in a row with less than KeyQuiet between them
     private const int SealQp = 51;                   // every block of a seal frame comes out skipped
     private int _refinesSinceChange;
     private readonly Queue<(FrameKind Kind, double Bits, double Motion, double Refine)> _inFlight = new();
@@ -155,10 +158,15 @@ internal sealed class FramePlanner
             // holds it back, so a viewer that keeps losing packets cannot flood the link with them.
             if (keyWanted || _lastFrame < 0)
             {
+                if (KeyHeld(now, rate) is { } wait) return wait;
                 double behind = -_credit - rate * KeyDebt;
                 if (_lastFrame >= 0 && behind > 0) return FramePlan.Wait((long)Math.Ceiling(behind / rate * 1000));
                 double allow = Math.Max(_credit, 0) + rate * KeyDebt;
+                // On a starved link the keyframe goes as coarse as it must to fit, up to the coarsest
+                // quantizer: a keyframe larger than the link takes is what gets dropped, and then
+                // asked for again.
                 int q = Pick(FrameKind.Key, allow, restQp, MaxQp);
+                if (Cost(FrameKind.Key, q) > allow) q = Pick(FrameKind.Key, allow, q, 51);
                 return new FramePlan(FrameKind.Key, q, Cost(FrameKind.Key, q), 0);
             }
 
@@ -210,7 +218,7 @@ internal sealed class FramePlanner
     private FramePlan NextFixed(long now, bool keyWanted, int maxFps, double rate)
     {
         double perFrame = rate / maxFps;
-        if (keyWanted || _lastFrame < 0) return new FramePlan(FrameKind.Key, 0, perFrame, 0);
+        if (keyWanted || _lastFrame < 0) return KeyHeld(now, rate) ?? new FramePlan(FrameKind.Key, 0, perFrame, 0);
         if (_changedCount > 0)
         {
             long due = Math.Max(_lastFrame + 1000 / maxFps, now + DebtMs(rate));
@@ -221,6 +229,23 @@ internal sealed class FramePlanner
         long rest = _lastChange + (_refinesSinceChange == 0 ? 160 : 700);
         return now < rest ? FramePlan.Wait(rest - now) : new FramePlan(FrameKind.Refine, 0, perFrame, 0);
     }
+
+    /// <summary>
+    /// A keyframe the viewer asks for goes at once, but one asked for again soon after waits: half
+    /// a second, then 1, 2, at most 4 s, and never less than twice what the last one took the link.
+    /// Five quiet seconds start over. A viewer on a lossy link asks after every frame it lost, and
+    /// each keyframe costs many frames' worth: on the Ludo relay, which dropped what passed
+    /// 512 kbit/s, keyframes 2 to 8 times in 10 s kept the link full of drops and the picture at
+    /// QP 44 (2026-11-06). Null when a keyframe may go now.
+    /// </summary>
+    private FramePlan? KeyHeld(long now, double rate)
+    {
+        if (_lastKeyAt < 0 || _lastFrame < 0 || _keyStreak == 0 || now - _lastKeyAt >= KeyQuiet) return null;
+        long gap = Math.Max(Math.Min(4000, 250L << Math.Min(_keyStreak, 4)), (long)(2 * _lastKeyBits / rate * 1000));
+        return now - _lastKeyAt < gap ? FramePlan.Wait(_lastKeyAt + gap - now) : null;
+    }
+
+    private const long KeyQuiet = 5000; // ms without a keyframe that start the streak over
 
     /// <summary>The frame goes to the encoder now: the budget pays what it is expected to take, and its blocks sit at its quantizer.</summary>
     public void Sent(FramePlan plan, long now)
@@ -239,6 +264,12 @@ internal sealed class FramePlanner
             if (_sealed) return;
             _lastFrame = now;
             _lastKind = plan.Kind;
+            if (plan.Kind == FrameKind.Key)
+            {
+                // The keyframe a pipeline opens with is not asked for: only those after it count.
+                _keyStreak = _lastKeyAt < 0 || now - _lastKeyAt >= KeyQuiet ? 0 : _keyStreak + 1;
+                (_lastKeyAt, _lastKeyBits) = (now, plan.Bits);
+            }
             if (plan.Kind == FrameKind.Refine) _refinesSinceChange++;
             else _refinesSinceChange = 0;
 
@@ -274,6 +305,7 @@ internal sealed class FramePlanner
             _bits += bits;
             if (!_inFlight.TryDequeue(out var f)) return;
             _credit += f.Bits - bits;
+            if (f.Kind == FrameKind.Key) _lastKeyBits = bits;
             if (!_constantQp) return;
             // Learn in steps, in proportion to each part's share of what was expected.
             double ratio = Math.Clamp((bits - Overhead) / Math.Max(1, f.Bits - Overhead), 0.2, 5);
@@ -345,8 +377,8 @@ internal sealed class FramePlanner
     /// <summary>The lowest quantizer from lo to hi whose frame fits <paramref name="budget"/>, else hi.</summary>
     private int Pick(FrameKind kind, double budget, int lo, int hi)
     {
-        lo = Math.Clamp(lo, MinQp, MaxMotionQp);
-        hi = Math.Clamp(hi, lo, MaxMotionQp);
+        lo = Math.Clamp(lo, MinQp, 51);
+        hi = Math.Clamp(hi, lo, 51);
         for (int q = lo; q < hi; q++)
             if (Cost(kind, q) <= budget) return q;
         return hi;

@@ -37,6 +37,7 @@ type linkMeter struct {
 	samples  []rateSample // bursts of the last sampleWindow
 	last     rateSample   // the newest burst, kept after the window while nothing newer came
 	capacity float64      // bits per second the link carried, 0 while unknown
+	target   int          // the bitrate the encoder has now, bounds what one burst may show
 
 	base      [baseBuckets]delayBucket // the lowest one way delay of each of the last seconds
 	standing  time.Duration            // how far above that lowest delay the latest burst started
@@ -85,6 +86,7 @@ const (
 	minSamplePkts  = 6
 	minSampleBytes = 8000
 	minArrSpan     = 2 * time.Millisecond // arrivals come in 250 µs steps, shorter spans are too coarse
+	minSendSpan    = 2 * time.Millisecond // a burst must have been spread out by the pacer, see finish
 	baseBuckets    = 10                   // the lowest delay over ten one second buckets
 	standingKeep   = 2 * time.Second      // a queue no burst measured again for this long counts as drained
 )
@@ -100,9 +102,20 @@ func (m *linkMeter) setExt(id uint8) {
 	m.mu.Unlock()
 }
 
+// setTarget tells the meter the bitrate the encoder has now.
+func (m *linkMeter) setTarget(bps int) {
+	m.mu.Lock()
+	m.target = bps
+	m.mu.Unlock()
+}
+
 // onSent notes a packet as it leaves the pacer for the network.
 func (m *linkMeter) onSent(h *rtp.Header, payload int) {
-	now := time.Since(m.start)
+	m.onSentAt(h, payload, time.Since(m.start))
+}
+
+// onSentAt notes a packet that left at now, counted from when the meter started.
+func (m *linkMeter) onSentAt(h *rtp.Header, payload int, now time.Duration) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.ext == 0 {
@@ -231,19 +244,19 @@ func (m *linkMeter) finish() {
 	if c.n < minSamplePkts || c.bytes < minSampleBytes || c.lost*5 > c.n+c.lost {
 		return
 	}
-	span := c.arrLast - c.arrFirst
-	if span < minArrSpan {
+	// Only a burst the pacer spread out tells what the link carries, and never more than it was
+	// sent at. A burst that left at once can also arrive at once: the phone helper's tunnel hands
+	// datagrams over in batches, which made bursts look like 20 to 75 Mbit/s on a link that
+	// carried half a megabit (2026-11-06).
+	span, sendSpan := c.arrLast-c.arrFirst, c.sendLast-c.sendFirst
+	if span < minArrSpan || sendSpan < minSendSpan {
 		return
 	}
 	bits := float64(c.bytes-c.firstSize) * 8
-	bps := bits / span.Seconds()
-	// Never more than it was sent at: a burst sent slower than the link says only that much.
-	if s := c.sendLast - c.sendFirst; s > 0 {
-		bps = min(bps, bits/s.Seconds())
-	}
-	if m.capacity > 0 {
-		bps = min(bps, max(2*m.capacity, 4e6)) // one odd burst moves the estimate a step, not a mile
-	}
+	bps := min(bits/span.Seconds(), bits/sendSpan.Seconds())
+	// One odd burst moves the estimate a step, not a mile: at most twice what the meter or the
+	// encoder has now, also right after a queue made the meter forget its bursts.
+	bps = min(bps, max(2*m.capacity, 2*float64(m.target), 2e6))
 	m.last = rateSample{at: now, bps: bps}
 	m.samples = append(m.samples, m.last)
 	m.refresh(now)
