@@ -188,6 +188,7 @@ internal static class ShareSelfTest
         Check("the picture path: capture, convert, encode, decode", Picture);
         Check("the GPU path: capture, convert and encode on the GPU", Gpu);
         Check("the encoder a session picks here, and its quantizer", EncoderQp);
+        Check("black and white: the brightness alone, and how much smaller", Gray);
         Check("a turned screen comes out the right way round", Turned);
         Check(online ? "a whole session through the public relays" : "a whole session on the local network", () => Session(online));
         Console.WriteLine(failed == 0 ? "all checks passed" : $"{failed} check(s) failed");
@@ -353,6 +354,76 @@ internal static class ShareSelfTest
         if (fine < coarse * 2)
             throw new Exception($"{name} takes a quantizer but ignores it: keyframe {coarse >> 10} KB at QP 40, {fine >> 10} KB at QP 22");
         return $"{name}\nkeyframe {coarse >> 10} KB at QP 40, {fine >> 10} KB at QP 22: the quantizer takes effect";
+    }
+
+    /// <summary>
+    /// Black and white: ColorConvert writes the brightness as in color and leaves the color
+    /// neutral. Then the screen goes out as keyframes at the quantizers a resting and a moving
+    /// screen get, in color and in black and white, through the encoder a session picks here, the
+    /// GPU converter's way: how much smaller black and white makes the frames of this screen.
+    /// </summary>
+    private static unsafe string Gray()
+    {
+        const int tw = 64, th = 32;
+        var bgra = new byte[tw * th * 4];
+        new Random(7).NextBytes(bgra);
+        using (var color = new Nv12Frame(tw, th))
+        using (var gray = new Nv12Frame(tw, th))
+        {
+            fixed (byte* p = bgra)
+            {
+                ColorConvert.BgraToNv12(p, tw * 4, 0, 0, tw, th, color, 1);
+                ColorConvert.BgraToNv12(p, tw * 4, 0, 0, tw, th, gray, 1, gray: true);
+            }
+            for (int i = 0; i < tw * th; i++)
+                if (color.Data[i] != gray.Data[i]) throw new Exception($"black and white changed the brightness at pixel {i}");
+            for (int i = 0; i < tw * th / 2; i++)
+                if (gray.UV[i] != 128) throw new Exception($"black and white left color at sample {i}");
+        }
+
+        var screen = ShareScreen.All()[0];
+        using var source = new DuplicationSource(screen, gpu: true, picture: true);
+        if (GpuConverter.Check(source.Device, source.Context) is { } problem)
+            return $"brightness and color right; no sizes, this PC sends through the processor ({problem})";
+        var dirty = new List<Dirty>();
+        var sw = Stopwatch.StartNew();
+        while (source.Next(100, dirty) != CaptureResult.Frame && sw.ElapsedMilliseconds < 3000) { }
+        int w = source.Width & ~1, h = source.Height & ~1;
+        IVideoEncoder encoder;
+        Vortice.Direct3D11.ID3D11Texture2D? target = null;
+        try
+        {
+            if (D3D12H264Encoder.Broken) throw new NotSupportedException("it failed earlier in this run");
+            var d3d12 = new D3D12H264Encoder(source.Device, source.Context, w, h, 60, 2_500_000);
+            (encoder, target) = (d3d12, d3d12.Input);
+        }
+        catch (Exception e) when (e is NotSupportedException or InvalidOperationException or SharpGen.Runtime.SharpGenException)
+        {
+            try { encoder = H264Encoder.Create(w, h, 60, 2_500_000, device: source.Device); }
+            catch (InvalidOperationException x) { return $"brightness and color right; no sizes, no GPU encoder takes textures here ({x.Message})"; }
+        }
+        using var e1 = encoder;
+        if (!encoder.ConstantQp) return $"brightness and color right; no sizes, {encoder.Name} keeps a constant bitrate here";
+        var sizes = new BlockingCollection<int>();
+        encoder.Output = (au, _, _) => sizes.Add(au.Length);
+        int n = 0;
+        int Keyframe(GpuConverter gpu, int qp)
+        {
+            encoder.Qp = qp;
+            encoder.RequestKeyframe();
+            encoder.Encode(gpu.Convert(), n++ * 333_333L, 333_333);
+            if (!sizes.TryTake(out int size, 3000)) throw new Exception($"{encoder.Name} gave no frame");
+            return size;
+        }
+        int c30, c40, g30, g40;
+        using (var gpu = new GpuConverter(source.Device, source.Context, source.Picture, source.Width, source.Height, w, h, target))
+            (c30, c40) = (Keyframe(gpu, 30), Keyframe(gpu, 40));
+        using (var gpu = new GpuConverter(source.Device, source.Context, source.Picture, source.Width, source.Height, w, h, target, gray: true))
+            (g30, g40) = (Keyframe(gpu, 30), Keyframe(gpu, 40));
+        if (g30 >= c30) throw new Exception($"black and white is not smaller: {g30 >> 10} KB against {c30 >> 10} KB in color at QP 30");
+        static string Sizes(int color, int gray) =>
+            $"{color / 1024.0:0.0} KB in color, {gray / 1024.0:0.0} KB in black and white, {100 - gray * 100L / Math.Max(1, color)} % smaller";
+        return $"{encoder.Name}, this screen as it is now\nkeyframe at QP 30 (a resting screen): {Sizes(c30, g30)}\nkeyframe at QP 40 (a moving one): {Sizes(c40, g40)}";
     }
 
     /// <summary>

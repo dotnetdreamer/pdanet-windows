@@ -64,16 +64,17 @@ internal static unsafe class ColorConvert
     /// <summary>
     /// Converts a rectangle of a BGRA screen into the NV12 frame. x, y, w and h are in screen
     /// pixels and must be even, multiples of 4 at scale 2, where each 2 by 2 block of the screen
-    /// becomes one pixel of the frame.
+    /// becomes one pixel of the frame. In black and white (gray) only the brightness is written,
+    /// the color stays as the frame has it: neutral in a new frame.
     /// </summary>
-    public static void BgraToNv12(byte* src, int pitch, int x, int y, int w, int h, Nv12Frame dst, int scale)
+    public static void BgraToNv12(byte* src, int pitch, int x, int y, int w, int h, Nv12Frame dst, int scale, bool gray = false)
     {
         if (w <= 0 || h <= 0) return;
         int step = scale * 2; // screen rows per row of color samples
         int bands = h >= ParallelRows * 2 ? Math.Min(Environment.ProcessorCount, h / ParallelRows) : 1;
         if (bands <= 1)
         {
-            Rows(src, pitch, x, y, w, y, y + h, dst, scale);
+            Rows(src, pitch, x, y, w, y, y + h, dst, scale, gray);
             return;
         }
         int rowsPerBand = (h / bands + step - 1) / step * step;
@@ -81,11 +82,11 @@ internal static unsafe class ColorConvert
         Parallel.For(0, bands, b =>
         {
             int from = y + b * rowsPerBand, to = Math.Min(y + h, from + rowsPerBand);
-            if (from < to) Rows((byte*)srcAddr, pitch, x, y, w, from, to, dst, scale);
+            if (from < to) Rows((byte*)srcAddr, pitch, x, y, w, from, to, dst, scale, gray);
         });
     }
 
-    private static void Rows(byte* src, int pitch, int x, int y, int w, int from, int to, Nv12Frame dst, int scale)
+    private static void Rows(byte* src, int pitch, int x, int y, int w, int from, int to, Nv12Frame dst, int scale, bool gray)
     {
         int dw = dst.Width;
         byte* yPlane = dst.Data, uv = dst.UV;
@@ -108,7 +109,7 @@ internal static unsafe class ColorConvert
                     y0[1] = Luma(q01, g01, b01);
                     y1[0] = Luma(q10, g10, b10);
                     y1[1] = Luma(q11, g11, b11);
-                    Chroma(q00 + q01 + q10 + q11, g00 + g01 + g10 + g11, b00 + b01 + b10 + b11, 2, c);
+                    if (!gray) Chroma(q00 + q01 + q10 + q11, g00 + g01 + g10 + g11, b00 + b01 + b10 + b11, 2, c);
                 }
             }
             return;
@@ -135,7 +136,7 @@ internal static unsafe class ColorConvert
                     (by == 0 ? y0 : y1)[bx] = (byte)(16 + ((YR * r + YG * g + YB * b + (1 << 17)) >> 18));
                     rs += r; gs += g; bs += b;
                 }
-                Chroma(rs, gs, bs, 4, c);
+                if (!gray) Chroma(rs, gs, bs, 4, c);
             }
         }
     }

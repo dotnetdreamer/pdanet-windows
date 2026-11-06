@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.IO;
-using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -16,10 +15,12 @@ namespace PdaNetPortable.Share;
 /// port 443 when nothing else gets through. WebRTC still takes a direct path when there is one.
 /// The relay passes on encrypted packets it cannot read.
 ///
-/// Cloudflare's relays are the built in ones: with a free Cloudflare Realtime TURN key, the
-/// helper fetches credentials that last a day for each session, so the token never leaves this
-/// PC. Any other TURN service, or one of the person's own, takes its addresses, a username and a
-/// password. Only the PC whose network blocks direct links needs a relay.
+/// PdaNet comes with no relay: the person sets one up in Settings, in any of three ways. With a
+/// free Cloudflare Realtime TURN key the helper fetches credentials that last a day for each
+/// session, so the token never leaves this PC. A web address that hands out a relay with short
+/// lived credentials for each session (a coturn REST endpoint, as the Ludo relay is) takes only
+/// that address. Any other TURN service, or one of the person's own, takes its addresses, a
+/// username and a password. Only the PC whose network blocks direct links needs a relay.
 /// </summary>
 internal static class ShareRelays
 {
@@ -33,16 +34,18 @@ internal static class ShareRelays
     private static readonly Regex KeyIdPattern = new(@"^[A-Za-z0-9_-]{8,128}$", RegexOptions.CultureInvariant);
 
     /// <summary>The relay settings as the person typed them, with the secrets in the clear.</summary>
-    public sealed record Settings(string KeyId, string KeyToken, IReadOnlyList<string> Urls, string Username, string Password)
+    public sealed record Settings(string KeyId, string KeyToken, IReadOnlyList<string> Urls, string Username, string Password, string From)
     {
         public bool HasKey => KeyId.Length > 0 && KeyToken.Length > 0;
         public bool HasOwn => Urls.Count > 0;
-        public bool Any => HasKey || HasOwn;
+        public bool HasFrom => From.Length > 0;
+        public bool Any => HasKey || HasOwn || HasFrom;
     }
 
     public static Settings Read(AppConfig cfg) => new(
         cfg.ShareRelayKeyId ?? "", Unprotect(cfg.ShareRelayKeyToken),
-        cfg.ShareRelayUrls ?? new List<string>(), cfg.ShareRelayUsername ?? "", Unprotect(cfg.ShareRelayPassword));
+        cfg.ShareRelayUrls ?? new List<string>(), cfg.ShareRelayUsername ?? "", Unprotect(cfg.ShareRelayPassword),
+        Unprotect(cfg.ShareRelayFrom));
 
     public static void Write(AppConfig cfg, Settings s)
     {
@@ -51,22 +54,10 @@ internal static class ShareRelays
         cfg.ShareRelayUrls = s.Urls.ToList();
         cfg.ShareRelayUsername = s.Username;
         cfg.ShareRelayPassword = Protect(s.Password);
+        cfg.ShareRelayFrom = Protect(s.From);
     }
 
     public static bool Configured(AppConfig cfg) => Read(cfg).Any;
-
-    /// <summary>
-    /// The relay used when Settings has none: an https address that hands out short lived TURN
-    /// credentials, set by the release build (ShareRelayUrl). Empty in other builds.
-    /// </summary>
-    public static string BuiltIn { get; } = ReadBuiltIn();
-
-    private static string ReadBuiltIn()
-    {
-        var url = typeof(ShareRelays).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>()
-            .FirstOrDefault(a => a.Key == "ShareRelayUrl")?.Value ?? "";
-        return Uri.TryCreate(url, UriKind.Absolute, out var u) && u.Scheme == Uri.UriSchemeHttps ? url : "";
-    }
 
     /// <summary>What is wrong with the settings, or null when the helper can use them.</summary>
     public static string? Problem(Settings s)
@@ -75,6 +66,8 @@ internal static class ShareRelays
             return "The Cloudflare relay needs both the key ID and the API token";
         if (s.KeyId.Length > 0 && !KeyIdPattern.IsMatch(s.KeyId))
             return "That Cloudflare key ID does not look right, copy the Turn Token ID from the Cloudflare dashboard";
+        if (s.HasFrom && !(Uri.TryCreate(s.From, UriKind.Absolute, out var from) && from.Scheme == Uri.UriSchemeHttps && from.Host.Length > 0))
+            return "The relay web address must be a whole address that starts with https://";
         foreach (var url in s.Urls)
         {
             var m = UrlPattern.Match(url);
@@ -101,6 +94,9 @@ internal static class ShareRelays
     /// <summary>The person's own relays as the helper takes them, or null.</summary>
     public static object[]? Servers(Settings s) =>
         s.HasOwn ? new object[] { new { urls = s.Urls, username = s.Username, credential = s.Password } } : null;
+
+    /// <summary>The web address that hands out a relay, as the helper takes it, or null.</summary>
+    public static string? From(Settings s) => s.HasFrom ? s.From : null;
 
     private static string Protect(string secret) => secret.Length == 0 ? ""
         : Convert.ToBase64String(ProtectedData.Protect(Encoding.UTF8.GetBytes(secret), Entropy, DataProtectionScope.CurrentUser));
@@ -130,6 +126,7 @@ internal static class ShareRelays
             route = ShareSession.BuildRoute(false).Route,
             turn = Servers(s),
             turnKey = Key(s),
+            turnFrom = From(s),
         });
         var psi = new ProcessStartInfo(RtcHelper.Extract(), "relaytest")
         {
@@ -177,6 +174,9 @@ internal static class ShareRelays
                         break;
                     case "key":
                         lines.Add($"Cloudflare relay: {Str("detail")}");
+                        break;
+                    case "from":
+                        lines.Add($"Relay web address: {Str("detail")}");
                         break;
                     case "failed":
                         lines.Add(Str("detail"));

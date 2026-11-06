@@ -25,6 +25,7 @@ internal sealed class HostPipeline : IDisposable
     private volatile bool _stop, _reopen, _keyframe;
     private volatile int _screenIndex, _bitrate = 1_000_000, _viewerWidth, _viewerHeight; // the helper's start, rtc/peer.go
     private volatile Quality _quality = Quality.Auto;
+    private volatile bool _gray;
     private volatile int _sourceWidth, _sourceHeight, _scale = 1;
     private volatile bool _hardware = true;
     private volatile FramePlanner? _planner;
@@ -80,6 +81,19 @@ internal sealed class HostPipeline : IDisposable
         if (_sourceWidth > 0 && ScaleFor(_sourceWidth, _sourceHeight, _hardware) != _scale) _reopen = true;
     }
 
+    /// <summary>
+    /// Black and white, or color, as the viewer picked. Black and white sends the brightness only:
+    /// the color plane stays neutral, which the encoder turns into almost nothing, so each frame
+    /// is smaller and more of them fit through the same link. The pipeline opens again with it,
+    /// so the first frame after is a keyframe with the whole screen in the new look.
+    /// </summary>
+    public void SetGray(bool on)
+    {
+        if (on == _gray) return;
+        _gray = on;
+        _reopen = true;
+    }
+
     /// <summary>The viewer's screen size: a screen twice as big is sent at half size, the viewer could not show more.</summary>
     public void SetViewerSize(int width, int height)
     {
@@ -120,8 +134,9 @@ internal sealed class HostPipeline : IDisposable
                 Screens = ShareScreen.All();
                 var screen = Screen;
                 _reopen = false;
+                bool gray = _gray;
                 int scale = 1;
-                (source, gpu, encoder, scale) = OpenGpu(screen);
+                (source, gpu, encoder, scale) = OpenGpu(screen, gray);
                 if (encoder == null)
                 {
                     // The processor path: the picture comes to memory, ColorConvert turns it into NV12.
@@ -158,7 +173,7 @@ internal sealed class HostPipeline : IDisposable
                 _cursor.Reset();
                 Changed?.Invoke();
                 string rate = encoder is D3D12H264Encoder d ? d.RateMode : encoder.ConstantQp ? "constant QP" : "constant bitrate";
-                Logger.Instance.Info($"Screen sharing {screen.DeviceName} at {Size}, up to {EncoderFps(encoder.Width, encoder.Height)} fps, with {Encoder} ({rate}) and {Capture}");
+                Logger.Instance.Info($"Screen sharing {screen.DeviceName} at {Size}, up to {EncoderFps(encoder.Width, encoder.Height)} fps, with {Encoder} ({rate}) and {Capture}{(gray ? ", in black and white" : "")}");
 
                 pending.Clear();
                 var clock = Stopwatch.StartNew();
@@ -197,7 +212,7 @@ internal sealed class HostPipeline : IDisposable
                     if (pending.Count > 0)
                     {
                         // On the GPU path the changes are already in the GPU picture.
-                        if (frame != null) Convert(source, pending, frame, scale);
+                        if (frame != null) Convert(source, pending, frame, scale, gray);
                         pending.Clear();
                     }
                     if (plan.Kind == FrameKind.Key)
@@ -261,7 +276,7 @@ internal sealed class HostPipeline : IDisposable
     /// is missing on this PC, everything is closed again and the encoder comes back null, so the
     /// processor path takes over.
     /// </summary>
-    private (IScreenSource?, GpuConverter?, IVideoEncoder?, int) OpenGpu(ShareScreen screen)
+    private (IScreenSource?, GpuConverter?, IVideoEncoder?, int) OpenGpu(ShareScreen screen, bool gray)
     {
         if (_gpuChecked && !_gpuWorks) return (null, null, null, 1);
         DuplicationSource? source = null;
@@ -287,7 +302,7 @@ internal sealed class HostPipeline : IDisposable
                 try
                 {
                     d3d12 = new D3D12H264Encoder(source.Device, source.Context, w, h, EncoderFps(w, h), Target());
-                    gpu = new GpuConverter(source.Device, source.Context, null, source.Width, source.Height, w, h, d3d12.Input);
+                    gpu = new GpuConverter(source.Device, source.Context, null, source.Width, source.Height, w, h, d3d12.Input, gray);
                     source.FrameArrived = gpu.Convert;
                     return (source, gpu, d3d12, scale);
                 }
@@ -302,7 +317,7 @@ internal sealed class HostPipeline : IDisposable
                     source = new DuplicationSource(screen, gpu: true);
                 }
             }
-            gpu = new GpuConverter(source.Device, source.Context, source.Picture, source.Width, source.Height, w, h);
+            gpu = new GpuConverter(source.Device, source.Context, source.Picture, source.Width, source.Height, w, h, gray: gray);
             var encoder = H264Encoder.Create(w, h, EncoderFps(w, h), Target(), device: source.Device);
             return (source, gpu, encoder, scale);
         }
@@ -336,7 +351,7 @@ internal sealed class HostPipeline : IDisposable
         return (int)(_bitrate * share);
     }
 
-    private static unsafe void Convert(IScreenSource source, List<Dirty> rects, Nv12Frame frame, int scale)
+    private static unsafe void Convert(IScreenSource source, List<Dirty> rects, Nv12Frame frame, int scale, bool gray)
     {
         int align = scale * 2;
         int w = frame.Width * scale, h = frame.Height * scale;
@@ -347,7 +362,7 @@ internal sealed class HostPipeline : IDisposable
         {
             if (rects.Count > 48 || area * 2 > (long)w * h)
             {
-                ColorConvert.BgraToNv12(bgra, pitch, 0, 0, w, h, frame, scale);
+                ColorConvert.BgraToNv12(bgra, pitch, 0, 0, w, h, frame, scale, gray);
                 return;
             }
             foreach (var d in rects)
@@ -355,7 +370,7 @@ internal sealed class HostPipeline : IDisposable
                 int x0 = d.X & ~(align - 1), y0 = d.Y & ~(align - 1);
                 int x1 = Math.Min(w, (d.X + d.W + align - 1) & ~(align - 1));
                 int y1 = Math.Min(h, (d.Y + d.H + align - 1) & ~(align - 1));
-                if (x1 > x0 && y1 > y0) ColorConvert.BgraToNv12(bgra, pitch, x0, y0, x1 - x0, y1 - y0, frame, scale);
+                if (x1 > x0 && y1 > y0) ColorConvert.BgraToNv12(bgra, pitch, x0, y0, x1 - x0, y1 - y0, frame, scale, gray);
             }
         }
         finally { source.Unlock(); }

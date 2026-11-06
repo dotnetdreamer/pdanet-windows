@@ -10,6 +10,7 @@ import (
 	"math/rand/v2"
 	"net/url"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -27,7 +28,7 @@ import (
 //
 // Live only, it needs the phone:
 //
-//	PDANET_LAB_AGENT=127.0.0.1:<phone helper port> PDANET_LAB_DLL=<debug PdaNetPortable.dll>
+//	PDANET_LAB_AGENT=127.0.0.1:<phone helper port> PDANET_LAB_FROM=<file with the relay's web address>
 //	PDANET_LAB_PROXY=127.0.0.1:12345 PDANET_LAB_SECONDS=45 go test -run TestPhoneLab -v
 func TestPhoneLab(t *testing.T) {
 	agent := os.Getenv("PDANET_LAB_AGENT")
@@ -35,7 +36,7 @@ func TestPhoneLab(t *testing.T) {
 		t.Skip("live test, set PDANET_LAB_AGENT")
 	}
 	proxy := os.Getenv("PDANET_LAB_PROXY")
-	from, err := labRelayURL(os.Getenv("PDANET_LAB_DLL"))
+	from, err := labRelayURL(os.Getenv("PDANET_LAB_FROM"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,30 +158,18 @@ func TestPhoneLab(t *testing.T) {
 	time.Sleep(time.Second)
 }
 
-// labRelayURL finds the built-in relay address in a debug build's DLL, never printed.
-func labRelayURL(dll string) (string, error) {
-	raw, err := os.ReadFile(dll)
+// labRelayURL reads the relay's web address from a file, never printed: the one Settings takes
+// under Relay from a web address.
+func labRelayURL(file string) (string, error) {
+	raw, err := os.ReadFile(file)
 	if err != nil {
 		return "", err
 	}
-	for off := 0; ; {
-		i := bytes.Index(raw[off:], []byte("ShareRelayUrl"))
-		if i < 0 {
-			return "", fmt.Errorf("no relay address in %s", dll)
-		}
-		i += off
-		off = i + 1
-		j := bytes.Index(raw[i:], []byte("https://"))
-		if j < 0 || j > 64 {
-			continue
-		}
-		s := raw[i+j:]
-		k := 0
-		for k < len(s) && s[k] > 0x20 && s[k] < 0x7f {
-			k++
-		}
-		return string(s[:k]), nil
+	from := string(bytes.TrimSpace(raw))
+	if !strings.HasPrefix(from, "https://") {
+		return "", fmt.Errorf("%s holds no https address", file)
 	}
+	return from, nil
 }
 
 // labEnd is PdaNet as the helper sees it, with queues that never hold the helper back.

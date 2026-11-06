@@ -66,6 +66,10 @@ public class AppConfig
     // How the easy access code stands against wrong tries, so a lockout holds when PdaNet starts again.
     [JsonPropertyName("share_easy_tries")] public ShareTries? ShareEasyTries { get; set; }
     [JsonPropertyName("share_clipboard")] public bool ShareClipboard { get; set; } = true;
+    // The picture this PC last asked for when viewing another PC, asked for again in the next
+    // session: the trade of frames for sharpness (a Quality) and black and white.
+    [JsonPropertyName("share_view_quality")] public int ShareViewQuality { get; set; } = 0;
+    [JsonPropertyName("share_view_gray")] public bool ShareViewGray { get; set; } = false;
     // Relays (TURN) for screen sharing, for a PC whose network blocks direct links: a Cloudflare
     // Realtime TURN key, and servers of the person's own. The token and the password are kept
     // encrypted with Windows DPAPI, for this Windows user only, see ShareRelays.
@@ -74,6 +78,8 @@ public class AppConfig
     [JsonPropertyName("share_relay_urls")] public List<string> ShareRelayUrls { get; set; } = new();
     [JsonPropertyName("share_relay_username")] public string ShareRelayUsername { get; set; } = "";
     [JsonPropertyName("share_relay_password")] public string ShareRelayPassword { get; set; } = "";
+    // A web address that hands out a relay with its password for each session, kept encrypted like the password.
+    [JsonPropertyName("share_relay_from")] public string ShareRelayFrom { get; set; } = "";
 
     public AppConfig Clone() => (AppConfig)MemberwiseClone();
 }

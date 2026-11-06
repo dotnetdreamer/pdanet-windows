@@ -28,11 +28,11 @@ import (
 // still prefers a direct path and only takes a relay when nothing else works. A relay passes on
 // DTLS packets it cannot read: it sees that two PCs talk, not what they say.
 //
-// PdaNet gives the helper TURN servers with their credentials, a Cloudflare Realtime TURN key, or
-// both. The helper trades the key for credentials that expire after a day, so the key itself
-// never leaves this PC. Over TLS on port 443 a relay looks like any secure website, which gets it
-// through most company networks. A release build may also carry an https address that hands out
-// short lived credentials, such as a coturn REST endpoint, used when Settings has no relay.
+// PdaNet gives the helper the relays set up in Settings, it comes with none: TURN servers with
+// their credentials, a Cloudflare Realtime TURN key, an https address that hands out short lived
+// credentials (such as a coturn REST endpoint), or any of them together. The helper trades the
+// key for credentials that expire after a day, so the key itself never leaves this PC. Over TLS
+// on port 443 a relay looks like any secure website, which gets it through most company networks.
 
 // iceServer is a TURN server and its credentials, as WebRTC takes them.
 type iceServer struct {
@@ -216,7 +216,7 @@ func turnWay(uri *stun.URI) string {
 
 // relayResult is one line of what "relaytest" prints.
 type relayResult struct {
-	Ev     string `json:"ev"` // "key", "server", "session", "failed" or "done"
+	Ev     string `json:"ev"` // "key", "from", "server", "session", "failed" or "done"
 	URL    string `json:"url,omitempty"`
 	Host   string `json:"host,omitempty"`
 	Way    string `json:"way,omitempty"`
@@ -237,28 +237,43 @@ func runRelayTest(in io.Reader, out io.Writer) int {
 		return 2
 	}
 	servers := cleanTURN(opt.Turn)
-	if opt.TurnKey != nil {
-		var d dialer
-		if opt.Route.Proxy != "" {
-			if u, err := url.Parse("http://" + opt.Route.Proxy); err == nil {
-				d.proxy = u
-			}
+	var d dialer
+	if opt.Route.Proxy != "" {
+		if u, err := url.Parse("http://" + opt.Route.Proxy); err == nil {
+			d.proxy = u
 		}
+	}
+	// A Cloudflare key and a web address each bring servers. One that fails is said, "key" or
+	// "from", while the others are tested; when none brings any, the first failure is the answer.
+	var problems []relayResult
+	fetch := func(ev string, get func(ctx context.Context) ([]iceServer, error)) {
 		ctx, cancel := context.WithTimeout(context.Background(), turnFetchWait)
-		list, err := cloudflareServers(ctx, d, *opt.TurnKey)
+		list, err := get(ctx)
 		cancel()
-		switch {
-		case err != nil && len(servers) == 0:
-			_ = enc.Encode(relayResult{Ev: "failed", Detail: err.Error()})
-			return 1
-		case err != nil:
-			_ = enc.Encode(relayResult{Ev: "key", Detail: err.Error()})
+		if err != nil {
+			problems = append(problems, relayResult{Ev: ev, Detail: err.Error()})
 		}
 		servers = append(servers, list...)
 	}
+	if opt.TurnKey != nil {
+		fetch("key", func(ctx context.Context) ([]iceServer, error) { return cloudflareServers(ctx, d, *opt.TurnKey) })
+	}
+	if opt.TurnFrom != "" {
+		fetch("from", func(ctx context.Context) ([]iceServer, error) {
+			list, _, err := fetchedServers(ctx, d, opt.TurnFrom)
+			return list, err
+		})
+	}
 	if len(servers) == 0 {
-		_ = enc.Encode(relayResult{Ev: "failed", Detail: "no relay server is set up"})
+		detail := "no relay server is set up"
+		if len(problems) > 0 {
+			detail = problems[0].Detail
+		}
+		_ = enc.Encode(relayResult{Ev: "failed", Detail: detail})
 		return 1
+	}
+	for _, p := range problems {
+		_ = enc.Encode(p)
 	}
 
 	var mu sync.Mutex

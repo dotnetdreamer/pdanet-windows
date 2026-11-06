@@ -22,6 +22,7 @@ internal static class Msg
     public const byte Keyframe = 0x07;    // a full picture please
     public const byte Quality = 0x08;     // u8 preset
     public const byte ReleaseAll = 0x09;  // let go of every key and button
+    public const byte Gray = 0x0A;        // u8 1 black and white, 0 in color
 
     // From the PC that views, on "live".
     public const byte Move = 0x20;        // u16 x, u16 y

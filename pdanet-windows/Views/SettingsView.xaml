@@ -348,6 +348,22 @@
 
                         <StackPanel Margin="0,10">
                             <StackPanel Style="{StaticResource TitleRow}">
+                                <TextBlock Text="Relay from a web address" Style="{StaticResource RowTitle}" />
+                                <v:InfoTip Style="{StaticResource Info}" Heading="Relay from a web address"
+                                           Body="Some relays, such as one a friend or your company runs, give out a new password for each session from a web address. PdaNet asks that address when a session starts, and keeps the address encrypted on this PC"
+                                           Tip="Paste the whole address you were given, it starts with https://" />
+                            </StackPanel>
+                            <TextBlock Text="A web address that gives a relay for each session, such as https://relay.example.com/turn" Style="{StaticResource RowHint}" TextWrapping="Wrap" />
+                            <StackPanel Style="{StaticResource FieldLabelRow}" Margin="0,12,0,6">
+                                <TextBlock Text="WEB ADDRESS" Style="{StaticResource T.Eyebrow}" VerticalAlignment="Center" />
+                            </StackPanel>
+                            <PasswordBox x:Name="RelayFrom" MaxLength="2048" AutomationProperties.Name="Relay web address" />
+                        </StackPanel>
+
+                        <Border Style="{StaticResource Divider}" />
+
+                        <StackPanel Margin="0,10">
+                            <StackPanel Style="{StaticResource TitleRow}">
                                 <TextBlock Text="Your own relay" Style="{StaticResource RowTitle}" />
                                 <v:InfoTip Style="{StaticResource Info}" Heading="Your own relay"
                                            Body="Any TURN server works: one your company runs, a TURN service, or your own coturn. Type its addresses one per line, with the username and password it gives you. PdaNet uses it next to the Cloudflare relay, or alone"

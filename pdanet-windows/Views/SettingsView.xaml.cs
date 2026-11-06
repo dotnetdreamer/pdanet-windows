@@ -200,11 +200,12 @@ public partial class SettingsView : UserControl, IPage
         RelayUrls.Text = string.Join(Environment.NewLine, relay.Urls);
         RelayUsername.Text = relay.Username;
         RelayPassword.Password = relay.Password;
+        RelayFrom.Password = relay.From;
     }
 
     private ShareRelays.Settings TypedRelay() => new(
         RelayKeyId.Text.Trim(), RelayKeyToken.Password.Trim(), ShareRelays.SplitUrls(RelayUrls.Text),
-        RelayUsername.Text.Trim(), RelayPassword.Password);
+        RelayUsername.Text.Trim(), RelayPassword.Password, RelayFrom.Password.Trim());
 
     // Tests what is typed, saved or not. While it runs the button stops it.
     private async void OnTestRelay(object sender, RoutedEventArgs e)
@@ -222,7 +223,7 @@ public partial class SettingsView : UserControl, IPage
         }
         if (!relay.Any)
         {
-            RelayTestText.Text = "Type a Cloudflare key or your own relay first";
+            RelayTestText.Text = "Type a Cloudflare key, a relay web address or your own relay first";
             return;
         }
         _relayTest = new CancellationTokenSource();

@@ -12,7 +12,8 @@ namespace PdaNetPortable.Share.Media;
 /// costs well under a millisecond. Two small pixel shaders do it, one for brightness and one for
 /// color, rendering straight into the two planes of the NV12 texture, with the same BT.709 video
 /// range math as ColorConvert, which <see cref="Check"/> makes sure of on this PC's GPU. The
-/// GPU's video processor could do the same, but it keeps some 25 MB of its own for it.
+/// GPU's video processor could do the same, but it keeps some 25 MB of its own for it. In black
+/// and white only the brightness is drawn: the color plane keeps the neutral it was cleared to.
 /// </summary>
 internal sealed class GpuConverter : IDisposable
 {
@@ -29,7 +30,7 @@ internal sealed class GpuConverter : IDisposable
     private readonly int _scale, _inWidth, _inHeight;
     private readonly ID3D11Texture2D[] _textures;
     private readonly ID3D11RenderTargetView[] _lumaViews, _chromaViews;
-    private readonly bool _ownTextures;
+    private readonly bool _ownTextures, _gray;
     private readonly Viewport _lumaPort, _chromaPort;
     private int _next;
 
@@ -48,12 +49,14 @@ internal sealed class GpuConverter : IDisposable
     /// may be larger than the frame, as encoders that want whole macroblocks have it: the frame
     /// goes in its top left corner and the rest stays black.
     /// </param>
+    /// <param name="gray">Black and white: brightness only, the color stays neutral.</param>
     public unsafe GpuConverter(ID3D11Device device, ID3D11DeviceContext context, ID3D11Texture2D? picture,
-        int inWidth, int inHeight, int outWidth, int outHeight, ID3D11Texture2D? target = null)
+        int inWidth, int inHeight, int outWidth, int outHeight, ID3D11Texture2D? target = null, bool gray = false)
     {
         if (picture == null && target == null) throw new ArgumentException("frames that come one by one need a target that keeps them");
         Width = outWidth;
         Height = outHeight;
+        _gray = gray;
         _device = device;
         _context = context;
         (_inWidth, _inHeight) = (inWidth, inHeight);
@@ -139,7 +142,7 @@ internal sealed class GpuConverter : IDisposable
         c.PSSetSampler(0, _sampler);
         c.PSSetConstantBuffer(0, _params);
         c.RSSetState(_clip);
-        for (int plane = 0; plane < 2; plane++)
+        for (int plane = 0; plane < (_gray ? 1 : 2); plane++)
         {
             c.OMSetRenderTargets(plane == 0 ? _lumaViews[i] : _chromaViews[i]);
             c.RSSetViewport(plane == 0 ? _lumaPort : _chromaPort);

@@ -46,7 +46,6 @@ public partial class RemoteWindow : Window
     private bool _movePending;
     private long _lastMove;
     private double _dpi = 1;
-    private Quality _quality = Quality.Auto;
     private int _shownScreens = -1, _shownScreen = -1;
 
     public RemoteWindow()
@@ -592,6 +591,11 @@ public partial class RemoteWindow : Window
         menu.IsOpen = true;
     }
 
+    /// <summary>
+    /// The picture to ask the other PC for: one of three trades of frames for sharpness, and black
+    /// and white on top of any of them. A check mark shows what the session asks for now, the
+    /// choice from the last session until another is picked.
+    /// </summary>
     private void OnQualityMenu(object sender, RoutedEventArgs e)
     {
         var menu = QualityBtn.ContextMenu!;
@@ -603,14 +607,19 @@ public partial class RemoteWindow : Window
                      (Quality.Smooth, "Smooth motion, for video and scrolling"),
                  })
         {
-            var item = new MenuItem { Header = new TextBlock { Text = text }, IsCheckable = true, IsChecked = _quality == q };
-            item.Click += (_, _) =>
-            {
-                _quality = q;
-                _s.SetRemoteQuality(q);
-            };
+            var item = new MenuItem { Header = new TextBlock { Text = text }, IsCheckable = true, IsChecked = _s.ViewQuality == q };
+            item.Click += (_, _) => _s.SetRemoteQuality(q);
             menu.Items.Add(item);
         }
+        menu.Items.Add(new Separator());
+        var gray = new MenuItem
+        {
+            Header = new TextBlock { Text = "Black and white, faster on a slow connection" },
+            IsCheckable = true,
+            IsChecked = _s.ViewGray,
+        };
+        gray.Click += (_, _) => _s.SetRemoteGray(gray.IsChecked);
+        menu.Items.Add(gray);
         menu.PlacementTarget = QualityBtn;
         menu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
         menu.IsOpen = true;

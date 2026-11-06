@@ -314,8 +314,9 @@ The connection
 A relay server, for networks that block direct links
 
 - Some networks, often at work or school, let no direct link out. A relay server then carries the session over the same secure port websites use, and passes on encrypted data it cannot read. A direct link still comes first when there is one
-- Only the PC whose network blocks direct links needs it. Open Settings, then Screen sharing
-- Cloudflare's relay is built in. Make a free Cloudflare account, open Realtime, then TURN Server, create a TURN key, and copy its Turn Token ID and API token into Settings. For each session PdaNet gets passwords that last a day, and the token never leaves your PC
+- PdaNet comes with no relay set up. Only the PC whose network blocks direct links needs one. Open Settings, then Screen sharing
+- Cloudflare's relay: make a free Cloudflare account, open Realtime, then TURN Server, create a TURN key, and copy its Turn Token ID and API token into Settings. For each session PdaNet gets passwords that last a day, and the token never leaves your PC
+- Or a relay from a web address: some relays give out a new password for each session from a web address that starts with `https://`. Paste it under Relay from a web address. PdaNet keeps it encrypted
 - Or use any other TURN server, one your company runs or your own: type its addresses one per line, such as `turns:turn.example.com:443?transport=tcp`, with its username and password
 - Press Test. PdaNet tries each address from this PC, then a short session that may only go through the relay, and says what works. Then press Save
 

@@ -103,6 +103,13 @@ internal sealed class ShareSession
     public PointerPicture? RemotePicture { get; private set; }
     public byte RemoteStandard { get; private set; } = 1;
     private readonly Dictionary<uint, PointerPicture> _pictures = new();
+    /// <summary>The picture this PC asks the other PC for, kept for the next session too.</summary>
+    public Quality ViewQuality { get; private set; }
+    public bool ViewGray { get; private set; }
+
+    // The PC that shares: the picture the other PC asked for, kept until the pipeline starts.
+    private Quality _hostQuality;
+    private bool _hostGray;
 
     // The newest pointer position, read by the viewer window.
     public ushort PointerX { get; private set; }
@@ -165,18 +172,21 @@ internal sealed class ShareSession
         return null;
     }
 
-    /// <summary>The relays set up in Settings as the helper takes them, or the built in one when Settings has none it can use.</summary>
+    /// <summary>The relays set up in Settings as the helper takes them, none when Settings has none it can use: PdaNet comes with none.</summary>
     private (object[]? Servers, object? Key, string? From) Relays()
     {
         var s = ShareRelays.Read(_cfg);
-        if (s.Any && ShareRelays.Problem(s) == null) return (ShareRelays.Servers(s), ShareRelays.Key(s), null);
-        return (null, null, ShareRelays.BuiltIn.Length > 0 ? ShareRelays.BuiltIn : null);
+        if (s.Any && ShareRelays.Problem(s) == null) return (ShareRelays.Servers(s), ShareRelays.Key(s), ShareRelays.From(s));
+        return (null, null, null);
     }
 
     private void Begin(ShareRole role, bool viaPhone)
     {
         Role = role;
         ViaPhone = viaPhone;
+        ViewQuality = (Quality)Math.Clamp(_cfg.ShareViewQuality, 0, 2);
+        ViewGray = _cfg.ShareViewGray;
+        (_hostQuality, _hostGray) = (Quality.Auto, false);
         Code = Peer = Path = PathDetail = Notice = null;
         _localKinds = _remoteKinds = null;
         Easy = _reachedWaiting = false;
@@ -426,7 +436,23 @@ internal sealed class ShareSession
 
     public void PickRemoteScreen(int index) => Send(MsgWriter.Byte(Msg.PickScreen, (byte)index));
 
-    public void SetRemoteQuality(Quality q) => Send(MsgWriter.Byte(Msg.Quality, (byte)q));
+    /// <summary>Asks the other PC for a trade of frames for sharpness, and keeps it for the next session.</summary>
+    public void SetRemoteQuality(Quality q)
+    {
+        ViewQuality = q;
+        _cfg.ShareViewQuality = (int)q;
+        ConfigManager.Instance.SaveConfig();
+        Send(MsgWriter.Byte(Msg.Quality, (byte)q));
+    }
+
+    /// <summary>Asks the other PC for a black and white picture, or color again, and keeps it for the next session.</summary>
+    public void SetRemoteGray(bool on)
+    {
+        ViewGray = on;
+        _cfg.ShareViewGray = on;
+        ConfigManager.Instance.SaveConfig();
+        Send(MsgWriter.Byte(Msg.Gray, (byte)(on ? 1 : 0)));
+    }
 
     // ============================ Helper events ============================
 
@@ -492,7 +518,7 @@ internal sealed class ShareSession
             case "relay":
                 // The relay brought no servers: the session goes on without them.
                 Notice = Str(e, "reason") == "from"
-                    ? $"PdaNet's relay could not be used: {Str(e, "detail")}"
+                    ? $"The relay web address in Settings could not be used: {Str(e, "detail")}"
                     : $"The relay in Settings could not be used: {Str(e, "detail")}";
                 _log.Warning("Screen sharing: " + Notice);
                 break;
@@ -544,6 +570,8 @@ internal sealed class ShareSession
         if (Role == ShareRole.Host)
         {
             _host = new HostPipeline(_rtc!);
+            _host.SetQuality(_hostQuality);
+            _host.SetGray(_hostGray);
             _input = new HostInput(_host.Screen) { Allowed = AllowControl };
             var host = _host;
             host.Changed += () => _ui.BeginInvoke(() =>
@@ -567,6 +595,9 @@ internal sealed class ShareSession
             Viewer.Failed += why => _ui.BeginInvoke(() => Finish($"This PC cannot show the screen: {why}", error: true));
             var screen = WinScreen.PrimaryScreen?.Bounds ?? new System.Drawing.Rectangle(0, 0, 1920, 1080);
             rtc.Send(RtcHelper.KindCtl, MsgWriter.Hello(screen.Width, screen.Height));
+            // The picture asked for last time, the menu shows it from the start.
+            rtc.Send(RtcHelper.KindCtl, MsgWriter.Byte(Msg.Quality, (byte)ViewQuality));
+            rtc.Send(RtcHelper.KindCtl, MsgWriter.Byte(Msg.Gray, (byte)(ViewGray ? 1 : 0)));
             _log.Ok($"Screen sharing: you see {Peer}, {PathWords(Path)}{DetailWords(PathDetail)}");
         }
 
@@ -644,8 +675,13 @@ internal sealed class ShareSession
                 case Msg.PickScreen when m.Length >= 2:
                     _host?.PickScreen(m[1]);
                     break;
-                case Msg.Quality when m.Length >= 2:
-                    _host?.SetQuality((Quality)m[1]);
+                case Msg.Quality when m.Length >= 2 && m[1] <= (byte)Quality.Smooth:
+                    _hostQuality = (Quality)m[1];
+                    _host?.SetQuality(_hostQuality);
+                    break;
+                case Msg.Gray when m.Length >= 2:
+                    _hostGray = m[1] != 0;
+                    _host?.SetGray(_hostGray);
                     break;
             }
             return;
