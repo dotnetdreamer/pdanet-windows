@@ -12,6 +12,7 @@ where go >nul 2>nul || ( echo Go is not on PATH, see the notes at the top of thi
 
 echo [1/3] Checking the code
 go vet ./... || goto :err
+go test ./... || goto :err
 
 echo [2/3] Building a small Windows executable
 set CGO_ENABLED=0

@@ -72,6 +72,9 @@ public sealed class ConfigManager
         var levels = new[] { "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL" };
         if (!levels.Contains(c.LogLevel.ToUpperInvariant())) c.LogLevel = "INFO";
         if (c.CloseAction is not ("ask" or "tray" or "quit")) c.CloseAction = "ask";
+        c.AgentHttpPort = Math.Clamp(c.AgentHttpPort, 1024, 65535);
+        c.AgentTrusted ??= new();
+        c.AgentHttpKey ??= "";
     }
 
     // ---- Profiles ----

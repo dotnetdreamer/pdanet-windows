@@ -27,8 +27,9 @@ internal readonly record struct FramePlan(FrameKind Kind, int Qp, double Bits, i
 /// refine frames bring everything that moved down to a near lossless quantizer, in steps the
 /// link takes without delaying the next change by more than a fraction of a second.
 ///
-/// The link is a budget of bits that fills at the rate the helper measured and drains by each
-/// frame's size, so pictures never queue up. A frame's cost is learned as bits per macroblock it
+/// The link has a quality budget that fills at the measured rate, and a separate estimate of the
+/// bits still being sent. Saving quality budget while idle must not let frames queue behind one
+/// another when motion starts. A frame's cost is learned as bits per macroblock it
 /// codes, which halve with every 6 steps of quantizer, as H.264 has it. Each 16x16 block keeps
 /// the quantizer it was last coded at: a frame codes the blocks that changed, plus every block
 /// that sits well above its own quantizer, since the encoder sees the difference to the blurrier
@@ -77,6 +78,7 @@ internal sealed class FramePlanner
     private double _kMotion = 120, _kRefine = 150, _kKey = 300;
 
     private double _credit;
+    private double _queuedBits; // serialized work remaining; idle quality credit cannot pay this away
     private long _creditAt = -1;
     private volatile int _linkBps = 1_000_000; // the helper's start, see rtc/peer.go startBitrate
     private long _lastFrame = -1, _lastChange = -1; // the last frame with a picture in it (any but a seal), the last change
@@ -226,7 +228,7 @@ internal sealed class FramePlanner
         }
         if (!_sealed) return new FramePlan(FrameKind.Seal, SealQp, Overhead, 0);
         if (_refinesSinceChange >= 2 || _lastChange < 0) return FramePlan.Wait(100);
-        long rest = _lastChange + (_refinesSinceChange == 0 ? 160 : 700);
+        long rest = Math.Max(_lastChange + (_refinesSinceChange == 0 ? 160 : 700), now + DebtMs(rate));
         return now < rest ? FramePlan.Wait(rest - now) : new FramePlan(FrameKind.Refine, 0, perFrame, 0);
     }
 
@@ -257,6 +259,7 @@ internal sealed class FramePlanner
             double motion = plan.Kind == FrameKind.Key ? 0 : _changedCount * _kMotion * f;
             double refine = plan.Kind == FrameKind.Key || !_constantQp ? 0 : RefineBits(plan.Qp) * _kRefine;
             _credit -= plan.Bits;
+            _queuedBits += plan.Bits;
             _inFlight.Enqueue((plan.Kind, plan.Bits, motion, refine));
             while (_inFlight.Count > 6) _inFlight.Dequeue(); // an encoder that dropped a frame
             // A seal frame changes no block, it only lets the viewer show the frame before it.
@@ -305,6 +308,7 @@ internal sealed class FramePlanner
             _bits += bits;
             if (!_inFlight.TryDequeue(out var f)) return;
             _credit += f.Bits - bits;
+            _queuedBits = Math.Max(0, _queuedBits + bits - f.Bits);
             if (f.Kind == FrameKind.Key) _lastKeyBits = bits;
             if (!_constantQp) return;
             // Learn in steps, in proportion to each part's share of what was expected.
@@ -403,10 +407,15 @@ internal sealed class FramePlanner
 
     private void Refill(long now)
     {
-        if (_creditAt >= 0 && now > _creditAt) _credit = Math.Min(_credit + Rate * (now - _creditAt) / 1000.0, Rate * SaveUp);
+        if (_creditAt >= 0 && now > _creditAt)
+        {
+            double sent = Rate * (now - _creditAt) / 1000.0;
+            _credit = Math.Min(_credit + sent, Rate * SaveUp);
+            _queuedBits = Math.Max(0, _queuedBits - sent);
+        }
         _creditAt = Math.Max(_creditAt, now);
     }
 
-    /// <summary>How long until the budget is out of debt.</summary>
-    private long DebtMs(double rate) => _credit >= 0 ? 0 : (long)Math.Ceiling(-_credit / rate * 1000);
+    /// <summary>How long until previous frames drain and the quality budget is out of debt.</summary>
+    private long DebtMs(double rate) => (long)Math.Ceiling(Math.Max(_queuedBits, -_credit) / rate * 1000);
 }

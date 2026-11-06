@@ -185,6 +185,9 @@ internal static class ShareSelfTest
                     Console.WriteLine("     " + string.Join("\n     ", (e.StackTrace ?? "").Split('\n').Take(6).Select(l => l.Trim())));
             }
         }
+        Check("viewer queue latency and recovery", ViewerQueueSelfTest.Run);
+        Check("capture metadata stays bounded", HostPerformanceSelfTest.PendingChanges);
+        Check("planner serialization and static sharpness", FramePlannerSelfTest.Run);
         Check("the picture path: capture, convert, encode, decode", Picture);
         Check("the GPU path: capture, convert and encode on the GPU", Gpu);
         Check("the encoder a session picks here, and its quantizer", EncoderQp);
@@ -719,11 +722,6 @@ internal static class ShareSelfTest
         var shown = new ManualResetEventSlim();
         int frames = 0;
         string size = "";
-        // The sharing side alone first, to tell what each side costs.
-        pipeline.Start();
-        Thread.Sleep(1500);
-        var hostOnly = Memory();
-        lines.Add($"memory    the sharing PC's pipeline: +{(hostOnly.PrivateWs - baseline.PrivateWs) >> 20} MB private working set, +{(hostOnly.Private - baseline.Private) >> 20} MB committed");
         var viewer = new ViewerPipeline(() => view.Send(RtcHelper.KindCtl, MsgWriter.Bare(Msg.Keyframe)));
         try
         {
@@ -737,6 +735,9 @@ internal static class ShareSelfTest
             };
             view.Video += f => viewer.Push(f.Span);
             var first = Stopwatch.StartNew();
+            // Subscribe before capture starts: exercise the opening keyframe, rather than
+            // hiding startup faults by letting the host run for 1.5 seconds first.
+            pipeline.Start();
             view.Send(RtcHelper.KindCtl, MsgWriter.Bare(Msg.Keyframe));
             if (!shown.Wait(TimeSpan.FromSeconds(15))) throw new Exception("the viewer showed no picture");
             lines.Add($"picture   {size} on the viewer {first.ElapsedMilliseconds} ms after it asked, with {pipeline.Encoder}");
@@ -752,7 +753,7 @@ internal static class ShareSelfTest
 
             Thread.Sleep(1200);
             var now = Memory();
-            lines.Add($"memory    the viewing PC's pipeline: +{(now.PrivateWs - hostOnly.PrivateWs) >> 20} MB private working set, +{(now.Private - hostOnly.Private) >> 20} MB committed");
+            lines.Add($"memory    both screen pipelines: +{(now.PrivateWs - baseline.PrivateWs) >> 20} MB private working set, +{(now.Private - baseline.Private) >> 20} MB committed");
             foreach (var p in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(RtcHelper.Extract())))
                 lines.Add($"memory    helper {p.Id}: {p.PrivateMemorySize64 >> 20} MB private, {p.WorkingSet64 >> 20} MB working set");
         }

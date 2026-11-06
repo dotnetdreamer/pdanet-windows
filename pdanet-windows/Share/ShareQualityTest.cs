@@ -27,8 +27,8 @@ internal static unsafe class ShareQualityTest
 
     /// <summary>
     /// One frame: taken at At, sent over the link from Start until Arrived (ms), encoded in EncodeMs
-    /// of wall clock. Shown: when the viewer shows it, once the next frame starts to arrive, never
-    /// for the last one.
+    /// of wall clock. Shown: when the complete frame arrives with the current receiver, or when
+    /// the next frame starts arriving with the former receiver.
     /// </summary>
     private sealed record Shot(long At, FrameKind Kind, int Qp, int Bits, double Start, double Arrived, byte[] Au, int Offset, double EncodeMs)
     {
@@ -186,7 +186,7 @@ internal static unsafe class ShareQualityTest
         Console.WriteLine();
         Console.WriteLine("PSNR: of the brightness (Y) only, in dB, the picture the other PC shows against the screen as it is then.");
         Console.WriteLine("delay: simulated, from a frame being taken to it showing: waiting for the link, sending at the link's rate,");
-        Console.WriteLine("  and the viewer holding each frame until the next one starts to arrive (Pion's sample builder).");
+        Console.WriteLine("  before: the viewer holds a frame until the next starts arriving; now: it releases at the RTP marker.");
         Console.WriteLine("  Not in it: capture, encoding and decoding time (encode: measured apart, wall clock per frame),");
         Console.WriteLine("  the network's own delay, jitter and loss. The link's rate is fixed: the bandwidth estimate is not tested here.");
         return 0;
@@ -214,7 +214,8 @@ internal static unsafe class ShareQualityTest
     /// says, or as the pipeline did before (a frame at most every 1/fps after a change, two
     /// sharpening frames 160 and 700 ms after the last one, the encoder's own bitrate), each with
     /// the duration since the frame before, as both pipelines pass it. A frame goes over the link
-    /// after every frame before it, and the viewer shows it once the next frame's first packet is in.
+    /// after every frame before it. The current receiver releases a complete frame immediately;
+    /// the former receiver waits for the next frame's first packet.
     /// </summary>
     private static List<Shot> Simulate(IVideoEncoder encoder, GpuConverter gpu, ID3D11DeviceContext context, ID3D11Texture2D texture,
         byte[] frame, Action<int> show, bool usePlanner, Quality quality, int bps, int h)
@@ -303,10 +304,16 @@ internal static unsafe class ShareQualityTest
             last = t;
             t++;
         }
-        // The viewer's sample builder hands a frame on once the first packet of the next one is in.
-        double packetMs = 1200 * 8 * 1000.0 / bps;
-        for (int i = 0; i + 1 < shots.Count; i++)
-            shots[i].Shown = Math.Max(shots[i].Arrived, shots[i + 1].Start + packetMs);
+        if (usePlanner)
+        {
+            foreach (var shot in shots) shot.Shown = shot.Arrived;
+        }
+        else
+        {
+            double packetMs = 1200 * 8 * 1000.0 / bps;
+            for (int i = 0; i + 1 < shots.Count; i++)
+                shots[i].Shown = Math.Max(shots[i].Arrived, shots[i + 1].Start + packetMs);
+        }
         return shots;
     }
 

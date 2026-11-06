@@ -106,11 +106,15 @@ internal static class SiteIcons
 /// </summary>
 public sealed class BrowserTab : INotifyPropertyChanged
 {
+    private static int _ids;
     private string _title = "New tab", _url = "", _status = "";
     private ImageSource? _icon;
     private bool _loading, _audio, _muted;
 
     public event PropertyChangedEventHandler? PropertyChanged;
+
+    /// <summary>Stays the same while the tab is open, wherever the tab moves.</summary>
+    public int Id { get; } = Interlocked.Increment(ref _ids);
 
     public WebView2? View { get; set; }
     public Task? Ready { get; set; }

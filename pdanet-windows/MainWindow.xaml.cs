@@ -101,6 +101,8 @@ public partial class MainWindow : Window
                 HideToTray(initial: true);
             // Easy access shares this screen whenever PdaNet runs.
             if (!Demo.Active) ShareSession.Instance.StartEasy();
+            // AI agents (MCP) can drive the PdaNet browser once the person allows them.
+            if (!Demo.Active) Mcp.AgentHub.Start(this);
         };
 
         _log.Info("Window ready");
@@ -285,6 +287,29 @@ public partial class MainWindow : Window
         LaunchpadPage.UpdateStatus();
     }
 
+    /// <summary>
+    /// The PdaNet browser for an AI agent: opened when needed, without taking the focus from what
+    /// the person is doing, and never brought forward on its own.
+    /// </summary>
+    public BrowserWindow OpenBrowserForAgent()
+    {
+        if (_browser == null)
+        {
+            _browser = new BrowserWindow(this) { ShowActivated = false };
+            _browser.Closed += (_, _) =>
+            {
+                _browser = null;
+                LaunchpadPage.UpdateStatus();
+            };
+            _browser.Show();
+            LaunchpadPage.UpdateStatus();
+        }
+        return _browser;
+    }
+
+    /// <summary>A note near the clock when an agent waits for the person, in case the browser is behind other windows.</summary>
+    public void NotifyAgent(string text) => Notify("PdaNet browser", text);
+
     // ============================ Screen share ============================
     /// <summary>Opens the window with the other PC's screen, or brings it forward.</summary>
     public void ShowRemote()
@@ -370,6 +395,7 @@ public partial class MainWindow : Window
     {
         _log.SetLevel(_config.LogLevel);
         _cm.AutoReconnectEnabled = _config.AutoReconnect;
+        Mcp.AgentHub.Instance?.ApplySettings();
         UpdateCloseTip();
         OnUiTick();
     }
@@ -855,10 +881,11 @@ public partial class MainWindow : Window
             }
         });
         var stopShare = new WinForms.ToolStripMenuItem("Stop screen sharing", null, (_, _) => ShareSession.Instance.Stop());
+        var stopAgents = new WinForms.ToolStripMenuItem("Stop AI agents", null, (_, _) => Mcp.AgentHub.Instance?.Presence.Stop());
         var quit = new WinForms.ToolStripMenuItem("Quit", null, (_, _) => ExitApp());
         menu.Items.AddRange(new WinForms.ToolStripItem[]
         {
-            open, browser, stopShare, new WinForms.ToolStripSeparator(), connect, disconnect, new WinForms.ToolStripSeparator(), quit,
+            open, browser, stopShare, stopAgents, new WinForms.ToolStripSeparator(), connect, disconnect, new WinForms.ToolStripSeparator(), quit,
         });
         foreach (WinForms.ToolStripItem item in menu.Items)
         {
@@ -872,6 +899,7 @@ public partial class MainWindow : Window
             var share = ShareSession.Instance;
             stopShare.Visible = share.Active;
             stopShare.Text = share.Role == ShareRole.Viewer ? "Leave the screen share" : "Stop screen sharing";
+            stopAgents.Visible = Mcp.AgentHub.Instance?.Presence.ActiveAgents.Count > 0;
         };
         _tray.ContextMenuStrip = menu;
     }
@@ -1020,6 +1048,7 @@ public partial class MainWindow : Window
             ends.Add(share.Phase is SharePhase.Starting or SharePhase.Waiting ? "stops sharing your screen" : $"ends the screen share with {peer}");
         else if (share.Role == ShareRole.Viewer) ends.Add($"leaves the screen share with {peer}");
         if (_browser != null) ends.Add("closes the PdaNet browser");
+        if (Mcp.AgentHub.Instance?.Presence.ActiveAgents.Count > 0) ends.Add("disconnects the AI agent that uses the browser");
         return ends;
     }
 
@@ -1035,7 +1064,8 @@ public partial class MainWindow : Window
             return;
         }
 
-        // The browser closes first, so the browser keeps its tabs for next time.
+        // Agents go first, then the browser, so the browser keeps its tabs for next time.
+        try { Mcp.AgentHub.Instance?.Shutdown(); } catch { }
         try { _browser?.Close(); } catch { }
         // A screen share tells the other PC it ends, and easy access does not share again.
         try { ShareSession.Instance.Close(); } catch { }

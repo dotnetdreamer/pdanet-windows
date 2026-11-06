@@ -214,6 +214,10 @@
                             <TextBlock Text="&#x2502;" Style="{StaticResource T.Small}" Foreground="{StaticResource B.Line2}" Margin="12,0"
                                        VerticalAlignment="Center" />
                             <TextBlock x:Name="EngineText" Style="{StaticResource T.Small}" VerticalAlignment="Center" />
+                            <TextBlock x:Name="AgentSep" Text="&#x2502;" Style="{StaticResource T.Small}" Foreground="{StaticResource B.Line2}" Margin="12,0"
+                                       VerticalAlignment="Center" Visibility="Collapsed" />
+                            <TextBlock x:Name="AgentText" Style="{StaticResource T.Small}" VerticalAlignment="Center" Visibility="Collapsed"
+                                       Cursor="Hand" MouseLeftButtonUp="OnAgentText" ToolTip="AI agents, in Settings" />
                         </StackPanel>
                     </Grid>
                 </Grid>

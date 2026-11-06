@@ -1,8 +1,12 @@
 using System.Diagnostics;
+using System.Text.Encodings.Web;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using PdaNetPortable.Core;
+using PdaNetPortable.Mcp;
 using PdaNetPortable.Models;
 using PdaNetPortable.Services;
 using PdaNetPortable.Share;
@@ -20,11 +24,12 @@ public partial class SettingsView : UserControl, IPage
     private readonly AppConfig _cfg = ConfigManager.Instance.Config;
     private MainWindow? _shell;
     private CancellationTokenSource? _relayTest;
+    private bool _mcpHooked;
 
     public SettingsView()
     {
         InitializeComponent();
-        foreach (var box in new[] { ReconnectAttempts, DataWarning, DataCritical, ProxyPort, LocalPort, AgentPort })
+        foreach (var box in new[] { ReconnectAttempts, DataWarning, DataCritical, ProxyPort, LocalPort, AgentPort, McpPort })
             box.PreviewTextInput += DigitsOnly;
     }
 
@@ -57,6 +62,11 @@ public partial class SettingsView : UserControl, IPage
         RefreshBlocked();
 
         ShowRelay(ShareRelays.Read(_cfg));
+
+        McpAccess.IsChecked = _cfg.AgentAccess;
+        McpHttp.IsChecked = _cfg.AgentHttp;
+        McpPort.Text = _cfg.AgentHttpPort.ToString();
+        ShowMcp();
 
         StartWithWindows.IsChecked = AutoStart.IsEnabled();
         StartMinimized.IsChecked = _cfg.StartMinimized;
@@ -132,6 +142,10 @@ public partial class SettingsView : UserControl, IPage
 
         ShareRelays.Write(_cfg, relay);
 
+        _cfg.AgentAccess = McpAccess.IsChecked == true;
+        _cfg.AgentHttp = McpHttp.IsChecked == true;
+        _cfg.AgentHttpPort = Clamp(McpPort, _cfg.AgentHttpPort, 1024, 65535);
+
         _cfg.StartMinimized = StartMinimized.IsChecked == true;
         _cfg.CloseAction = CloseTray.IsChecked == true ? "tray" : CloseQuit.IsChecked == true ? "quit" : "ask";
         _cfg.EnableNotifications = Notifications.IsChecked == true;
@@ -188,6 +202,10 @@ public partial class SettingsView : UserControl, IPage
         AgentPort.Text = fresh.AgentPort.ToString();
         AdbPath.Text = fresh.AdbPath;
         ShowRelay(ShareRelays.Read(fresh));
+        McpAccess.IsChecked = fresh.AgentAccess;
+        McpHttp.IsChecked = fresh.AgentHttp;
+        McpPort.Text = fresh.AgentHttpPort.ToString();
+        ShowMcp();
         UpdateStealthEnabled();
         UpdateReconnectEnabled();
         _shell?.Toast("Defaults loaded, press Save to keep them", ToastKind.Info);
@@ -247,6 +265,125 @@ public partial class SettingsView : UserControl, IPage
             _relayTest = null;
             RelayTestButton.Content = "Test";
         }
+    }
+
+    // ============================ AI agents ============================
+    private static string ExePath => Environment.ProcessPath ?? System.IO.Path.Combine(AppContext.BaseDirectory, "PdaNetPortable.exe");
+
+    private string McpHttpUrl => $"http://127.0.0.1:{(int.TryParse(McpPort.Text, out var p) && p is >= 1024 and <= 65535 ? p : _cfg.AgentHttpPort)}/mcp";
+
+    /// <summary>Shows the AI agents part as it stands: what is on, who is connected, who is always allowed.</summary>
+    private void ShowMcp()
+    {
+        var hub = AgentHub.Instance;
+        if (!_mcpHooked && hub != null)
+        {
+            hub.Changed += () => Dispatcher.BeginInvoke(ShowMcp);
+            _mcpHooked = true;
+        }
+        bool on = McpAccess.IsChecked == true, http = McpHttp.IsChecked == true;
+        McpOptions.IsEnabled = on;
+        McpOptions.Opacity = on ? 1 : 0.45;
+        McpHttpOptions.Visibility = http ? Visibility.Visible : Visibility.Collapsed;
+        McpCommand.Text = $"\"{ExePath}\" --mcp";
+        McpUrl.Text = McpHttpUrl;
+
+        var active = hub?.Presence.ActiveAgents ?? Array.Empty<AgentClient>();
+        McpStatus.Text = !on ? "Off, agents cannot use the browser"
+            : active.Count > 0 ? $"{string.Join(" and ", active.Select(a => a.Name).Distinct())} {(active.Count == 1 ? "is" : "are")} connected now"
+            : "On, PdaNet asks you in the browser before a new agent starts";
+        McpHttpHint.Text = !http ? "Off, agents start PdaNet with --mcp instead"
+            : !_cfg.AgentHttp ? "Press Save to turn it on"
+            : hub?.HttpProblem is { } problem ? problem
+            : hub?.HttpUrl is { } url ? $"On at {url}, agents send the key with every request"
+            : "Turns on while agents are allowed";
+        McpTrusted.Text = _cfg.AgentTrusted.Count == 0
+            ? "None, PdaNet asks you for each new agent"
+            : string.Join(", ", _cfg.AgentTrusted.Select(n => AgentClient.Pretty(n, null)).Distinct());
+        McpForget.IsEnabled = _cfg.AgentTrusted.Count > 0;
+    }
+
+    private void OnMcpToggled(object sender, RoutedEventArgs e) => ShowMcp();
+
+    private static readonly JsonSerializerOptions Pretty = new() { WriteIndented = true, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+
+    private void Copy(string text, string what)
+    {
+        try
+        {
+            System.Windows.Clipboard.SetText(text);
+            _shell?.Toast($"{what} copied");
+        }
+        catch { _shell?.Toast("Could not copy, try again", ToastKind.Error); }
+    }
+
+    private void OnCopyClaudeCode(object sender, RoutedEventArgs e) =>
+        Copy($"claude mcp add pdanet-browser -- \"{ExePath}\" --mcp", "Claude Code command");
+
+    private void OnCopyClaudeDesktop(object sender, RoutedEventArgs e) =>
+        Copy(new JsonObject
+        {
+            ["mcpServers"] = new JsonObject
+            {
+                ["pdanet-browser"] = new JsonObject { ["command"] = ExePath, ["args"] = new JsonArray("--mcp") },
+            },
+        }.ToJsonString(Pretty), "Claude Desktop setup");
+
+    private void OnCopyVsCode(object sender, RoutedEventArgs e) =>
+        Copy(new JsonObject
+        {
+            ["servers"] = new JsonObject
+            {
+                ["pdanet-browser"] = new JsonObject { ["type"] = "stdio", ["command"] = ExePath, ["args"] = new JsonArray("--mcp") },
+            },
+        }.ToJsonString(Pretty), "VS Code setup");
+
+    private string? Key()
+    {
+        if (AgentHub.Instance is { } hub) return hub.Key;
+        _shell?.Toast("Start PdaNet normally to make a key", ToastKind.Warning);
+        return null;
+    }
+
+    private void OnCopyMcpKey(object sender, RoutedEventArgs e)
+    {
+        if (Key() is { } key) Copy(key, "Key");
+    }
+
+    private void OnCopyHttpClaudeCode(object sender, RoutedEventArgs e)
+    {
+        if (Key() is { } key)
+            Copy($"claude mcp add --transport http pdanet-browser {McpHttpUrl} --header \"Authorization: Bearer {key}\"", "Claude Code command");
+    }
+
+    private void OnCopyHttpVsCode(object sender, RoutedEventArgs e)
+    {
+        if (Key() is not { } key) return;
+        Copy(new JsonObject
+        {
+            ["servers"] = new JsonObject
+            {
+                ["pdanet-browser"] = new JsonObject
+                {
+                    ["type"] = "http", ["url"] = McpHttpUrl,
+                    ["headers"] = new JsonObject { ["Authorization"] = "Bearer " + key },
+                },
+            },
+        }.ToJsonString(Pretty), "VS Code setup");
+    }
+
+    private void OnNewMcpKey(object sender, RoutedEventArgs e)
+    {
+        if (AgentHub.Instance is not { } hub) return;
+        hub.NewKey();
+        _shell?.Toast("New key made, agents with the old key can no longer connect");
+    }
+
+    private void OnForgetMcpAgents(object sender, RoutedEventArgs e)
+    {
+        AgentHub.Instance?.ForgetTrusted();
+        ShowMcp();
+        _shell?.Toast("PdaNet asks you again for every agent");
     }
 
     // Stealth strength and the extra switches only matter when stealth is on.

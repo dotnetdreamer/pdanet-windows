@@ -88,7 +88,6 @@ internal sealed unsafe class DuplicationSource : IScreenSource
     private OutduplMoveRect[] _moves = new OutduplMoveRect[16];
     private readonly ShareScreen _screen;
     private readonly bool _snapshot;
-    private readonly long _opened = Environment.TickCount64;
     private bool _image, _real, _mapped;
 
     /// <param name="gpu">Keep the picture on the GPU, for the GPU converter and encoder, instead of in memory the processor reads.</param>
@@ -234,13 +233,13 @@ internal sealed unsafe class DuplicationSource : IScreenSource
         return true;
     }
     /// <summary>
-    /// A screen that stays still gives Desktop Duplication nothing to hand over, so after a moment
+    /// A screen that stays still gives Desktop Duplication nothing to hand over, so on the first timeout
     /// the first picture comes from GDI instead, turned to the panel's orientation. Windows' own
     /// pictures take over with the first change.
     /// </summary>
     private CaptureResult StillAtStart(List<Dirty> dirty)
     {
-        if (_image || !_snapshot || Environment.TickCount64 - _opened < 200) return CaptureResult.Timeout;
+        if (_image || !_snapshot) return CaptureResult.Timeout;
         using var gdi = new GdiSource(_screen);
         var d = new List<Dirty>();
         if (gdi.Next(0, d) != CaptureResult.Frame) return CaptureResult.Timeout;

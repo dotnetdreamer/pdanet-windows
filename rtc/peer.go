@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/binary"
+	"errors"
 	"log"
 	"net"
 	"slices"
@@ -16,10 +17,9 @@ import (
 	"github.com/pion/interceptor/pkg/gcc"
 	"github.com/pion/interceptor/pkg/nack"
 	"github.com/pion/rtcp"
-	"github.com/pion/rtp/codecs"
+	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v4"
 	"github.com/pion/webrtc/v4/pkg/media"
-	"github.com/pion/webrtc/v4/pkg/media/samplebuilder"
 )
 
 // The screen goes as H.264 on one video track, the remote control as data channels: "ctl"
@@ -52,9 +52,11 @@ const (
 	// SRTP drops a packet that comes more than this many packets late as a replay. Pion's 64
 	// dropped most resends at a megabit and more, see nackGen.
 	srtpWindow = 4096
-	// Frames handed to PdaNet wait here: after a resend the frames held behind it come all at
-	// once, and each one is needed to decode the next.
-	videoQueue = 256
+	// Decode bursts can queue briefly, but a stalled local pipe must not turn into
+	// seconds of old pictures. Expired dependencies recover at a fresh keyframe.
+	videoQueue      = 16
+	videoQueueBytes = 8 << 20
+	videoQueueWait  = 150 * time.Millisecond
 
 	// The floor the link meter puts under GCC's estimate, see target.
 	floorShare = 0.8                   // of the best burst of the last seconds
@@ -82,6 +84,7 @@ type videoOut struct {
 	flags byte
 	ts    uint32
 	data  []byte
+	at    time.Time
 }
 
 type peer struct {
@@ -93,16 +96,17 @@ type peer struct {
 	ctlMu     sync.Mutex
 	ctlQueue  [][]byte // control messages sent before the channel opened
 
-	track   *webrtc.TrackLocalStaticSample // the screen, on the PC that shares
-	bwe     atomic.Pointer[estimator]
-	meter   *linkMeter // what the link carries, on the PC that shares
-	pacer   atomic.Pointer[burstPacer]
-	gccBps  atomic.Int64
-	rtt     atomic.Int64  // the round trip in nanoseconds, from the stats, for nackGen
-	ssrc    atomic.Uint32 // the screen's SSRC, on the PC that views
-	video   chan videoOut
-	videoMu sync.Mutex
-	dropped bool // a frame was dropped on the way to PdaNet, the next one says so
+	track      *webrtc.TrackLocalStaticSample // the screen, on the PC that shares
+	bwe        atomic.Pointer[estimator]
+	meter      *linkMeter // what the link carries, on the PC that shares
+	pacer      atomic.Pointer[burstPacer]
+	gccBps     atomic.Int64
+	rtt        atomic.Int64  // the round trip in nanoseconds, from the stats, for nackGen
+	ssrc       atomic.Uint32 // the screen's SSRC, on the PC that views
+	video      chan videoOut
+	videoMu    sync.Mutex
+	videoBytes atomic.Int64
+	dropped    bool // a frame was dropped on the way to PdaNet, the next one says so
 
 	needRestart chan struct{}
 
@@ -113,6 +117,9 @@ type peer struct {
 	everUp      bool
 	lostAt      time.Time
 	lastKeyReq  time.Time
+	keyPending  bool
+	keyRetry    *time.Timer
+	keyEpoch    uint64
 	lastKeyEv   time.Time
 	lastTarget  int
 	lastTargetT time.Time
@@ -660,29 +667,62 @@ func (p *peer) receive(tr *webrtc.TrackRemote, rx *webrtc.RTPReceiver) {
 			}
 		}
 	}()
+	p.receiveFrames(tr)
+}
 
-	// Frames wait for late or resent packets up to frameWait, then the frame is given up and the
-	// next one asks for a keyframe. The builder hands a frame out once the first packet of the
-	// next one is in, so the PC that shares follows the last frame before a rest with a seal
-	// frame, see FramePlanner and TestBuilderHoldsTheLastFrame.
-	sb := samplebuilder.New(4096, &codecs.H264Packet{}, 90000, samplebuilder.WithMaxTimeDelay(frameWait))
+type frameReader interface {
+	ReadRTP() (*rtp.Packet, interceptor.Attributes, error)
+	SetReadDeadline(time.Time) error
+}
+
+func (p *peer) receiveFrames(tr frameReader) {
+	// A complete frame goes straight to the viewer at its marker, including the final
+	// frame before the desktop rests. Gaps wait for one round trip, with a bounded
+	// deadline, instead of holding every later frame for two seconds after loss.
+	sb := &h264Frames{}
+	recovering := true
 	p.requestKeyframe()
+	var readDeadline time.Time
 	for {
-		pkt, _, err := tr.ReadRTP()
-		if err != nil {
-			return
+		wait := repairWait(time.Duration(p.rtt.Load()))
+		var deadline time.Time
+		if sb.head != sb.tail {
+			deadline = sb.since.Add(wait)
 		}
-		sb.Push(pkt)
-		for s := sb.Pop(); s != nil; s = sb.Pop() {
+		if !deadline.Equal(readDeadline) {
+			if err := tr.SetReadDeadline(deadline); err != nil {
+				return
+			}
+			readDeadline = deadline
+		}
+		pkt, _, err := tr.ReadRTP()
+		now := time.Now()
+		if err != nil {
+			var timeout net.Error
+			if !errors.As(err, &timeout) || !timeout.Timeout() {
+				return
+			}
+		} else {
+			sb.Push(pkt, now)
+		}
+		for s := sb.Pop(now, wait); s != nil; s = sb.Pop(now, wait) {
 			var flags byte
 			if isKeyframe(s.Data) {
 				flags |= frameKey
+				recovering = false
+				p.keyframeReceived()
 			}
 			if s.PrevDroppedPackets > 0 {
 				flags |= frameAfterLoss
-				p.requestKeyframe()
+				recovering = flags&frameKey == 0
 			}
 			p.queueVideo(videoOut{flags: flags, ts: s.PacketTimestamp, data: s.Data})
+		}
+		if sb.dropped > 0 {
+			recovering = true
+		}
+		if recovering {
+			p.requestKeyframe()
 		}
 	}
 }
@@ -693,29 +733,55 @@ func (p *peer) receive(tr *webrtc.TrackRemote, rx *webrtc.RTPReceiver) {
 func (p *peer) queueVideo(v videoOut) {
 	p.videoMu.Lock()
 	defer p.videoMu.Unlock()
+	v.at = time.Now()
 	if p.dropped {
 		v.flags |= frameAfterLoss
 	}
-	select {
-	case p.video <- v:
-		p.dropped = false
-	default:
-		if !p.dropped {
-			p.dropped = true
-			p.requestKeyframe()
+	// Permit one large keyframe on an empty queue, up to the IPC frame limit.
+	queued := p.videoBytes.Load()
+	if queued == 0 || queued+int64(len(v.data)) <= videoQueueBytes {
+		p.videoBytes.Add(int64(len(v.data)))
+		select {
+		case p.video <- v:
+			p.dropped = false
+			return
+		default:
+			p.videoBytes.Add(-int64(len(v.data)))
 		}
+	}
+	if !p.dropped {
+		p.dropped = true
+		p.requestKeyframe()
 	}
 }
 
 func (p *peer) videoWriter() {
 	var hdr [5]byte
+	waitKey := false
 	for {
 		select {
 		case v := <-p.video:
+			p.videoBytes.Add(-int64(len(v.data)))
+			if time.Since(v.at) > videoQueueWait {
+				waitKey = true
+				p.requestKeyframe()
+				continue
+			}
+			if waitKey {
+				if v.flags&frameKey == 0 {
+					p.requestKeyframe()
+					continue
+				}
+				v.flags |= frameAfterLoss
+				waitKey = false
+			}
 			hdr[0] = v.flags
 			binary.LittleEndian.PutUint32(hdr[1:], v.ts)
 			if err := p.link.write(kindVideo, hdr[:], v.data); err != nil {
 				return
+			}
+			if v.flags&frameKey != 0 {
+				p.keyframeReceivedAt(v.at)
 			}
 		case <-p.closed:
 			return
@@ -725,18 +791,71 @@ func (p *peer) videoWriter() {
 
 // requestKeyframe asks the PC that shares for a full picture.
 func (p *peer) requestKeyframe() {
+	p.keyframeRequest(true)
+}
+
+func (p *peer) keyframeRequest(markPending bool) {
 	ssrc := p.ssrc.Load()
 	if ssrc == 0 || p.cfg.host {
 		return
 	}
+	select {
+	case <-p.closed:
+		return
+	default:
+	}
 	p.mu.Lock()
-	if time.Since(p.lastKeyReq) < keyGap {
+	if markPending {
+		p.keyPending = true
+	}
+	if !p.keyPending {
 		p.mu.Unlock()
 		return
 	}
-	p.lastKeyReq = time.Now()
+	now := time.Now()
+	send := now.Sub(p.lastKeyReq) >= keyGap
+	if send {
+		p.lastKeyReq = now
+	}
+	if p.keyRetry == nil {
+		// Recovery also originates in the local writer and overflow path. One
+		// shared timer preserves throttling and retries through an idle desktop.
+		epoch := p.keyEpoch
+		p.keyRetry = time.AfterFunc(max(keyGap-now.Sub(p.lastKeyReq), time.Millisecond), func() {
+			p.mu.Lock()
+			if epoch != p.keyEpoch {
+				p.mu.Unlock()
+				return
+			}
+			p.keyRetry = nil
+			p.mu.Unlock()
+			p.keyframeRequest(false)
+		})
+	}
 	p.mu.Unlock()
-	_ = p.pc.WriteRTCP([]rtcp.Packet{&rtcp.PictureLossIndication{MediaSSRC: ssrc}})
+	if send {
+		_ = p.pc.WriteRTCP([]rtcp.Packet{&rtcp.PictureLossIndication{MediaSSRC: ssrc}})
+	}
+}
+
+func (p *peer) keyframeReceived() {
+	p.keyframeReceivedAt(time.Time{})
+}
+
+func (p *peer) keyframeReceivedAt(at time.Time) {
+	p.mu.Lock()
+	if !at.IsZero() && at.Before(p.lastKeyReq) {
+		// A queued keyframe can predate a newer gap detected by the reader.
+		p.mu.Unlock()
+		return
+	}
+	p.keyPending = false
+	p.keyEpoch++
+	if p.keyRetry != nil {
+		p.keyRetry.Stop()
+		p.keyRetry = nil
+	}
+	p.mu.Unlock()
 }
 
 // isKeyframe looks for an IDR slice among the NAL units of an Annex B frame.
@@ -983,6 +1102,7 @@ func (p *peer) statsLoop() {
 func (p *peer) close() {
 	p.closeOnce.Do(func() {
 		close(p.closed)
+		p.keyframeReceived()
 		_ = p.pc.Close()
 	})
 }

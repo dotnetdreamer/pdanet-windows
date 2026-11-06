@@ -126,6 +126,7 @@ public partial class BrowserWindow : Window
         Pick(AddTab());
         LoadStart();
         UpdateRoute();
+        WireAgents();
         Logger.Instance.Info("Browser opened");
     }
 
@@ -293,6 +294,7 @@ public partial class BrowserWindow : Window
         }
         if (!_tabs.Contains(tab) || !ReferenceEquals(tab.View, view)) return null;
         Wire(tab, view);
+        AutomationViewReady(tab, view.CoreWebView2);
         return view.CoreWebView2;
     }
 
@@ -333,7 +335,11 @@ public partial class BrowserWindow : Window
         core.ProcessFailed += (_, e) => OnProcessFailed(tab, e);
         core.IsDocumentPlayingAudioChanged += (_, _) => tab.Audio = core.IsDocumentPlayingAudio;
         core.IsMutedChanged += (_, _) => tab.Muted = core.IsMuted;
-        core.DownloadStarting += (_, e) => OnDownloadStarting(e);
+        core.DownloadStarting += (_, e) =>
+        {
+            OnDownloadStarting(e);
+            AutomationDownload(tab, e);
+        };
         core.ContextMenuRequested += (_, e) => OnPageMenu(tab, core, e);
         try
         {
@@ -1729,7 +1735,7 @@ public partial class BrowserWindow : Window
     }
 
     /// <summary>Clears history, sign ins, cookies and the cache of the browser, plus the recent list.</summary>
-    private async Task ClearData()
+    private async Task<bool> ClearData()
     {
         var profile = _tabs.Select(t => t.View?.CoreWebView2).FirstOrDefault(c => c != null)?.Profile;
         WebView2? temp = null;
@@ -1750,11 +1756,13 @@ public partial class BrowserWindow : Window
             SiteIcons.Forget(_store.State.WebApps.Select(a => BrowserStore.HostOf(a.Url)));
             Logger.Instance.Ok("Browser history, sign ins and website data cleared");
             Notice("History, sign ins and website data cleared");
+            return true;
         }
         catch (Exception e)
         {
             Logger.Instance.Warning($"Could not clear the browser data: {e.Message}");
             Notice("Could not clear the browsing data, try again", error: true);
+            return false;
         }
         finally
         {
@@ -2200,6 +2208,8 @@ public partial class BrowserWindow : Window
 
     private void OnClosingWindow(object? sender, CancelEventArgs e)
     {
+        // A browser an agent ran off screen leaves the person's tabs and window place as they were.
+        if (AutoHidden) return;
         var tabs = _tabs.Select(t => t.PendingUrl ?? t.Url).Where(BrowserStore.IsWeb).ToList();
         // A window closed on the start page right away keeps the tabs of last time for the next start.
         bool keepOld = tabs.Count == 0 && !_sessionUsed && !_browsed;

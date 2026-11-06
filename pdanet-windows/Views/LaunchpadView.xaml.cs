@@ -190,7 +190,32 @@ public partial class LaunchpadView : UserControl, IPage
             LiveDot.Fill = Ui.Brush("B.Text3");
         }
         Breathe(open);
+        UpdateAgents();
     }
+
+    private bool _agentsHooked;
+
+    /// <summary>Whether AI agents can use the browser, and which one does now.</summary>
+    private void UpdateAgents()
+    {
+        var hub = Mcp.AgentHub.Instance;
+        if (hub == null) return;
+        if (!_agentsHooked)
+        {
+            hub.Changed += () => Dispatcher.BeginInvoke(UpdateAgents);
+            _agentsHooked = true;
+        }
+        var active = hub.Presence.ActiveAgents;
+        var acting = hub.Presence.Acting;
+        AgentText.Text = !ConfigManager.Instance.Config.AgentAccess ? "AI agents off"
+            : acting != null ? $"{acting.Name} is using the browser"
+            : active.Count > 0 ? $"{active[0].Name} can use the browser"
+            : "AI agents can connect";
+        AgentText.Foreground = Ui.Brush(acting != null || active.Count > 0 ? "B.Accent" : "B.Text3");
+        AgentText.Visibility = AgentSep.Visibility = Visibility.Visible;
+    }
+
+    private void OnAgentText(object sender, System.Windows.Input.MouseButtonEventArgs e) => _shell?.Navigate(AppPage.Settings);
 
     private void SetBadge(string text, string key)
     {

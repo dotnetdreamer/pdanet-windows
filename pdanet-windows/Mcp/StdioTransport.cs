@@ -2,61 +2,89 @@ using System.IO;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Threading.Channels;
 
 namespace PdaNetPortable.Mcp;
 
 /// <summary>
-/// The MCP stdio transport: newline-delimited JSON-RPC 2.0 over this process's stdin and
-/// stdout, UTF-8, one JSON object per line. Nothing but protocol messages may go to stdout,
-/// so every log line is sent to stderr (and the file logger) instead — a stray Console.Write
-/// to stdout would corrupt the stream and break the client.
+/// The MCP stream transport: newline-delimited JSON-RPC over a pair of streams, UTF-8, one JSON
+/// message per line. It carries stdio (the transport every MCP client launches) and the named pipe
+/// a running PdaNet listens on. On stdio nothing but protocol messages may go to stdout, so every
+/// log line goes to stderr and the file log instead: a stray Console.Write would break the client.
 /// </summary>
-public sealed class StdioTransport
+public sealed class LineChannel
 {
     private static readonly UTF8Encoding Utf8 = new(encoderShouldEmitUTF8Identifier: false);
-    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
-    {
-        // Compact single-line output; System.Text.Json never emits raw newlines in a value.
-        WriteIndented = false,
-    };
+    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = false };
 
-    private readonly TextReader _in;
-    private readonly TextWriter _out;
-    private readonly object _writeLock = new();
+    private readonly StreamReader _in;
+    private readonly Stream _out;
+    private readonly Channel<byte[]> _queue = Channel.CreateUnbounded<byte[]>(new UnboundedChannelOptions { SingleReader = true });
+    private readonly Task _writer;
+    private volatile bool _broken;
 
-    public StdioTransport()
+    public LineChannel(Stream input, Stream output)
     {
-        _in = new StreamReader(Console.OpenStandardInput(), Utf8, detectEncodingFromByteOrderMarks: false);
-        _out = new StreamWriter(Console.OpenStandardOutput(), Utf8) { NewLine = "\n", AutoFlush = false };
+        _in = new StreamReader(input, Utf8, detectEncodingFromByteOrderMarks: false, bufferSize: 64 * 1024);
+        _out = output;
+        _writer = Task.Run(WriteLoopAsync);
     }
 
-    /// <summary>Reads the next message, or null at end of input (the client closed the pipe).</summary>
-    public async Task<JsonObject?> ReadAsync()
+    public static LineChannel Stdio() => new(Console.OpenStandardInput(), Console.OpenStandardOutput());
+
+    /// <summary>Raised once when writing fails, which means the other side went away.</summary>
+    public event Action? Broken;
+
+    /// <summary>The next message, null at the end of the input, or <see cref="McpServer.ParseErrorMarker"/> for a line that is not JSON.</summary>
+    public async Task<JsonNode?> ReadAsync(CancellationToken ct)
     {
         while (true)
         {
-            var line = await _in.ReadLineAsync().ConfigureAwait(false);
-            if (line == null) return null;            // EOF — time to shut down
-            if (line.Length == 0) continue;           // tolerate blank keep-alive lines
-            JsonNode? node;
-            try { node = JsonNode.Parse(line); }
-            catch (JsonException) { return ParseErrorMarker; }
-            if (node is JsonObject obj) return obj;
-            return ParseErrorMarker;
+            var line = await _in.ReadLineAsync(ct).ConfigureAwait(false);
+            if (line == null) return null;
+            if (string.IsNullOrWhiteSpace(line)) continue; // tolerate blank keep-alive lines
+            try
+            {
+                var node = JsonNode.Parse(line);
+                if (node is JsonObject or JsonArray) return node;
+            }
+            catch (JsonException) { }
+            return JsonValue.Create(McpServer.ParseErrorMarker);
         }
     }
 
-    /// <summary>A unique sentinel meaning "the line was not valid JSON" (so the caller can reply -32700).</summary>
-    public static JsonObject ParseErrorMarker { get; } = new() { ["__pda_parse_error"] = true };
-
+    /// <summary>
+    /// Queues a message. One writer sends the queue in order, so a caller (the UI thread with a progress
+    /// note, say) never waits on a client that reads slowly or not at all.
+    /// </summary>
     public void Write(JsonNode message)
     {
-        var text = message.ToJsonString(Json);
-        lock (_writeLock)
+        if (_broken) return;
+        _queue.Writer.TryWrite(Utf8.GetBytes(message.ToJsonString(Json) + "\n"));
+    }
+
+    /// <summary>Sends what is queued, then stops writing. Waits a little at most.</summary>
+    public async Task CloseAsync()
+    {
+        _queue.Writer.TryComplete();
+        try { await _writer.WaitAsync(TimeSpan.FromSeconds(2)); } catch { }
+    }
+
+    private async Task WriteLoopAsync()
+    {
+        try
         {
-            _out.Write(text);
-            _out.Write('\n');
-            _out.Flush();
+            await foreach (var bytes in _queue.Reader.ReadAllAsync())
+            {
+                await _out.WriteAsync(bytes);
+                await _out.FlushAsync();
+            }
+        }
+        catch (Exception)
+        {
+            _broken = true;
+            _queue.Writer.TryComplete();
+            Broken?.Invoke();
         }
     }
 }
