@@ -236,9 +236,9 @@ internal sealed class FramePlanner
     /// A keyframe the viewer asks for goes at once, but one asked for again soon after waits: half
     /// a second, then 1, 2, at most 4 s, and never less than twice what the last one took the link.
     /// Five quiet seconds start over. A viewer on a lossy link asks after every frame it lost, and
-    /// each keyframe costs many frames' worth: on the Ludo relay, which dropped what passed
-    /// 512 kbit/s, keyframes 2 to 8 times in 10 s kept the link full of drops and the picture at
-    /// QP 44 (2026-11-06). Null when a keyframe may go now.
+    /// each keyframe costs many frames' worth: on a relay that dropped what passed 512 kbit/s,
+    /// keyframes 2 to 8 times in 10 s kept the link full of drops and the picture at QP 44
+    /// (2026-11-06). Null when a keyframe may go now.
     /// </summary>
     private FramePlan? KeyHeld(long now, double rate)
     {

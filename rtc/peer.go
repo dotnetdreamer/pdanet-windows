@@ -31,9 +31,9 @@ import (
 const h264Fmtp = "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=640034"
 
 const (
-	// Low enough that the first keyframe gets through a slow or capped relay (the Ludo relay held
-	// each session to 512 kbit/s and dropped the rest, 2026-11-06); bursts the pacer spreads out
-	// raise it within a few frames where the link carries more, see linkMeter.
+	// Low enough that the first keyframe gets through a slow or capped relay (one relay held each
+	// session to 512 kbit/s and dropped the rest, 2026-11-06); bursts the pacer spreads out raise
+	// it within a few frames where the link carries more, see linkMeter.
 	startBitrate = 1_000_000
 	minBitrate   = 200_000
 	maxBitrate   = 30_000_000

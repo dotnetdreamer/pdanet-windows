@@ -18,9 +18,9 @@ namespace PdaNetPortable.Share;
 /// PdaNet comes with no relay: the person sets one up in Settings, in any of three ways. With a
 /// free Cloudflare Realtime TURN key the helper fetches credentials that last a day for each
 /// session, so the token never leaves this PC. A web address that hands out a relay with short
-/// lived credentials for each session (a coturn REST endpoint, as the Ludo relay is) takes only
-/// that address. Any other TURN service, or one of the person's own, takes its addresses, a
-/// username and a password. Only the PC whose network blocks direct links needs a relay.
+/// lived credentials for each session, such as a coturn REST endpoint, takes only that address.
+/// Any other TURN service, or one of the person's own, takes its addresses, a username and a
+/// password. Only the PC whose network blocks direct links needs a relay.
 /// </summary>
 internal static class ShareRelays
 {
