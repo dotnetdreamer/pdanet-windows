@@ -1,6 +1,12 @@
 namespace PdaNetPortable.Share;
 
-internal enum FrameKind { None, Motion, Refine, Key }
+/// <summary>
+/// Seal: the same picture again at the coarsest quantizer, a frame of a few hundred bytes that
+/// changes nothing. The PC that views hands a frame on only once the next frame starts to
+/// arrive (Pion's sample builder, see rtc/samplebuilder_test.go), so the last frame before the
+/// screen rests, a typed letter or the sharpest refine, would wait for the next change without it.
+/// </summary>
+internal enum FrameKind { None, Motion, Refine, Key, Seal }
 
 /// <summary>What goes next: a frame of this kind at this quantizer, expected to take this many bits; or nothing for WaitMs.</summary>
 internal readonly record struct FramePlan(FrameKind Kind, int Qp, double Bits, int WaitMs)
@@ -73,8 +79,10 @@ internal sealed class FramePlanner
     private double _credit;
     private long _creditAt = -1;
     private volatile int _linkBps = 2_500_000;
-    private long _lastFrame = -1, _lastChange = -1;
-    private FrameKind _lastKind;
+    private long _lastFrame = -1, _lastChange = -1; // the last frame with a picture in it (any but a seal), the last change
+    private FrameKind _lastKind;                     // the kind of that frame
+    private bool _sealed;                            // a seal frame followed it
+    private const int SealQp = 51;                   // every block of a seal frame comes out skipped
     private int _refinesSinceChange;
     private readonly Queue<(FrameKind Kind, double Bits, double Motion, double Refine)> _inFlight = new();
 
@@ -140,6 +148,7 @@ internal sealed class FramePlanner
             int maxFps = Math.Min(s.MaxFps, _maxFps);
             double rate = Rate;
             if (!_constantQp) return NextFixed(now, keyWanted, maxFps, rate);
+            int restQp = RestQpFor(s, rate);
 
             // A keyframe goes at once, the viewer waits for it: as sharp as half a second of the
             // link allows, refine frames do the rest. Only a link more than half a second behind
@@ -149,7 +158,7 @@ internal sealed class FramePlanner
                 double behind = -_credit - rate * KeyDebt;
                 if (_lastFrame >= 0 && behind > 0) return FramePlan.Wait((long)Math.Ceiling(behind / rate * 1000));
                 double allow = Math.Max(_credit, 0) + rate * KeyDebt;
-                int q = Pick(FrameKind.Key, allow, s.RestQp, MaxQp);
+                int q = Pick(FrameKind.Key, allow, restQp, MaxQp);
                 return new FramePlan(FrameKind.Key, q, Cost(FrameKind.Key, q), 0);
             }
 
@@ -161,7 +170,7 @@ internal sealed class FramePlanner
                 // A first change after a rest may spend what saved up, then each frame its share.
                 double perFrame = rate / maxFps, most = rate * s.MotionMax;
                 double budget = Math.Min(Math.Max(perFrame, _credit), most);
-                int q = Pick(FrameKind.Motion, budget, s.RestQp, s.HardQp);
+                int q = Pick(FrameKind.Motion, budget, restQp, s.HardQp);
                 if (q > s.SoftQp)
                 {
                     // Fewer frames before a blurrier picture: at the soft quantizer the frame takes
@@ -175,15 +184,18 @@ internal sealed class FramePlanner
                 return new FramePlan(FrameKind.Motion, q, Cost(FrameKind.Motion, q), 0);
             }
 
+            // Nothing changed since the last frame: a seal frame at once, so the viewer shows that frame now.
+            if (!_sealed) return new FramePlan(FrameKind.Seal, SealQp, Overhead, 0);
+
             // Resting: what moved gets sharper, a step at a time, each once the one before drained.
             long rest = Math.Max(_lastChange + FirstRefine, _lastKind == FrameKind.Refine ? _lastFrame + RefineGap : 0);
             rest = Math.Max(rest, now + DebtMs(rate));
             if (now < rest) return FramePlan.Wait(rest - now);
             int worst = Worst();
-            if (worst <= s.RestQp + Recode) return FramePlan.Wait(100); // all sharp
+            if (worst <= restQp + Recode) return FramePlan.Wait(100); // all sharp
             double allowRefine = Math.Max(_credit, 0) + rate * RefineDebt;
             int top = worst - Recode - 1; // the highest quantizer that still codes the blurriest blocks again
-            int qr = Pick(FrameKind.Refine, allowRefine, s.RestQp, top);
+            int qr = Pick(FrameKind.Refine, allowRefine, restQp, top);
             // Not even the smallest step fits yet: the budget fills while the screen rests.
             if (Cost(FrameKind.Refine, qr) > allowRefine && _credit < Rate * SaveUp * 0.95) return FramePlan.Wait(50);
             return new FramePlan(FrameKind.Refine, qr, Cost(FrameKind.Refine, qr), 0);
@@ -192,7 +204,8 @@ internal sealed class FramePlanner
 
     /// <summary>
     /// For encoders that keep the bitrate themselves: frames at most at the style's rate and once
-    /// the frames before drained, then two sharpening frames after a change.
+    /// the frames before drained, then two sharpening frames after a change, each followed by a
+    /// seal frame.
     /// </summary>
     private FramePlan NextFixed(long now, bool keyWanted, int maxFps, double rate)
     {
@@ -203,6 +216,7 @@ internal sealed class FramePlanner
             long due = Math.Max(_lastFrame + 1000 / maxFps, now + DebtMs(rate));
             return now < due ? FramePlan.Wait(due - now) : new FramePlan(FrameKind.Motion, 0, perFrame, 0);
         }
+        if (!_sealed) return new FramePlan(FrameKind.Seal, SealQp, Overhead, 0);
         if (_refinesSinceChange >= 2 || _lastChange < 0) return FramePlan.Wait(100);
         long rest = _lastChange + (_refinesSinceChange == 0 ? 160 : 700);
         return now < rest ? FramePlan.Wait(rest - now) : new FramePlan(FrameKind.Refine, 0, perFrame, 0);
@@ -220,6 +234,9 @@ internal sealed class FramePlanner
             _credit -= plan.Bits;
             _inFlight.Enqueue((plan.Kind, plan.Bits, motion, refine));
             while (_inFlight.Count > 6) _inFlight.Dequeue(); // an encoder that dropped a frame
+            // A seal frame changes no block, it only lets the viewer show the frame before it.
+            _sealed = plan.Kind == FrameKind.Seal;
+            if (_sealed) return;
             _lastFrame = now;
             _lastKind = plan.Kind;
             if (plan.Kind == FrameKind.Refine) _refinesSinceChange++;
@@ -290,6 +307,14 @@ internal sealed class FramePlanner
             return text;
         }
     }
+
+    /// <summary>
+    /// The quantizer a resting screen is refined to: the style's, and finer on a fast link, one
+    /// step for each 32 % more than 2 Mbit/s, at most 5 (from about 8 Mbit/s on). A fast link
+    /// carries a finer picture in a fraction of a second, a slow one would take seconds for it.
+    /// </summary>
+    private static int RestQpFor(Style s, double rate) =>
+        s.RestQp - (int)Math.Clamp(Math.Round(2.5 * Math.Log2(Math.Max(rate, 1) / 2_000_000)), 0, 5);
 
     // ---- cost model ----
 

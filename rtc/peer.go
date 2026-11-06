@@ -619,7 +619,9 @@ func (p *peer) receive(tr *webrtc.TrackRemote, rx *webrtc.RTPReceiver) {
 	}()
 
 	// Frames wait for late or resent packets up to 400 ms, then the frame is given up and the
-	// next one asks for a keyframe.
+	// next one asks for a keyframe. The builder hands a frame out once the first packet of the
+	// next one is in, so the PC that shares follows the last frame before a rest with a seal
+	// frame, see FramePlanner and TestBuilderHoldsTheLastFrame.
 	sb := samplebuilder.New(2048, &codecs.H264Packet{}, 90000, samplebuilder.WithMaxTimeDelay(400*time.Millisecond))
 	p.requestKeyframe()
 	for {

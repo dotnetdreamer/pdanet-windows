@@ -61,6 +61,8 @@ internal sealed unsafe class H264Encoder : IVideoEncoder
     private readonly ArrayBufferWriter<byte> _encoded = new(256 << 10);
     private int _bitrate;
     private int _qp = 30, _setQp = -1; // the quantizer asked for, and the one the encoder has
+    /// <summary>Encoders that refused a new quantizer in a session: they open at a constant bitrate.</summary>
+    private static readonly HashSet<string> QpRefused = new();
     private volatile bool _disposed;
 
     private H264Encoder(IMFActivate activate, bool hardware, int width, int height, int fps, int bitrate, ID3D11Device? device, bool constantQp)
@@ -99,7 +101,9 @@ internal sealed unsafe class H264Encoder : IVideoEncoder
         // Constant QP where the encoder takes a quantizer for each frame: the app then makes a
         // still screen sharp and a moving one fit the link, see FramePlanner. Else constant
         // bitrate that follows the link.
-        ConstantQp = constantQp && _api != null && _api.IsSupported(CodecApi.EncodeQP)
+        bool refused;
+        lock (QpRefused) refused = QpRefused.Contains(Name);
+        ConstantQp = constantQp && !refused && _api != null && _api.IsSupported(CodecApi.EncodeQP)
                      && _api.Set(CodecApi.RateControlMode, CodecApi.RateQuality)
                      && _api.Set(CodecApi.EncodeQP, QpValue(_qp));
         if (ConstantQp) _setQp = _qp;
@@ -261,7 +265,19 @@ internal sealed unsafe class H264Encoder : IVideoEncoder
             _forceKey = false;
             _api?.Set(CodecApi.ForceKeyFrame, 1u);
         }
-        if (ConstantQp && _qp != _setQp && _api!.Set(CodecApi.EncodeQP, QpValue(_qp))) _setQp = _qp;
+        if (ConstantQp && _qp != _setQp)
+        {
+            // An encoder that takes the quantizer when it opens but refuses a new one would stay at
+            // its first one for the whole session: it runs at a constant bitrate instead, from the
+            // moment the pipeline opens it again.
+            if (!_api!.Set(CodecApi.EncodeQP, QpValue(_qp)))
+            {
+                lock (QpRefused) QpRefused.Add(Name);
+                Logger.Instance.Warning($"Screen sharing: {Name} refused a new quantizer, it runs at a constant bitrate from now on");
+                throw new InvalidOperationException($"{Name} refused a new quantizer");
+            }
+            _setQp = _qp;
+        }
 
         if (_async)
         {

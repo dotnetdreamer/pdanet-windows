@@ -6,13 +6,12 @@ using Vortice.DXGI;
 namespace PdaNetPortable.Share;
 
 /// <summary>
-/// "--selftest-share quality [mf]": how sharp the other PC sees this screen, with the frame
-/// planner and constant QP against the fixed bitrate that came before, on this PC's GPU encoder
-/// (Direct3D 12's, or Media Foundation's with "mf") over a simulated link. The screen as it is now
-/// rests for 2 s, scrolls for 1 s, then rests again. Every frame is encoded for real, goes over a
-/// link of the given rate one after the other, is decoded, and is compared with the screen it
-/// showed: PSNR of the brightness, higher is sharper, 40 dB and up looks like the screen itself.
-/// Nothing leaves this PC.
+/// "--selftest-share quality [mf]": how close the picture the other PC shows comes to this screen,
+/// with the frame planner and constant QP against the fixed bitrate that came before, on this PC's
+/// GPU encoder (Direct3D 12's, or Media Foundation's with "mf") over a simulated link of a fixed
+/// rate. The screen as it is now rests for 2 s, moves for 1 s, then rests again. Every frame is
+/// encoded for real, goes over the link after the frames before it, is decoded, and is compared
+/// with the screen: PSNR of the brightness only, higher is closer. Nothing leaves this PC.
 /// </summary>
 internal static unsafe class ShareQualityTest
 {
@@ -26,7 +25,15 @@ internal static unsafe class ShareQualityTest
     private static int Step(int h) => _motion.StepEighths == 0 ? 12 : h * _motion.StepEighths / 8;
     private static readonly int[] AfterChecks = { 250, 500, 1000, 2000 };
 
-    private sealed record Shot(long At, FrameKind Kind, int Qp, int Bits, double Shown, byte[] Au, int Offset);
+    /// <summary>
+    /// One frame: taken at At, sent over the link from Start until Arrived (ms), encoded in EncodeMs
+    /// of wall clock. Shown: when the viewer shows it, once the next frame starts to arrive, never
+    /// for the last one.
+    /// </summary>
+    private sealed record Shot(long At, FrameKind Kind, int Qp, int Bits, double Start, double Arrived, byte[] Au, int Offset, double EncodeMs)
+    {
+        public double Shown { get; set; } = double.PositiveInfinity;
+    }
 
     /// <summary>
     /// "--selftest-share quality vbr": Direct3D 12's encoder at a variable bitrate, as the GPU path ran
@@ -123,16 +130,19 @@ internal static unsafe class ShareQualityTest
                     Buffer.MemoryCopy(src + (long)((y + offset) % h) * w * 4, dst + (long)y * w * 4, w * 4, w * 4);
         }
 
-        (IVideoEncoder, GpuConverter) Open(bool constantQp, int bps)
+        (IVideoEncoder, GpuConverter) Open(bool constantQp, Quality quality, int bps)
         {
-            // Before, the encoder opened at the bitrate it then kept: what the link takes, less the packet overhead.
+            // Each pipeline opens the encoder its own way. Before: at the style's frame rate, and at
+            // the bitrate it then kept, what the link takes less the packet overhead. Now: at the
+            // frame rate HostPipeline sets for this size, the quantizer coming with each frame.
+            int fps = constantQp ? NowFps(w, h) : OldFps(quality);
             if (!constantQp) bps = (int)(bps * 0.88);
             if (mf)
             {
                 var gpu = new GpuConverter(device, context, texture, w, h, w, h);
-                return (H264Encoder.Create(w, h, 60, bps, device: device, constantQp: constantQp), gpu);
+                return (H264Encoder.Create(w, h, fps, bps, device: device, constantQp: constantQp), gpu);
             }
-            var d3d12 = new D3D12H264Encoder(device, context, w, h, 60, bps, constantQp);
+            var d3d12 = new D3D12H264Encoder(device, context, w, h, fps, bps, constantQp);
             return (d3d12, new GpuConverter(device, context, texture, w, h, w, h, d3d12.Input));
         }
 
@@ -141,8 +151,8 @@ internal static unsafe class ShareQualityTest
         _motion = motion;
         Console.WriteLine();
         Console.WriteLine($"---- moving: {motion.Name} ----");
-        Console.WriteLine($"{"",-26} {"still",6} | {"moving",-24} | {"after it stops, sharpness at",-34} | {"sent",6}");
-        Console.WriteLine($"{"link and way",-26} {"2 s",6} | {"fps",4} {"PSNR",5} {"delay",7} {"QP",5} | {"+0.25 s",8} {"+0.5 s",7} {"+1 s",7} {"+2 s",7} | {"kbit",6}");
+        Console.WriteLine($"{"",-26} {"still",6} | {"moving",-24} | {"after it stops, sharpness at",-34} | {"sent",6} {"encode",7}");
+        Console.WriteLine($"{"link and way",-26} {"2 s",6} | {"fps",4} {"PSNR",5} {"delay",7} {"QP",5} | {"+0.25 s",8} {"+0.5 s",7} {"+1 s",7} {"+2 s",7} | {"kbit",6} {"ms",7}");
         foreach (int kbps in new[] { 1000, 2500, 6000 })
         {
             foreach (var (planner, quality, label) in new[]
@@ -155,7 +165,7 @@ internal static unsafe class ShareQualityTest
             {
                 try
                 {
-                    var (encoder, gpu) = Open(planner, kbps * 1000);
+                    var (encoder, gpu) = Open(planner, quality, kbps * 1000);
                     using var e = encoder;
                     using var g = gpu;
                     if (planner && !encoder.ConstantQp)
@@ -173,9 +183,20 @@ internal static unsafe class ShareQualityTest
             }
         }
         }
-        Console.WriteLine("PSNR in dB of the brightness, the picture the other PC shows against the screen; delay: until a scrolled frame is shown, after it was taken");
+        Console.WriteLine();
+        Console.WriteLine("PSNR: of the brightness (Y) only, in dB, the picture the other PC shows against the screen as it is then.");
+        Console.WriteLine("delay: simulated, from a frame being taken to it showing: waiting for the link, sending at the link's rate,");
+        Console.WriteLine("  and the viewer holding each frame until the next one starts to arrive (Pion's sample builder).");
+        Console.WriteLine("  Not in it: capture, encoding and decoding time (encode: measured apart, wall clock per frame),");
+        Console.WriteLine("  the network's own delay, jitter and loss. The link's rate is fixed: the bandwidth estimate is not tested here.");
         return 0;
     }
+
+    /// <summary>The frame rate the old HostPipeline opened the encoder at for each style.</summary>
+    private static int OldFps(Quality q) => q switch { Quality.Smooth => 60, Quality.Sharp => 20, _ => 30 };
+
+    /// <summary>The frame rate HostPipeline opens the encoder at now, see HostPipeline.EncoderFps.</summary>
+    private static int NowFps(int w, int h) => (w + 15) / 16 * ((h + 15) / 16) * 60 <= 983_040 ? 60 : 30;
 
     private static int Offset(long t, int h) =>
         t < RestMs ? 0 : (int)((Math.Min(t - RestMs, ScrollMs) / _motion.EveryMs + 1) * Step(h) % h);
@@ -191,23 +212,25 @@ internal static unsafe class ShareQualityTest
     /// <summary>
     /// The session in simulated time: the screen changes as Offset says, frames go as the planner
     /// says, or as the pipeline did before (a frame at most every 1/fps after a change, two
-    /// sharpening frames 160 and 700 ms after the last one, the encoder's own bitrate), and each
-    /// is shown once the link carried it and every frame before it.
+    /// sharpening frames 160 and 700 ms after the last one, the encoder's own bitrate), each with
+    /// the duration since the frame before, as both pipelines pass it. A frame goes over the link
+    /// after every frame before it, and the viewer shows it once the next frame's first packet is in.
     /// </summary>
     private static List<Shot> Simulate(IVideoEncoder encoder, GpuConverter gpu, ID3D11DeviceContext context, ID3D11Texture2D texture,
         byte[] frame, Action<int> show, bool usePlanner, Quality quality, int bps, int h)
     {
         int w = encoder.Width;
         var outputs = new BlockingCollection<byte[]>();
-        var planner = usePlanner ? new FramePlanner(w, encoder.Height, 1, encoder.ConstantQp, 60) { Quality = quality, LinkBps = bps } : null;
+        var planner = usePlanner ? new FramePlanner(w, encoder.Height, 1, encoder.ConstantQp, NowFps(w, encoder.Height)) { Quality = quality, LinkBps = bps } : null;
         encoder.Output = (au, _, _) =>
         {
             var a = au.ToArray();
             planner?.Encoded(a.Length * 8);
             outputs.Add(a);
         };
-        int fps = quality switch { Quality.Smooth => 60, Quality.Sharp => 20, _ => 30 };
+        int fps = OldFps(quality);
         var shots = new List<Shot>();
+        var clock = new System.Diagnostics.Stopwatch();
         var whole = new List<Dirty> { new(0, 0, w, encoder.Height) };
         double linkFree = 0;
         long t = 0, end = RestMs + ScrollMs + AfterMs, last = -10_000, lastChange = -1;
@@ -266,15 +289,24 @@ internal static unsafe class ShareQualityTest
                 encoder.Qp = plan.Qp;
                 planner.Sent(plan, t);
             }
-            encoder.Encode(gpu.Convert(), t * 10_000, 166_666);
+            // The duration since the frame before, as each HostPipeline passes it.
+            long durationMs = last < 0 ? (planner != null ? 33 : 1000 / fps) : Math.Clamp(t - last, 1, 1000);
+            clock.Restart();
+            encoder.Encode(gpu.Convert(), t * 10_000, durationMs * 10_000);
             if (!outputs.TryTake(out var au, 3000)) throw new InvalidOperationException($"{encoder.Name} gave no frame");
+            double encodeMs = clock.Elapsed.TotalMilliseconds;
             int bits = au.Length * 8;
-            linkFree = Math.Max(t, linkFree) + bits * 1000.0 / bps;
-            shots.Add(new Shot(t, kind, plan.Qp, bits, linkFree, au, off));
+            double start = Math.Max(t, linkFree);
+            linkFree = start + bits * 1000.0 / bps;
+            shots.Add(new Shot(t, kind, plan.Qp, bits, start, linkFree, au, off, encodeMs));
             key = false;
             last = t;
             t++;
         }
+        // The viewer's sample builder hands a frame on once the first packet of the next one is in.
+        double packetMs = 1200 * 8 * 1000.0 / bps;
+        for (int i = 0; i + 1 < shots.Count; i++)
+            shots[i].Shown = Math.Max(shots[i].Arrived, shots[i + 1].Start + packetMs);
         return shots;
     }
 
@@ -320,7 +352,8 @@ internal static unsafe class ShareQualityTest
                 var s = shots[i];
                 bitsTotal += s.Bits;
                 if (!decoder.Decode(s.Au, i * 166_666L, ref picture) || picture == null) continue;
-                bool scrolling = s.At >= RestMs && s.At < RestMs + ScrollMs;
+                // Seal frames repeat the picture before them: not counted as frames of the motion.
+                bool scrolling = s.At >= RestMs && s.At < RestMs + ScrollMs && s.Kind != FrameKind.Seal;
                 if (i == still || scrolling)
                 {
                     Screen(s.Offset);
@@ -330,7 +363,7 @@ internal static unsafe class ShareQualityTest
                     {
                         motion++;
                         motionPsnr += psnr;
-                        motionDelay += s.Shown - s.At;
+                        motionDelay += double.IsFinite(s.Shown) ? s.Shown - s.At : 0;
                         motionQp += s.Qp;
                     }
                 }
@@ -346,7 +379,8 @@ internal static unsafe class ShareQualityTest
         string Db(double v) => double.IsNaN(v) ? "-" : $"{v:0.0}";
         string qp = shots.Any(s => s.Qp > 0) && motion > 0 ? $"{motionQp / motion:0}" : "-";
         return $"{Db(stillPsnr),6} | {motion,4} {Db(motion > 0 ? motionPsnr / motion : double.NaN),5} {(motion > 0 ? motionDelay / motion : 0),5:0}ms {qp,5} | "
-               + $"{Db(afterPsnr[0]),8} {Db(afterPsnr[1]),7} {Db(afterPsnr[2]),7} {Db(afterPsnr[3]),7} | {bitsTotal / 1000,6}";
+               + $"{Db(afterPsnr[0]),8} {Db(afterPsnr[1]),7} {Db(afterPsnr[2]),7} {Db(afterPsnr[3]),7} | {bitsTotal / 1000,6} "
+               + $"{shots.Average(s => s.EncodeMs),7:0.0}";
     }
 
     /// <summary>PSNR of the brightness plane.</summary>

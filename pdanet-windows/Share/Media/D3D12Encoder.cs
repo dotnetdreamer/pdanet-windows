@@ -97,6 +97,7 @@ internal sealed unsafe class D3D12H264Encoder : IVideoEncoder
     private Cqp _qpConfig; // the quantizers the encoder runs with, in constant QP mode
     private int _qp = 30;
     private int _emptyFrames;  // frames in a row that came back without a picture
+    private int _failedFrames; // frames in a row the driver failed
     private int _qpFloor;      // after a frame too big for the buffer, the quantizer stays at least this
     private long _floorUntil;  // until then, in Environment.TickCount64
     private VideoEncoderRateControlFlags _rateFlags;
@@ -523,8 +524,11 @@ internal sealed unsafe class D3D12H264Encoder : IVideoEncoder
             Logger.Instance.Warning(_result->ErrorFlags != 0
                 ? $"Screen sharing: the GPU's encoder failed a frame ({(VideoEncoderEncodeErrorFlags)_result->ErrorFlags})"
                 : $"Screen sharing: a frame of {_result->WrittenBytes >> 10} KB did not fit the encoder's buffer");
+            // Three in a row and this GPU's encoder is not used again, Media Foundation's takes over.
+            if (++_failedFrames >= 3) throw new InvalidOperationException("the GPU's Direct3D 12 encoder keeps failing frames");
             return;
         }
+        _failedFrames = 0;
         LastQp = (int)_result->AverageQp;
         if (!WriteOut(key, duration))
         {

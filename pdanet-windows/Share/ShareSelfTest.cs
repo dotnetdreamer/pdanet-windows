@@ -187,6 +187,7 @@ internal static class ShareSelfTest
         }
         Check("the picture path: capture, convert, encode, decode", Picture);
         Check("the GPU path: capture, convert and encode on the GPU", Gpu);
+        Check("the encoder a session picks here, and its quantizer", EncoderQp);
         Check("a turned screen comes out the right way round", Turned);
         Check(online ? "a whole session through the public relays" : "a whole session on the local network", () => Session(online));
         Console.WriteLine(failed == 0 ? "all checks passed" : $"{failed} check(s) failed");
@@ -291,6 +292,67 @@ internal static class ShareSelfTest
         }
         finally { decoded?.Dispose(); }
         return string.Join("\n", lines);
+    }
+
+    /// <summary>
+    /// The encoder a session uses on this PC, picked as HostPipeline picks it: Direct3D 12's where
+    /// it works, else Media Foundation's GPU encoder. With constant QP the same picture goes out as
+    /// a keyframe at QP 40 and at QP 22, and the second must be at least twice as large: an encoder
+    /// that takes the quantizer and ignores it would never make the picture sharper.
+    /// </summary>
+    private static string EncoderQp()
+    {
+        var screen = ShareScreen.All()[0];
+        using var source = new DuplicationSource(screen, gpu: true, picture: true);
+        if (GpuConverter.Check(source.Device, source.Context) is { } problem)
+            return $"not the GPU path here ({problem}): sessions use the encoder of the picture path above";
+        var dirty = new List<Dirty>();
+        var sw = Stopwatch.StartNew();
+        while (source.Next(100, dirty) != CaptureResult.Frame && sw.ElapsedMilliseconds < 3000) { }
+        int w = source.Width & ~1, h = source.Height & ~1;
+        IVideoEncoder encoder;
+        GpuConverter gpu;
+        string? notD3d12 = null;
+        try
+        {
+            if (D3D12H264Encoder.Broken) throw new NotSupportedException("it failed earlier in this run");
+            var d3d12 = new D3D12H264Encoder(source.Device, source.Context, w, h, 60, 2_500_000);
+            encoder = d3d12;
+            try { gpu = new GpuConverter(source.Device, source.Context, source.Picture, source.Width, source.Height, w, h, d3d12.Input); }
+            catch { d3d12.Dispose(); throw; }
+        }
+        catch (Exception e) when (e is NotSupportedException or InvalidOperationException or SharpGen.Runtime.SharpGenException)
+        {
+            notD3d12 = e.Message;
+            gpu = new GpuConverter(source.Device, source.Context, source.Picture, source.Width, source.Height, w, h);
+            try { encoder = H264Encoder.Create(w, h, 60, 2_500_000, device: source.Device); }
+            catch (InvalidOperationException x)
+            {
+                gpu.Dispose();
+                return $"no GPU encoder takes textures here ({x.Message}): sessions use the encoder of the picture path above";
+            }
+        }
+        using var e1 = encoder;
+        using var g1 = gpu;
+        string name = encoder is D3D12H264Encoder d ? $"{d.Name} ({d.RateMode})"
+            : $"{encoder.Name} ({(encoder.ConstantQp ? "constant QP" : "constant bitrate")})";
+        if (notD3d12 != null) name += $"; Direct3D 12's encoder is not used here: {notD3d12}";
+        if (!encoder.ConstantQp)
+            return $"{name}: no constant QP, sessions here keep a constant bitrate and text does not sharpen the new way";
+        var sizes = new BlockingCollection<int>();
+        encoder.Output = (au, _, _) => sizes.Add(au.Length);
+        int Keyframe(int qp, int i)
+        {
+            encoder.Qp = qp;
+            encoder.RequestKeyframe();
+            encoder.Encode(gpu.Convert(), i * 333_333L, 333_333);
+            if (!sizes.TryTake(out int n, 3000)) throw new Exception($"{encoder.Name} gave no frame");
+            return n;
+        }
+        int coarse = Keyframe(40, 0), fine = Keyframe(22, 1);
+        if (fine < coarse * 2)
+            throw new Exception($"{name} takes a quantizer but ignores it: keyframe {coarse >> 10} KB at QP 40, {fine >> 10} KB at QP 22");
+        return $"{name}\nkeyframe {coarse >> 10} KB at QP 40, {fine >> 10} KB at QP 22: the quantizer takes effect";
     }
 
     /// <summary>
