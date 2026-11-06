@@ -283,6 +283,7 @@
             <Grid.RowDefinitions>
                 <RowDefinition x:Name="TabRow" Height="42" />
                 <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
                 <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
@@ -462,8 +463,43 @@
                 </Grid>
             </Border>
 
+            <!-- ============================== Agent bar ============================== -->
+            <!-- While an AI agent uses the browser: who it is and what it does now, the person's Pause and Stop,
+                 and the questions an agent waits on: may it start, may it clear data, can the person help -->
+            <Border x:Name="AgentBar" Grid.Row="2" Visibility="Collapsed" BorderThickness="0,0,0,1"
+                    Background="#122BF5A8" BorderBrush="{StaticResource B.AccentLine}">
+                <DockPanel Margin="14,7,10,7">
+                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                        <TextBox x:Name="AgentReply" Width="240" Height="32" Padding="10,0" Margin="0,0,8,0" Visibility="Collapsed"
+                                 VerticalAlignment="Center" Tag="Type your answer"
+                                 KeyDown="OnAgentReplyKey" AutomationProperties.Name="Your answer for the agent" />
+                        <Button x:Name="AgentPrimary" Style="{StaticResource Btn.Primary}" Padding="13,5" Margin="0,0,6,0"
+                                Click="OnAgentPrimary" Cursor="Hand" />
+                        <Button x:Name="AgentSecondary" Style="{StaticResource Btn.Secondary}" Padding="13,5" Margin="0,0,6,0"
+                                Click="OnAgentSecondary" Cursor="Hand" />
+                        <Button x:Name="AgentStop" Style="{StaticResource Btn.Danger}" Tag="&#xE71A;" Content="Stop" Padding="11,5"
+                                Click="OnAgentStop" Cursor="Hand" />
+                    </StackPanel>
+                    <Grid Width="16" Height="16" VerticalAlignment="Center">
+                        <Ellipse x:Name="AgentPulse" Fill="{StaticResource B.Accent}" Opacity="0" RenderTransformOrigin="0.5,0.5">
+                            <Ellipse.RenderTransform>
+                                <ScaleTransform x:Name="AgentPulseScale" />
+                            </Ellipse.RenderTransform>
+                        </Ellipse>
+                        <TextBlock x:Name="AgentGlyph" Text="&#xE99A;" FontFamily="{StaticResource F.Icon}" FontSize="13"
+                                   Foreground="{StaticResource B.Accent}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Grid>
+                    <StackPanel Margin="11,0,14,0" VerticalAlignment="Center">
+                        <TextBlock x:Name="AgentTitle" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
+                                   AutomationProperties.LiveSetting="Polite" />
+                        <TextBlock x:Name="AgentDetail" FontSize="12" Foreground="{StaticResource B.Text2}" TextWrapping="Wrap"
+                                   MaxHeight="34" TextTrimming="CharacterEllipsis" Margin="0,1,0,0" />
+                    </StackPanel>
+                </DockPanel>
+            </Border>
+
             <!-- ================================ Pages ================================ -->
-            <Grid x:Name="Pages" Grid.Row="2" Background="{StaticResource B.Bg0}" Focusable="True" FocusVisualStyle="{x:Null}">
+            <Grid x:Name="Pages" Grid.Row="3" Background="{StaticResource B.Bg0}" Focusable="True" FocusVisualStyle="{x:Null}">
                 <!-- Web views of the tabs go in here, behind the start page and the problem panel -->
 
                 <ScrollViewer x:Name="StartPage" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False">
@@ -658,7 +694,7 @@
             </Grid>
 
             <!-- ============================== Status strip ============================== -->
-            <Border x:Name="Strip" Grid.Row="3" Height="26" BorderBrush="{StaticResource B.Line}" BorderThickness="0,1,0,0" Background="#CC040608">
+            <Border x:Name="Strip" Grid.Row="4" Height="26" BorderBrush="{StaticResource B.Line}" BorderThickness="0,1,0,0" Background="#CC040608">
                 <Grid Margin="14,0" TextElement.FontFamily="{StaticResource F.Mono}" TextElement.FontSize="11"
                       TextElement.Foreground="{StaticResource B.Text3}">
                     <Grid.ColumnDefinitions>

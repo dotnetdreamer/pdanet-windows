@@ -17,7 +17,7 @@ This is an independent project inspired by PdaNet. It is not made by, or connect
 - Block an app or a website to save phone data, with no admin
 - Make your PC read as another city, time zone and region, with no admin
 - Browse the web in the PdaNet browser on the Launchpad, with tabs and your web apps one click away
-- Let an AI agent drive that browser for you, through your phone's connection, with a built in MCP server
+- Let an AI agent such as Claude use that browser for you, while you watch, pause or stop it, with a built in MCP server
 - See and use another PC, or let someone help on this one, with a ten digit code and nothing to install, straight between the two PCs or through your phone
 
 ## What it looks like
@@ -257,22 +257,34 @@ The Launchpad holds apps running right inside PdaNet. The first app is the PdaNe
 </details>
 
 <details>
-<summary><h2>Let an AI agent drive the browser</h2></summary>
+<summary><h2>Let an AI agent use the browser</h2></summary>
 
-PdaNet has a built in MCP (Model Context Protocol) server, so an AI agent can drive the PdaNet browser for you: open pages, read them, fill forms, click buttons and take screenshots. Because it drives the real PdaNet browser, the agent stays signed in to your websites and, while PdaNet is connected, browses through your phone's connection.
+PdaNet has a built in MCP (Model Context Protocol) server, so an AI agent such as Claude can use the PdaNet browser for you: open websites, read them, fill in forms, click, upload and download files, and use everything else the browser offers, from tabs and web apps to find on page, print to PDF and full screen. It uses the real PdaNet browser, so the agent stays signed in to your websites and, while PdaNet is connected, goes online through your phone.
 
-Start it from a terminal, or point your MCP client at it:
+Connect an agent
+
+1. Open Settings, then AI agents
+2. Press Copy for Claude Code, Copy for Claude Desktop or Copy for VS Code, and paste it into the app, or run it in a terminal for Claude Code
+3. Ask the agent to do something on the web
+
+The agent starts PdaNet like this:
 
 ```
 PdaNetPortable.exe --mcp
 ```
 
-- It talks to the agent over stdio and opens a real browser window you can watch
-- The agent sees each page as a list of elements it can click and type into, and acts on them with trusted clicks and keystrokes, so it works on modern websites
-- It offers a full set of browser tools: navigate, tabs, snapshot, read, screenshot, click, type, press key, hover, select, scroll, drag, wait, run JavaScript, read the console, and check whether traffic is going through PdaNet
-- Add `--hidden` to keep the window off screen for unattended runs, or run `PdaNetPortable.exe --mcp-smoke` for a quick built in self check
+- While PdaNet runs, the agent uses the browser of that PdaNet, the same window and tabs you see. When PdaNet does not run, it opens a browser window of its own
+- The agent opens websites in tabs of its own and never replaces a page you opened. Before it clicks, types or runs a script in a tab you opened, or closes one, the browser asks you. If you move to another tab while it works, it stays in its own tab
+- The first time an agent wants to use the browser, the browser asks you. Press Allow, or Always allow to let that agent in without asking next time. Agents are known by the name their app gives, so Allow says which agent may work; it is not a password
+- While an agent works, a bar at the top of the browser says which agent it is and what it does, and the part of the page it is about to use lights up. Pause holds the agent at once, even in the middle of typing, Stop ends it
+- When the agent needs you, to sign in, solve a puzzle or type a code from your phone, the bar says what it needs, and the agent goes on once you press Done
+- After Stop, an agent can come back only once you allow it again, even one you chose to always allow
+- Clearing your browsing data or history, forgetting a website, and letting websites with a safety warning open always need your OK
+- The page an agent reads never shows what is in a password field, and PdaNet never writes down what an agent types
+- For agent apps that connect by address, turn on Also take agents over HTTP. Only programs on this PC can reach it, and only with the key from Settings
+- Add `--hidden` to run a browser window of its own off screen, for unattended runs, or run `PdaNetPortable.exe --mcp-smoke` for the built in check
 
-For client setup (Claude Desktop, Claude Code, or any MCP client), the full tool list and the safety notes, see [docs/mcp.md](docs/mcp.md).
+For the full tool list, setup for other apps, HTTP details and safety notes, see [docs/mcp.md](docs/mcp.md).
 
 </details>
 
@@ -358,6 +370,7 @@ Open Settings from the main screen to change things such as
 - Whether the Apps page shows the apps that use the internet
 - A relay server for screen share, for a network that blocks direct links
 - Which port the app uses on your PC
+- Whether AI agents may use the PdaNet browser, and the agents you always allow
 - A path to your own copy of adb, if you prefer that
 
 </details>

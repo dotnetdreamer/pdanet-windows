@@ -389,6 +389,9 @@ public sealed class BrowserStore
         if (notify) Changed?.Invoke();
     }
 
+    /// <summary>Keeps every change in memory only, for the built in checks: the real history and web apps stay as they are.</summary>
+    public void Sandbox() => _readOnly = true;
+
     // ======================= Screenshot only demo =======================
     /// <summary>Sample web apps and recent websites for screenshots. Nothing is written to disk afterwards.</summary>
     public void SeedDemo()

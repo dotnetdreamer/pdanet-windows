@@ -47,10 +47,11 @@ public static class Program
                     ? args.Contains("vbr") ? Share.ShareQualityTest.Vbr() : Share.ShareQualityTest.Run(mf: args.Contains("mf"))
                     : Share.ShareSelfTest.Run(online: args.Contains("online"));
 
-        // MCP server mode: drive the PdaNet browser from an AI agent over stdio.
-        // "--hidden" runs the browser off-screen; "--mcp-smoke [--show]" runs the built-in check.
+        // MCP server mode: drive the PdaNet browser from an AI agent over stdio. With PdaNet running
+        // it relays to that PdaNet's browser; else, or with "--standalone" or "--hidden" (off screen),
+        // it runs a browser of its own. "--mcp-smoke [--show]" runs the built-in check.
         if (args.Length > 0 && args[0] == "--mcp")
-            return Mcp.McpHost.Run(visible: !args.Contains("--hidden"));
+            return Mcp.McpHost.Run(args);
         if (args.Length > 0 && args[0] == "--mcp-smoke")
             return Mcp.McpHost.Smoke(visible: args.Contains("--show"));
 

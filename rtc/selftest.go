@@ -513,7 +513,9 @@ func loopback(hostRoute, viewRoute route, base options) (string, error) {
 	}
 
 	// One keyframe of screen, big enough to need many packets.
-	frame := append([]byte{0, 0, 0, 1, 0x65}, bytes.Repeat([]byte{0x88, 0x84, 0x21}, 20000)...)
+	// Include the parameter sets a real encoder puts on its first keyframe: they
+	// establish the receiver's first complete access-unit boundary after reordering.
+	frame := append([]byte{0, 0, 0, 1, 0x67, 0x42, 0, 0x1f, 0, 0, 0, 1, 0x68, 0xce, 0x3c, 0x80, 0, 0, 0, 1, 0x65}, bytes.Repeat([]byte{0x88, 0x84, 0x21}, 20000)...)
 	hdr := make([]byte, 5)
 	binary.LittleEndian.PutUint32(hdr, 33333)
 	hdr[4] = 1

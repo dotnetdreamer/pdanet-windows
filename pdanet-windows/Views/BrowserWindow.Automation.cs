@@ -1,5 +1,6 @@
+using System.Windows;
+using System.Windows.Media.Animation;
 using Microsoft.Web.WebView2.Core;
-using Microsoft.Web.WebView2.Wpf;
 using PdaNetPortable.Core;
 using PdaNetPortable.Services;
 
@@ -7,195 +8,283 @@ namespace PdaNetPortable.Views;
 
 /// <summary>
 /// The automation facade the MCP server drives (see <c>Mcp\BrowserSession</c>). It lives in a
-/// partial of <see cref="BrowserWindow"/> so it can reuse the window's own tab, engine and
-/// navigation machinery — the agent drives the exact same browser a person would, tabs, web
-/// apps, the "through PdaNet" indicator and all. Every method here runs on the UI thread; the
-/// MCP layer marshals to the dispatcher before calling in.
+/// partial of <see cref="BrowserWindow"/> so it reuses the window's own tabs, engine, find box,
+/// zoom, menu settings and route indicator: an agent drives the exact browser a person uses, and
+/// every change it makes shows in the window the way a person's change would. Every member runs
+/// on the UI thread; the MCP layer marshals to the dispatcher before calling in.
 /// </summary>
 public partial class BrowserWindow
 {
-    /// <summary>A snapshot of the active tab for a tool reply.</summary>
-    public sealed record AutoPage(bool Ok, string Url, string Title, bool Loading, string? Note);
+    /// <summary>Test pages for the built in MCP self check: a folder served at https://{Host}/.</summary>
+    internal static (string Host, string Folder)? AutoTestHost { get; set; }
 
-    /// <summary>One open tab, as the agent sees it.</summary>
-    public sealed record AutoTab(int Index, string Title, string Url, bool Active, bool Loading);
+    /// <summary>A tab got its web view, before its first page loads, so an agent can watch it from the start.</summary>
+    internal event Action<BrowserTab, CoreWebView2>? AutoViewReady;
 
-    /// <summary>The CoreWebView2 of the active tab, or null when the active tab still shows the start page.</summary>
-    internal CoreWebView2? AutoActiveCore => _active?.View?.CoreWebView2;
+    /// <summary>A download starts in one of the tabs.</summary>
+    internal event Action<BrowserTab, CoreWebView2DownloadStartingEventArgs>? AutoDownloadStarting;
 
-    /// <summary>The WPF view of the active tab, for screenshots.</summary>
-    internal WebView2? AutoActiveView => _active?.View;
+    // ============================ Tabs ============================
+    internal IReadOnlyList<BrowserTab> AutoTabs => _tabs;
+    internal BrowserTab? AutoActive => _active;
+    internal int AutoClosedCount => _closed.Count;
+    internal int AutoLastSessionCount => _store.State.LastTabs.Count(BrowserStore.IsWeb);
 
-    internal AutoPage AutoDescribe()
+    /// <summary>Why no page can open right now, or null when the engine is fine.</summary>
+    internal string? AutoEngineProblem =>
+        _engineError != null
+            ? (_engineError is WebView2RuntimeNotFoundException || WebRuntime.Version() == null
+                ? "Microsoft Edge WebView2 is not installed on this PC"
+                : "the browser engine could not start: " + Friendly.Clean(_engineError.Message))
+            : _engineLost ? "the browser engine stopped, restart the browser" : null;
+
+    /// <summary>The web view of a tab, made when needed, without opening anything.</summary>
+    internal async Task<CoreWebView2?> AutoEnsureCoreAsync(BrowserTab tab)
     {
-        var t = _active;
-        if (t == null) return new AutoPage(false, "", "", false, "No tab is open.");
-        var core = t.View?.CoreWebView2;
-        var url = core != null ? core.Source : t.PendingUrl ?? t.Url;
-        var title = core != null ? core.DocumentTitle : t.Title;
-        if (string.IsNullOrWhiteSpace(title)) title = BrowserStore.HostOf(url);
-        return new AutoPage(true, url ?? "", title ?? "", t.Loading, core == null ? "The tab is on the start page — navigate to open a website." : null);
-    }
-
-    internal List<AutoTab> AutoTabs()
-    {
-        var list = new List<AutoTab>(_tabs.Count);
-        for (int i = 0; i < _tabs.Count; i++)
-        {
-            var t = _tabs[i];
-            var core = t.View?.CoreWebView2;
-            var url = core != null ? core.Source : t.PendingUrl ?? t.Url;
-            var title = core != null ? core.DocumentTitle : t.Title;
-            if (string.IsNullOrWhiteSpace(title)) title = BrowserStore.HostOf(url);
-            if (string.IsNullOrWhiteSpace(title)) title = t.IsStart ? "Start page" : "New tab";
-            list.Add(new AutoTab(i, title!, url ?? "", ReferenceEquals(t, _active), t.Loading));
-        }
-        return list;
-    }
-
-    /// <summary>
-    /// Makes sure the active tab (creating one if needed) has a ready CoreWebView2 and returns it,
-    /// without navigating. The MCP layer calls this first so it can instrument the page for console
-    /// and network capture before the first navigation runs.
-    /// </summary>
-    internal async Task<CoreWebView2?> AutoEnsureCoreAsync()
-    {
-        var tab = _active ?? AddTab(atEnd: true);
-        Pick(tab);
+        if (!_tabs.Contains(tab)) return null;
         return await EnsureView(tab);
     }
 
-    /// <summary>Opens a web address in the active tab (its view is created if needed). Waits until the page settles.</summary>
-    internal async Task<AutoPage> AutoNavigateAsync(string url, string? plain, int timeoutMs)
-    {
-        var tab = _active;
-        if (tab == null) return new AutoPage(false, "", "", false, "No tab is open.");
-        var core = tab.View?.CoreWebView2 ?? await EnsureView(tab);
-        if (core == null)
-            return new AutoPage(false, "", "", false, _engineError?.Message is { Length: > 0 } m
-                ? "The browser engine could not start: " + Friendly.Clean(m)
-                : "The browser engine (WebView2) is not available.");
-
-        var (ok, status) = await NavOnceAsync(core, tab, url, timeoutMs);
-        if (!ok && plain != null && NoAnswer(status))
-            (ok, status) = await NavOnceAsync(core, tab, plain, timeoutMs);
-
-        var page = AutoDescribe();
-        if (!ok) page = page with { Note = NavNote(status) };
-        return page;
-    }
-
-    internal Task<AutoPage> AutoBackAsync(int timeoutMs) => AutoHistoryAsync(back: true, timeoutMs);
-
-    internal Task<AutoPage> AutoForwardAsync(int timeoutMs) => AutoHistoryAsync(back: false, timeoutMs);
-
-    private async Task<AutoPage> AutoHistoryAsync(bool back, int timeoutMs)
-    {
-        var tab = _active;
-        var core = tab?.View?.CoreWebView2;
-        if (core == null) return AutoDescribe() with { Note = "There is no page to go back or forward from." };
-        bool can = back ? core.CanGoBack : core.CanGoForward;
-        if (!can) return AutoDescribe() with { Note = back ? "Cannot go back — no earlier page." : "Cannot go forward — no later page." };
-        await NavTriggerAsync(core, tab!, () => { if (back) core.GoBack(); else core.GoForward(); }, timeoutMs);
-        return AutoDescribe();
-    }
-
-    internal async Task<AutoPage> AutoReloadAsync(bool hard, int timeoutMs)
-    {
-        var tab = _active;
-        var core = tab?.View?.CoreWebView2;
-        if (core == null)
-        {
-            if (tab is { IsStart: false }) return await AutoNavigateAsync(tab.PendingUrl ?? tab.Url, null, timeoutMs);
-            return AutoDescribe() with { Note = "Nothing to reload — the tab is on the start page." };
-        }
-        await NavTriggerAsync(core, tab!, () =>
-        {
-            if (hard)
-                core.CallDevToolsProtocolMethodAsync("Page.reload", "{\"ignoreCache\":true}")
-                    .ContinueWith(t => _ = t.Exception, TaskContinuationOptions.OnlyOnFaulted);
-            else core.Reload();
-        }, timeoutMs);
-        return AutoDescribe();
-    }
-
-    internal AutoPage AutoNewTab()
+    internal BrowserTab AutoNewTab(bool pick = true)
     {
         var t = AddTab(atEnd: true);
-        Pick(t);
-        return AutoDescribe();
+        if (pick) Pick(t);
+        return t;
     }
 
-    internal AutoPage AutoSelectTab(int index)
+    internal void AutoPick(BrowserTab tab) => Pick(tab);
+
+    /// <summary>Opens an address in a tab the way the address bar does, the https to http retry included.</summary>
+    internal void AutoGo(BrowserTab tab, string url, string? plain) => Go(tab, url, plain, focus: false);
+
+    internal bool AutoBack()
     {
-        if (index < 0 || index >= _tabs.Count) throw new ArgumentOutOfRangeException(nameof(index));
-        Pick(_tabs[index]);
-        return AutoDescribe();
+        var core = _active?.View?.CoreWebView2;
+        if (core?.CanGoBack != true) return false;
+        core.GoBack();
+        return true;
     }
 
-    internal AutoPage AutoCloseTab(int index)
+    internal bool AutoForward()
     {
-        if (index < 0 || index >= _tabs.Count) throw new ArgumentOutOfRangeException(nameof(index));
-        var target = _tabs[index];
-        // Never let the agent close the last tab out from under itself: that would close the
-        // whole browser and end the MCP session. Keep one fresh tab alive instead.
-        if (_tabs.Count == 1)
+        var core = _active?.View?.CoreWebView2;
+        if (core?.CanGoForward != true) return false;
+        core.GoForward();
+        return true;
+    }
+
+    internal void AutoReload(bool hard) => Reload(hard: hard);
+
+    internal void AutoStop() => StopLoading();
+
+    /// <summary>Closes a tab. The last tab is swapped for a fresh one, so the browser stays open.</summary>
+    internal void AutoClose(BrowserTab tab)
+    {
+        if (_tabs.Count == 1) Pick(AddTab(atEnd: true));
+        CloseTab(tab);
+    }
+
+    internal BrowserTab? AutoReopen()
+    {
+        if (_closed.Count == 0) return null;
+        ReopenClosed();
+        return _active;
+    }
+
+    internal BrowserTab? AutoDuplicate(BrowserTab tab)
+    {
+        if (tab.IsStart) return null;
+        Duplicate(tab);
+        return _active;
+    }
+
+    internal void AutoCloseOthers(BrowserTab keep) => CloseOthers(keep);
+
+    internal void AutoCloseRight(BrowserTab tab) => CloseRight(tab);
+
+    internal void AutoMove(BrowserTab tab, int to)
+    {
+        int from = _tabs.IndexOf(tab);
+        to = Math.Clamp(to, 0, _tabs.Count - 1);
+        if (from >= 0 && from != to) _tabs.Move(from, to);
+        TabStrip.ScrollIntoView(tab);
+    }
+
+    internal bool AutoMute(BrowserTab tab, bool muted)
+    {
+        var core = tab.View?.CoreWebView2;
+        if (core == null) return false;
+        core.IsMuted = muted;
+        return true;
+    }
+
+    /// <summary>Brings back the tabs from last time, as the chip on the start page does.</summary>
+    internal int AutoRestore()
+    {
+        int n = AutoLastSessionCount;
+        if (n > 0) OnRestore(this, new RoutedEventArgs());
+        return n;
+    }
+
+    // ============================ Find on page ============================
+    /// <summary>Finds text with the find box of the window, so the person sees the matches too.</summary>
+    internal async Task<(int Matches, int Active)> AutoFindAsync(string text, bool matchCase, bool wholeWord)
+    {
+        var core = _active?.View?.CoreWebView2;
+        if (core == null || _env == null) return (0, 0);
+        if (FindBox.Visibility != Visibility.Visible)
         {
-            var keep = AddTab(atEnd: true);
-            Pick(keep);
+            FindBox.Visibility = Visibility.Visible;
+            FindBox.BeginAnimation(WidthProperty, new DoubleAnimation(0, FindWidth, TimeSpan.FromMilliseconds(200)) { EasingFunction = Ui.EaseOut });
         }
-        CloseTab(target);
-        return AutoDescribe();
+        FindText.Text = text;
+        _findTimer.Stop(); // the box would start its own search a moment later, with default options
+        var options = _env.CreateFindOptions();
+        options.FindTerm = text;
+        options.SuppressDefaultFindDialog = true;
+        options.ShouldHighlightAllMatches = true;
+        options.IsCaseSensitive = matchCase;
+        options.ShouldMatchWord = wholeWord;
+        await core.Find.StartAsync(options);
+        // The count arrives a moment after the search starts, wait until it holds still.
+        int last = -2;
+        for (int i = 0; i < 24; i++)
+        {
+            await Task.Delay(50);
+            int n = core.Find.MatchCount;
+            if (n == last) break;
+            last = n;
+        }
+        UpdateFindCount();
+        return (Math.Max(0, core.Find.MatchCount), core.Find.ActiveMatchIndex);
     }
 
-    // Navigate once and wait for the page to finish (or time out). Returns success + why not.
-    private async Task<(bool Ok, CoreWebView2WebErrorStatus Status)> NavOnceAsync(
-        CoreWebView2 core, BrowserTab tab, string target, int timeoutMs)
+    internal async Task<(int Matches, int Active)> AutoFindStepAsync(bool back)
     {
-        var tcs = new TaskCompletionSource<(bool, CoreWebView2WebErrorStatus)>(TaskCreationOptions.RunContinuationsAsynchronously);
-        void Done(object? _, CoreWebView2NavigationCompletedEventArgs e)
-        {
-            core.NavigationCompleted -= Done;
-            tcs.TrySetResult((e.IsSuccess, e.WebErrorStatus));
-        }
-        core.NavigationCompleted += Done;
-        tab.Loading = true;
-        try { core.Navigate(target); }
-        catch
-        {
-            core.NavigationCompleted -= Done;
-            try { core.Navigate(_store.SearchUrl(target)); core.NavigationCompleted += Done; }
-            catch { return (false, CoreWebView2WebErrorStatus.Unknown); }
-        }
-        if (await Task.WhenAny(tcs.Task, Task.Delay(timeoutMs)) != tcs.Task)
-        {
-            core.NavigationCompleted -= Done;
-            core.Stop();
-            return (false, CoreWebView2WebErrorStatus.Timeout);
-        }
-        return tcs.Task.Result;
+        var find = _active?.View?.CoreWebView2?.Find;
+        if (find == null) return (0, 0);
+        int before = find.ActiveMatchIndex;
+        FindStep(back);
+        for (int i = 0; i < 10 && find.ActiveMatchIndex == before; i++) await Task.Delay(30);
+        UpdateFindCount();
+        return (Math.Max(0, find.MatchCount), find.ActiveMatchIndex);
     }
 
-    // Trigger a navigation (back/forward/reload) and wait for it to finish or time out.
-    private async Task NavTriggerAsync(CoreWebView2 core, BrowserTab tab, Action trigger, int timeoutMs)
+    internal void AutoFindClose() => CloseFind();
+
+    // ============================ View ============================
+    internal double AutoZoom
     {
-        var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        void Done(object? _, CoreWebView2NavigationCompletedEventArgs e) { core.NavigationCompleted -= Done; tcs.TrySetResult(true); }
-        core.NavigationCompleted += Done;
-        tab.Loading = true;
-        try { trigger(); } catch { core.NavigationCompleted -= Done; return; }
-        if (await Task.WhenAny(tcs.Task, Task.Delay(timeoutMs)) != tcs.Task)
-            core.NavigationCompleted -= Done;
+        get => _active?.View?.ZoomFactor ?? 1;
+        set
+        {
+            var view = _active?.View;
+            if (view?.CoreWebView2 != null) view.ZoomFactor = Math.Clamp(value, ZoomSteps[0], ZoomSteps[^1]);
+        }
     }
 
-    private static string NavNote(CoreWebView2WebErrorStatus status) => status switch
+    internal void AutoZoomStep(int step) => Zoom(step);
+
+    internal bool AutoFullScreen
     {
-        CoreWebView2WebErrorStatus.Timeout => "The page took too long to load — it may still be loading.",
-        CoreWebView2WebErrorStatus.HostNameNotResolved => "The website address could not be found (DNS). Check the URL or the connection.",
-        CoreWebView2WebErrorStatus.CannotConnect or CoreWebView2WebErrorStatus.ServerUnreachable =>
-            "Could not reach the website. If PdaNet is not connected, the phone's internet may be unavailable.",
-        CoreWebView2WebErrorStatus.ConnectionAborted or CoreWebView2WebErrorStatus.ConnectionReset =>
-            "The connection to the website dropped.",
-        _ => $"The page did not load ({status}).",
-    };
+        get => _fullScreen;
+        set => SetFullScreen(value);
+    }
+
+    internal void AutoPrintDialog() => Print();
+
+    internal void AutoDevTools() => OpenDevTools();
+
+    internal bool AutoDownloadsPanel(bool open)
+    {
+        var core = _active?.View?.CoreWebView2;
+        if (core == null) return false;
+        if (open && !core.IsDefaultDownloadDialogOpen) core.OpenDefaultDownloadDialog();
+        else if (!open && core.IsDefaultDownloadDialogOpen) core.CloseDefaultDownloadDialog();
+        return true;
+    }
+
+    // ============================ Window ============================
+    /// <summary>Set for "--mcp --hidden": the window works off screen, for an agent alone.</summary>
+    internal bool AutoHidden { get; set; }
+
+    /// <summary>Whether a person can see the window: shown, on a screen, not minimized.</summary>
+    internal bool AutoSeen => IsVisible && WindowState != WindowState.Minimized && !AutoHidden;
+
+    internal void AutoWindow(string action)
+    {
+        switch (action)
+        {
+            case "focus":
+                Reveal();
+                break;
+            case "minimize":
+                WindowState = WindowState.Minimized;
+                break;
+            case "maximize":
+                if (_fullScreen) SetFullScreen(false);
+                WindowState = WindowState.Maximized;
+                break;
+            case "restore":
+                if (_fullScreen) SetFullScreen(false);
+                if (WindowState != WindowState.Normal) WindowState = WindowState.Normal;
+                break;
+        }
+    }
+
+    /// <summary>The size of the page area, in device independent pixels.</summary>
+    internal (double Width, double Height) AutoViewport => (Pages.ActualWidth, Pages.ActualHeight);
+
+    /// <summary>Sizes the window so the page area is the given size in CSS pixels at the current zoom.</summary>
+    internal void AutoResizeViewport(double cssWidth, double cssHeight)
+    {
+        if (_fullScreen) SetFullScreen(false);
+        if (WindowState != WindowState.Normal) WindowState = WindowState.Normal;
+        double zoom = _active?.View?.ZoomFactor ?? 1;
+        double width = Width + cssWidth * zoom - Pages.ActualWidth;
+        double height = Height + cssHeight * zoom - Pages.ActualHeight;
+        // A phone sized viewport is narrower than a person would make the window.
+        MinWidth = Math.Min(MinWidth, Math.Max(240, width));
+        MinHeight = Math.Min(MinHeight, Math.Max(200, height));
+        Width = Math.Max(MinWidth, width);
+        Height = Math.Max(MinHeight, height);
+        UpdateLayout();
+    }
+
+    // ============================ Settings and data ============================
+    internal void AutoSearchEngine(string key) => _store.SetSearch(key);
+
+    internal void AutoColors(string key) => SetColors(key);
+
+    internal void AutoOpenUnsafe(bool on) => SetOpenUnsafe(on);
+
+    internal Task<bool> AutoClearDataAsync() => ClearData();
+
+    internal void AutoNotice(string text) => Notice(text);
+
+    // ============================ How the browser goes online ============================
+    internal BrowserRoute AutoRoute => Route();
+
+    /// <summary>Data the browser sent and received through PdaNet since the window opened.</summary>
+    internal long AutoBytes => _bytesGone + _flows.Sum(f => f.BytesUp + f.BytesDown);
+
+    internal bool AutoInApp => _shell != null;
+
+    // ============================ Hooks for the window ============================
+    private void AutomationViewReady(BrowserTab tab, CoreWebView2 core)
+    {
+        if (AutoTestHost is { } host)
+        {
+            try { core.SetVirtualHostNameToFolderMapping(host.Host, host.Folder, CoreWebView2HostResourceAccessKind.Allow); }
+            catch (Exception e) { Logger.Instance.Debug($"Test pages: {e.Message}"); }
+        }
+        try { AutoViewReady?.Invoke(tab, core); }
+        catch (Exception e) { Logger.Instance.Debug($"Agent hook: {e.Message}"); }
+    }
+
+    private void AutomationDownload(BrowserTab tab, CoreWebView2DownloadStartingEventArgs e)
+    {
+        try { AutoDownloadStarting?.Invoke(tab, e); }
+        catch (Exception ex) { Logger.Instance.Debug($"Agent download hook: {ex.Message}"); }
+    }
 }

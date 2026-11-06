@@ -403,6 +403,124 @@
                     </StackPanel>
                 </Border>
 
+                <!-- ============================ AI agents ============================ -->
+                <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                    <StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <Border Style="{StaticResource SectionTile}">
+                                <TextBlock Text="&#xE99A;" Style="{StaticResource SectionIcon}" />
+                            </Border>
+                            <StackPanel Margin="12,0,0,0" VerticalAlignment="Center">
+                                <TextBlock Text="AI agents" Style="{StaticResource T.H2}" />
+                                <TextBlock Text="Let an AI agent such as Claude use the PdaNet browser for you" Style="{StaticResource T.Small}" Margin="0,2,0,0" />
+                            </StackPanel>
+                        </StackPanel>
+                        <Border Style="{StaticResource Divider}" />
+
+                        <Grid Style="{StaticResource SettingRow}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Style="{StaticResource RowText}">
+                                <StackPanel Style="{StaticResource TitleRow}">
+                                    <TextBlock Text="Let AI agents use the browser" Style="{StaticResource RowTitle}" />
+                                    <v:InfoTip Style="{StaticResource Info}" Heading="AI agents"
+                                               Body="An agent drives the same PdaNet browser you use: it opens websites, reads them, clicks and types, signed in as you and online through your phone when PdaNet is connected. A bar at the top of the browser shows which agent it is and what it does, with Pause and Stop"
+                                               Tip="PdaNet asks you in the browser before a new agent starts, and before an agent clears your browsing data" />
+                                </StackPanel>
+                                <TextBlock x:Name="McpStatus" Text="Agents connect with PdaNetPortable.exe --mcp" Style="{StaticResource RowHint}" TextWrapping="Wrap" />
+                            </StackPanel>
+                            <ToggleButton x:Name="McpAccess" Grid.Column="1" Style="{StaticResource Switch}" Click="OnMcpToggled"
+                                          AutomationProperties.Name="Let AI agents use the browser" />
+                        </Grid>
+
+                        <StackPanel x:Name="McpOptions">
+                            <StackPanel Margin="0,10">
+                                <StackPanel Style="{StaticResource TitleRow}">
+                                    <TextBlock Text="Connect an agent" Style="{StaticResource RowTitle}" />
+                                    <v:InfoTip Style="{StaticResource Info}" Heading="Connect an agent"
+                                               Body="MCP apps such as Claude Code, Claude Desktop, Cursor and VS Code start PdaNet with --mcp. While PdaNet runs, that agent uses this PdaNet's browser, the window you see. When PdaNet does not run, it opens a browser window of its own"
+                                               Tip="Paste what you copy here into the app's MCP settings, or run it in a terminal for Claude Code" />
+                                </StackPanel>
+                                <TextBlock x:Name="McpCommand" Style="{StaticResource T.Mono}" TextWrapping="Wrap" Margin="0,4,0,0" />
+                                <WrapPanel Margin="0,12,0,0">
+                                    <Button Style="{StaticResource Btn.Secondary}" Tag="&#xE8C8;" Content="Copy for Claude Code" Click="OnCopyClaudeCode" Margin="0,0,8,8" />
+                                    <Button Style="{StaticResource Btn.Secondary}" Tag="&#xE8C8;" Content="Copy for Claude Desktop" Click="OnCopyClaudeDesktop" Margin="0,0,8,8" />
+                                    <Button Style="{StaticResource Btn.Secondary}" Tag="&#xE8C8;" Content="Copy for VS Code" Click="OnCopyVsCode" Margin="0,0,8,8" />
+                                </WrapPanel>
+                            </StackPanel>
+
+                            <Border Style="{StaticResource Divider}" />
+
+                            <Grid Style="{StaticResource SettingRow}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Style="{StaticResource RowText}">
+                                    <StackPanel Style="{StaticResource TitleRow}">
+                                        <TextBlock Text="Also take agents over HTTP" Style="{StaticResource RowTitle}" />
+                                        <v:InfoTip Style="{StaticResource Info}" Heading="Agents over HTTP"
+                                                   Body="For agent frameworks and apps that connect to an MCP server by address (Streamable HTTP). Only programs on this PC can reach the address, and only with the key. Websites can never reach it"
+                                                   Tip="Press New key to lock out every agent that has the old key" />
+                                    </StackPanel>
+                                    <TextBlock x:Name="McpHttpHint" Text="Off" Style="{StaticResource RowHint}" TextWrapping="Wrap" />
+                                </StackPanel>
+                                <ToggleButton x:Name="McpHttp" Grid.Column="1" Style="{StaticResource Switch}" Click="OnMcpToggled"
+                                              AutomationProperties.Name="Also take agents over HTTP" />
+                            </Grid>
+                            <StackPanel x:Name="McpHttpOptions" Margin="0,0,0,10">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="110" />
+                                        <ColumnDefinition Width="24" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <StackPanel Style="{StaticResource FieldLabelRow}">
+                                            <TextBlock Text="PORT" Style="{StaticResource T.Eyebrow}" VerticalAlignment="Center" />
+                                        </StackPanel>
+                                        <TextBox x:Name="McpPort" MaxLength="5" AutomationProperties.Name="Port for agents over HTTP" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2">
+                                        <StackPanel Style="{StaticResource FieldLabelRow}">
+                                            <TextBlock Text="ADDRESS" Style="{StaticResource T.Eyebrow}" VerticalAlignment="Center" />
+                                        </StackPanel>
+                                        <TextBox x:Name="McpUrl" IsReadOnly="True" FontFamily="{StaticResource F.Mono}"
+                                                 AutomationProperties.Name="Address for agents over HTTP" />
+                                    </StackPanel>
+                                </Grid>
+                                <WrapPanel Margin="0,12,0,0">
+                                    <Button Style="{StaticResource Btn.Secondary}" Tag="&#xE8C8;" Content="Copy key" Click="OnCopyMcpKey" Margin="0,0,8,8" />
+                                    <Button Style="{StaticResource Btn.Secondary}" Tag="&#xE8C8;" Content="Copy for Claude Code" Click="OnCopyHttpClaudeCode" Margin="0,0,8,8" />
+                                    <Button Style="{StaticResource Btn.Secondary}" Tag="&#xE8C8;" Content="Copy for VS Code" Click="OnCopyHttpVsCode" Margin="0,0,8,8" />
+                                    <Button Style="{StaticResource Btn.Secondary}" Tag="&#xE72C;" Content="New key" Click="OnNewMcpKey" Margin="0,0,8,8" />
+                                </WrapPanel>
+                            </StackPanel>
+
+                            <Border Style="{StaticResource Divider}" />
+
+                            <Grid Style="{StaticResource SettingRow}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Style="{StaticResource RowText}">
+                                    <StackPanel Style="{StaticResource TitleRow}">
+                                        <TextBlock Text="Agents you always allow" Style="{StaticResource RowTitle}" />
+                                        <v:InfoTip Style="{StaticResource Info}" Heading="Always allowed agents"
+                                                   Body="When an agent asks to use the browser, Always allow lets it in without asking the next time. Forget makes PdaNet ask for every agent again" />
+                                    </StackPanel>
+                                    <TextBlock x:Name="McpTrusted" Text="None" Style="{StaticResource RowHint}" TextWrapping="Wrap" />
+                                </StackPanel>
+                                <Button x:Name="McpForget" Grid.Column="1" Style="{StaticResource Btn.Secondary}" Tag="&#xE74D;" Content="Forget"
+                                        Click="OnForgetMcpAgents" VerticalAlignment="Center" />
+                            </Grid>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
                 <!-- ============================ Windows ============================ -->
                 <Border Style="{StaticResource Card}" Margin="0,0,0,14">
                     <StackPanel>

@@ -163,11 +163,14 @@ internal sealed class HostPipeline : IDisposable
                 pending.Clear();
                 var clock = Stopwatch.StartNew();
                 long last = -1;
+                bool captured = false;
                 _keyframe = true;
                 while (!_stop && !_reopen)
                 {
                     long now = clock.ElapsedMilliseconds;
-                    var plan = planner.Next(now, _keyframe);
+                    // A newly opened surface has no desktop in it yet. In particular, do not
+                    // spend the opening keyframe's link budget on a black picture.
+                    var plan = captured ? planner.Next(now, _keyframe) : FramePlan.Wait(16);
                     if (plan.Kind == FrameKind.None)
                     {
                         // Sleep until the planner wants to look again, or something changes.
@@ -181,7 +184,10 @@ internal sealed class HostPipeline : IDisposable
                         }
                         if (r == CaptureResult.Frame)
                         {
-                            pending.AddRange(dirty);
+                            captured = true;
+                            // GPU capture already applies changes to its picture. Only the CPU
+                            // converter needs to remember them while the link budget recovers.
+                            if (frame != null) AccumulateChanges(pending, dirty, source.Width, source.Height);
                             planner.Changed(dirty, clock.ElapsedMilliseconds);
                             // The screen shows again after a private one.
                             failures = 0;
@@ -334,6 +340,19 @@ internal sealed class HostPipeline : IDisposable
     {
         double share = _quality == Quality.Sharp ? 0.92 : 0.88;
         return (int)(_bitrate * share);
+    }
+
+    /// <summary>Bound capture metadata while encoding waits for the link to drain.</summary>
+    internal static void AccumulateChanges(List<Dirty> pending, List<Dirty> changes, int width, int height)
+    {
+        var whole = new Dirty(0, 0, width, height);
+        if (pending.Count == 1 && pending[0] == whole) return;
+        if (pending.Count + changes.Count > 48 || changes.Contains(whole))
+        {
+            pending.Clear();
+            pending.Add(whole);
+        }
+        else pending.AddRange(changes);
     }
 
     private static unsafe void Convert(IScreenSource source, List<Dirty> rects, Nv12Frame frame, int scale)

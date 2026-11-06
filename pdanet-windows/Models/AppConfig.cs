@@ -75,6 +75,17 @@ public class AppConfig
     [JsonPropertyName("share_relay_username")] public string ShareRelayUsername { get; set; } = "";
     [JsonPropertyName("share_relay_password")] public string ShareRelayPassword { get; set; } = "";
 
+    // AI agents (MCP) that drive the PdaNet browser. Agents started with "PdaNetPortable.exe --mcp"
+    // reach a running PdaNet over a pipe only this Windows user can open, and PdaNet asks the person
+    // before a new agent acts, unless its name is in agent_trusted.
+    [JsonPropertyName("agent_access")] public bool AgentAccess { get; set; } = true;
+    [JsonPropertyName("agent_trusted")] public List<string> AgentTrusted { get; set; } = new();
+    // Also take agents over HTTP on this PC only (Streamable HTTP, for agent frameworks), with a key.
+    // The key is kept encrypted with Windows DPAPI, for this Windows user only.
+    [JsonPropertyName("agent_http")] public bool AgentHttp { get; set; } = false;
+    [JsonPropertyName("agent_http_port")] public int AgentHttpPort { get; set; } = 47823;
+    [JsonPropertyName("agent_http_key")] public string AgentHttpKey { get; set; } = "";
+
     public AppConfig Clone() => (AppConfig)MemberwiseClone();
 }
 
