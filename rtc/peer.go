@@ -663,7 +663,7 @@ func (p *peer) fecShare() float64 {
 	case p.fecOn && !was:
 		log.Printf("parity: the link loses %.1f %% of the packets, each frame takes %.0f %% parity along", loss*100, fecShareFor(loss)*100)
 	case was && !p.fecOn:
-		log.Printf("parity: the link lost nothing for %v, the frames go without", fecHold)
+		log.Printf("parity: the link lost under %.1f %% of the packets for %v, the frames go without", fecOff*100, fecHold)
 	}
 	if !p.fecOn {
 		return 0
@@ -690,7 +690,10 @@ func (p *peer) updateTarget() {
 	} else if !p.fecOn {
 		p.fecCost = 0
 	}
-	final = int(float64(final) / (1 + min(p.fecCost, fecMaxShare)))
+	// A frame of one or two packets still takes a parity packet, more than fecMaxShare of it:
+	// capped there, the parity went out on top of the bitrate at low rates (86 % of the screen's
+	// bytes at 0.3 Mbit/s, the network lab, 2026-11-07). The encoder leaves what it really costs.
+	final = int(float64(final) / (1 + min(p.fecCost, 1)))
 	last, at := p.lastTarget, p.lastTargetT
 	change := final - last
 	if change < 0 {

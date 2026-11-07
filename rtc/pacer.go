@@ -39,6 +39,7 @@ type burstPacer struct {
 	gcc      int     // bits per second GCC asks for
 	floor    int     // bits per second the link meter allows, 0 for none
 	linkBps  int     // bits per second the link meter measured the link at, 0 while unknown
+	lastLink int     // the link the meter measured last, kept after the meter forgets it
 	rate     float64 // bytes per second
 	most     float64 // bytes per second no burst goes faster than, 0 for no limit
 	tokens   float64 // bytes that may go now, below zero means in debt
@@ -121,6 +122,9 @@ func (p *burstPacer) SetTargetBitrate(bps int) {
 func (p *burstPacer) SetFloor(bps, capacity int) {
 	p.mu.Lock()
 	p.floor, p.linkBps = bps, capacity
+	if capacity > 0 {
+		p.lastLink = capacity
+	}
 	p.setRate()
 	p.mu.Unlock()
 }
@@ -131,12 +135,21 @@ func (p *burstPacer) SetFloor(bps, capacity int) {
 // takes, and a keyframe or a large refine then overflowed the buffer in front of a slow hop. The
 // lost packets were asked for again behind the rest of the burst, the frame expired, and the
 // keyframe asked for next did the same (the network lab, 2026-11-07). A little faster than the
-// link still lets the meter see the link get faster. Callers hold mu.
+// link still lets the meter see the link get faster.
+//
+// The link the meter measured last stays the bound after a queue or losses make the meter forget
+// it. Without a bound a pile drained within drainTime whatever the link: 11.9 Mbit/s into a
+// 4 Mbit/s link that lost 2 % of the packets, which then lost a quarter of them, asked for
+// keyframe after keyframe, and GCC fell to 0.5 Mbit/s (the network lab, 2026-11-07). Callers hold mu.
 func (p *burstPacer) setRate() {
 	p.rate = float64(max(p.gcc, p.floor)) * pacingFactor / 8
 	p.most = 0
-	if p.linkBps > 0 {
-		p.most = float64(max(p.linkBps, p.gcc)) * capacityGain / 8
+	link := p.linkBps
+	if link == 0 {
+		link = p.lastLink
+	}
+	if link > 0 {
+		p.most = float64(max(link, p.gcc)) * capacityGain / 8
 		p.rate = min(p.rate, p.most)
 	}
 }

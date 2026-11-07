@@ -88,7 +88,7 @@ Mbit/s right after. v3 avoided them only by sending a third to half as much.
 ## Second pass, 7 November afternoon: what the relay sessions showed
 
 The relay sessions logged on the sharing PC (`dist/data/pdanet.log`, this PC to the
-laptop through the Ludo relay, after the coturn cap was gone) had a 180–490 ms round trip
+laptop through the relay, after the relay's bandwidth cap was gone) had a 180–490 ms round trip
 and almost no loss. Yet the encoder target sat at the 200 kbit/s floor for minutes. The
 picture went at 1–14 frames a second with 1–5 keyframes every 10 s. The morning's changes
 did not touch any of this. Two separate faults combined:
@@ -111,7 +111,7 @@ did not touch any of this. Two separate faults combined:
 | Opening keyframe lost before DTLS | Correct: Pion's `srtpWriterFuture` returns `(0, nil)` before `srtpReady`. **But the fix regressed reconnects**: after an ICE restart (connected → connecting → connected, no disconnect) "connected" was never announced again, so a viewer that showed "reconnecting" could stay so. Fixed; `TestICERestartAnnouncesConnectedAgain` fails on the morning code. |
 | Intact slow keyframes discarded | Correct, and the fix is right for intact frames. A related case remained: a lost packet *inside* a frame still arriving. Its resend queues behind the rest of the frame at the slowest hop, but the deadline ran from the packet before the hole. Extended, see below. |
 | Cursor polling off the capture thread | Correct (stress-tested 3000 start/stop/dispose cycles). `HostPipeline.Dispose` can now take up to 6 s on its background thread. |
-| Ludo bandwidth cap removed | Accurate, but it was removed on 6 Nov (ludo `dceb78ed`), not in the morning's change set. |
+| Relay bandwidth cap removed | Accurate, but it was removed on 6 Nov in the relay's own setup, not in the morning's change set. |
 | 1080p conversion 3.83 → 0.38 ms; 4K 16.86 → 2.64 ms | Reproduced in the packaged Release: 3.58 → 0.39 ms and 14.6 → 2.9 ms. Bit-exact on AVX2 and on SSE4.1 (AVX2 disabled), no out-of-bounds access with guard pages. The self-test only runs the path the CPU picks. Separately, the row split for the parallel loops (pre-existing) **left the bottom rows unconverted** whenever h/bands rounds down: 1200 rows on 18+ logical CPUs gave a 12-row black strip on the viewer, and 1050-row screens lost 2 rows on the host's CPU path. Both fixed. |
 | 1 MB assembly 1.71 → 0.18 ms, 1.01 MB | Reproduced: 0.178 ms, 1.01 MB, 2 allocations. |
 | All 11 checks pass; relay pipeline passes | Reproduced, Debug and packaged. |
@@ -266,11 +266,11 @@ component/codec checks, not a two-PC input-to-display result.
 
 ## Relay-focused follow-up, 7 November
 
-The adjacent `../ludo` repository supplies the TURN service. Its former
-`max-bps=64000` setting imposed a 512 kbit/s per-direction limit intended for game
-messages. Ludo commit `dceb78ed` already removed it on 6 November; the earlier
-attribution of its removal to this performance pass was incorrect. Read-only
-inspection also confirmed that the running primary was uncapped. No production
+The TURN relay is set up outside this repository. Its former `max-bps=64000`
+setting imposed a 512 kbit/s per-direction limit. The relay's own setup already
+removed it on 6 November; the earlier attribution of its removal to this
+performance pass was incorrect. Read-only inspection also confirmed that the
+running relay was uncapped. No production
 restart or credential change was necessary.
 
 The follow-up addresses measured local costs and two relay delivery faults:

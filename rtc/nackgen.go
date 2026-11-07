@@ -77,9 +77,25 @@ func (g *nackGen) notMedia(ssrc uint32, from uint16, n int) {
 	}
 	for i := 0; i < n && i < len(st.parity); i++ {
 		s := from + uint16(i)
-		st.parity[int(s)%len(st.parity)] = int32(s) + 1
 		delete(st.missing, s)
+		if st.started && int16(s-st.newest) <= 0 {
+			continue // passed already: a mark would only wait for the number to come round
+		}
+		st.parity[int(s)%len(st.parity)] = int32(s) + 1
 	}
+}
+
+// pastParity tells whether seq holds parity, and forgets the mark as the stream passes it. The
+// numbers come round after 65536 packets: a mark kept that long made a lost packet of the screen
+// with the same number look like parity, never asked for, so its frame waited until the viewer
+// gave it up and asked for a keyframe. Callers hold mu.
+func (st *nackStream) pastParity(seq uint16) bool {
+	slot := &st.parity[int(seq)%len(st.parity)]
+	if *slot != int32(seq)+1 {
+		return false
+	}
+	*slot = 0
+	return true
 }
 
 // recovered tells a packet of stream ssrc that parity rebuilt: no need to ask for it again.
@@ -164,13 +180,15 @@ func (g *nackGen) arrived(st *nackStream, seq uint16, now time.Time) {
 	switch d := int16(seq - st.newest); {
 	case d > 0 && d <= nackMaxGap:
 		for s := st.newest + 1; s != seq; s++ {
-			if st.parity[int(s)%len(st.parity)] != int32(s)+1 {
+			if !st.pastParity(s) {
 				st.missing[s] = &nackMiss{since: now, next: now.Add(nackGrace)}
 			}
 		}
+		st.pastParity(seq)
 		st.newest = seq
 	case d > nackMaxGap || d < -nackMaxGap:
 		clear(st.missing)
+		clear(st.parity[:])
 		st.newest = seq
 	default:
 		delete(st.missing, seq) // late, or sent again

@@ -324,6 +324,28 @@ func TestNackSkipsParityAndRebuilt(t *testing.T) {
 	}
 }
 
+// A parity mark goes once the stream is past it. The numbers come round after 65536 packets, and
+// a mark kept that long made a lost packet of the screen with the same number look like parity:
+// never asked for, its frame waited until the viewer gave it up.
+func TestNackForgetsParityOnceItIsPast(t *testing.T) {
+	g, st := newTestNackGen(100 * time.Millisecond)
+	now := time.Now()
+	g.arrived(st, 100, now)
+	g.notMedia(7, 101, 1)
+	g.arrived(st, 101, now)                     // the parity came
+	for seq := uint16(102); seq != 101; seq++ { // once round, every packet in
+		g.arrived(st, seq, now)
+	}
+	g.arrived(st, 102, now) // 101 again, now a packet of the screen, lost
+	if st.missing[101] == nil {
+		t.Fatal("a lost packet whose number held parity 65536 packets before was not asked for")
+	}
+	g.notMedia(7, 90, 3) // parity the stream already passed: nothing to mark
+	if st.parity[90%len(st.parity)] != 0 {
+		t.Fatal("parity the stream had passed was marked")
+	}
+}
+
 // The share of parity follows the loss, a packet at least for each group.
 func TestFecParityFollowsLoss(t *testing.T) {
 	for _, tc := range []struct {

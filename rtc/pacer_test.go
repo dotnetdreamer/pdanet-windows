@@ -200,3 +200,25 @@ func TestPacerKeepsALargeBurstNearTheLink(t *testing.T) {
 		t.Fatalf("a 30 KB burst took %v, want about 16 ms at 15 Mbit/s", took)
 	}
 }
+
+// When a queue or losses make the meter forget the link, a pile still leaves near the link the
+// meter measured last. Without that bound it drained within about drainTime whatever the link:
+// 600 KB in 0.35 s, 14 Mbit/s, towards a link measured at 10.
+func TestPacerKeepsTheLastLinkWhenTheMeterForgetsIt(t *testing.T) {
+	p, log := newTestPacer(1_000_000)
+	defer p.Close()
+	p.SetFloor(3_200_000, 4_000_000)
+	p.SetFloor(0, 0) // a queue built up: the floor is off and the meter forgot its bursts
+	start := time.Now()
+	for seq := uint16(1); seq <= 500; seq++ { // 600 KB: 1.2 s at the link's 4 Mbit/s, 1.9 s at 2.5 x GCC
+		h, b := testPacket(seq)
+		_, _ = p.Write(h, b, nil)
+	}
+	waitSent(t, log, 500, 3*time.Second)
+	log.mu.Lock()
+	took := log.at[499].Sub(start)
+	log.mu.Unlock()
+	if took < 800*time.Millisecond || took > 1600*time.Millisecond {
+		t.Fatalf("600 KB took %v to leave after the meter forgot the 4 Mbit/s link, want about 1.1 s", took)
+	}
+}
