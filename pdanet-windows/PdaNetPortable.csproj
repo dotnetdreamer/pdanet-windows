@@ -41,7 +41,8 @@
     <EmbeddedResource Include="Resources\adb\AdbWinUsbApi.dll">
       <LogicalName>PdaNetPortable.adb.AdbWinUsbApi.dll</LogicalName>
     </EmbeddedResource>
-    <!-- The WebRTC side of screen sharing (rtc/, Go and Pion), unpacked to the data folder when a session starts -->
+    <!-- The WebRTC side of screen sharing (rtc/, Go and Pion), unpacked to the data folder when a
+         session starts. Built from rtc/ by BuildRtcHelper below, never kept in git -->
     <EmbeddedResource Include="Resources\rtc\pdanet-rtc.exe">
       <LogicalName>PdaNetPortable.rtc.pdanet-rtc.exe</LogicalName>
     </EmbeddedResource>
@@ -67,5 +68,26 @@
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <DebugType>none</DebugType>
   </PropertyGroup>
+
+  <!-- Screen sharing's helper is built from the Go code in rtc/ before the app, when that code is
+       newer than the helper, so the helper is never kept in git. Needs Go 1.26 or newer on PATH;
+       the Go libraries come from the Go module proxy on the first build -->
+  <PropertyGroup>
+    <RtcDir>$(MSBuildThisFileDirectory)..\rtc\</RtcDir>
+    <RtcExe>$(MSBuildThisFileDirectory)Resources\rtc\pdanet-rtc.exe</RtcExe>
+  </PropertyGroup>
+  <ItemGroup>
+    <RtcSource Include="$(RtcDir)*.go;$(RtcDir)go.mod;$(RtcDir)go.sum" Exclude="$(RtcDir)*_test.go" />
+  </ItemGroup>
+  <Target Name="BuildRtcHelper" BeforeTargets="BeforeBuild" Inputs="@(RtcSource)" Outputs="$(RtcExe)">
+    <Exec Command="go version" IgnoreExitCode="true" IgnoreStandardErrorWarningFormat="true" StandardOutputImportance="low">
+      <Output TaskParameter="ExitCode" PropertyName="GoVersionExit" />
+    </Exec>
+    <Error Condition="'$(GoVersionExit)' != '0'"
+           Text="Screen sharing's helper is built from the rtc folder with Go. Install Go 1.26 or newer from https://go.dev/dl/, open a new window and build again" />
+    <MakeDir Directories="$(MSBuildThisFileDirectory)Resources\rtc" />
+    <Exec Command="go build -trimpath -buildvcs=false -ldflags &quot;-s -w&quot; -o &quot;$(RtcExe)&quot; ."
+          WorkingDirectory="$(RtcDir)" EnvironmentVariables="CGO_ENABLED=0;GOOS=windows;GOARCH=amd64" />
+  </Target>
 
 </Project>

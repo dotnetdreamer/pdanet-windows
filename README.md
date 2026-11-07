@@ -403,7 +403,7 @@ Screen share sends your screen, and the mouse and keyboard, only to the PC that 
 
 The app is built with .NET 9 and WPF for Windows. The released program is a single self contained file, so it carries its own copy of .NET, a small Android helper, and Google's adb tool. That is why it needs no installer and no admin rights.
 
-Build it:
+Build it with the .NET 9 SDK and Go 1.26 or newer (from https://go.dev/dl/) installed. The build also compiles the screen share helper from the Go code in `rtc`:
 
 ```
 cd pdanet-windows
@@ -414,7 +414,7 @@ The finished program appears at `pdanet-windows/dist/PdaNetPortable.exe`.
 
 The Android helper is a small Java HTTP proxy in `agent/ProxyMain.java`. A prebuilt copy is already included in the app, so you only need to rebuild it if you change that file. The rebuild uses the Eclipse Java compiler and Google's d8 tool and needs no Android SDK. See `agent/build.bat` for the two tools to download and the steps.
 
-The screen share helper, `pdanet-rtc.exe`, is built from the Go code in `rtc` with Pion WebRTC. It finds the other PC, agrees on a key from the code with SPAKE2 (RFC 9382) and carries the picture and the input over WebRTC. A prebuilt copy is already included in the app. To rebuild it after changing that code, install Go and run `rtc/build.bat`. The parts it and the app use from others, and their licenses, are listed in [docs/third-party-notices.md](docs/third-party-notices.md).
+The screen share helper, `pdanet-rtc.exe`, is built from the Go code in `rtc` with Pion WebRTC. It finds the other PC, agrees on a key from the code with SPAKE2 (RFC 9382) and carries the picture and the input over WebRTC. The app build compiles it whenever that code changed, it is not kept in git. To also run its tests and its self test, run `rtc/build.bat`. The parts it and the app use from others, and their licenses, are listed in [docs/third-party-notices.md](docs/third-party-notices.md).
 
 Three built in checks run without opening the window:
 

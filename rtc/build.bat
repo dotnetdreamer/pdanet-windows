@@ -1,6 +1,8 @@
 @echo off
 REM ===========================================================================
-REM Rebuild pdanet-rtc.exe, the WebRTC helper behind screen sharing, from the Go code here
+REM Rebuild pdanet-rtc.exe, the WebRTC helper behind screen sharing, from the Go code here,
+REM with its tests and its self test. The app build (PdaNetPortable.csproj) builds it by
+REM itself when this code changed; this script also checks it. The helper is never in git.
 REM
 REM Needs Go 1.26 or newer on PATH (https://go.dev/dl/). The libraries (Pion WebRTC and the
 REM others in go.mod) come from the Go module proxy on the first build. No C compiler needed.

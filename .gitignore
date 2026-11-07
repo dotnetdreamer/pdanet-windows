@@ -31,9 +31,10 @@ agent/*.zip
 agent/ecj.jar
 
 # ===== Screen sharing helper build output =====
-# The prebuilt helper (pdanet-windows/Resources/rtc/pdanet-rtc.exe) IS committed;
-# rtc/build.bat rebuilds it with Go.
+# The helper is built from rtc/ with Go by the app build (PdaNetPortable.csproj,
+# BuildRtcHelper) and by rtc/build.bat, and is never committed.
 rtc/pdanet-rtc.exe
+pdanet-windows/Resources/rtc/
 
 # ===== NuGet =====
 *.nupkg

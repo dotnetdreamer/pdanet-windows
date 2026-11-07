@@ -42,6 +42,13 @@ jobs:
         with:
           dotnet-version: '9.0.x'
 
+      # The app build compiles screen sharing's helper from rtc/ (Go), it is not in git.
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: rtc/go.mod
+          cache-dependency-path: rtc/go.sum
+
       - name: Decide version
         id: ver
         shell: pwsh
