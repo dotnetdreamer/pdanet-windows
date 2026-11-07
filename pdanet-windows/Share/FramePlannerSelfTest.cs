@@ -22,7 +22,8 @@ internal static class FramePlannerSelfTest
         }
         SlowerLink();
         KeyStorm();
-        return "idle credit cannot build a motion queue; actual sizes and slower links delay sends, static sharpness and keyframe backoff survive";
+        int fps = MotionKeepsItsFrameRate();
+        return $"idle credit cannot build a motion queue; actual sizes and slower links delay sends, static sharpness and keyframe backoff survive; sustained motion {fps} fps";
     }
 
     private static FramePlanner Rested(bool constantQp = true, Quality quality = Quality.Auto)
@@ -113,6 +114,38 @@ internal static class FramePlannerSelfTest
         }
         int target = quality == Quality.Sharp ? 17 : quality == Quality.Smooth ? 21 : 19;
         Require(sharpest <= target + 3, $"{quality}: serialization pacing prevented static text from getting sharp");
+    }
+
+    /// <summary>
+    /// A window dragged for a second, a change each frame that fits the link's share per frame:
+    /// once the first frame spent what a rest saved up, the frames go at the style's rate. With
+    /// the saved credit spent on every frame they went at about 10 a second.
+    /// </summary>
+    private static int MotionKeepsItsFrameRate()
+    {
+        var p = Rested();
+        // The screen rests and gets sharp first, so sharper motion frames would fit the saved credit.
+        for (long now = 2; now < MotionAt;)
+        {
+            var rest = p.Next(now, false);
+            if (rest.Kind == FrameKind.None) { now += rest.WaitMs; continue; }
+            Send(p, rest, now);
+            now++;
+        }
+        var small = new List<Dirty> { new(0, 0, 320, 176) };
+        int frames = 0;
+        for (long now = MotionAt; now < MotionAt + 1000;)
+        {
+            p.Changed(small, now);
+            var plan = p.Next(now, false);
+            if (plan.Kind == FrameKind.None) { now += Math.Max(1, plan.WaitMs); continue; }
+            Require(plan.Kind == FrameKind.Motion, $"sustained motion planned a {plan.Kind} frame");
+            Send(p, plan, now);
+            frames++;
+            now++;
+        }
+        Require(frames >= 26, $"sustained motion that fits the link went at {frames} frames a second, want about 30");
+        return frames;
     }
 
     private static void KeyStorm()

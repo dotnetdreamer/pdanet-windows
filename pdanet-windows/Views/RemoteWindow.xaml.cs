@@ -8,6 +8,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using PdaNetPortable.Interop;
+using PdaNetPortable.Services;
 using PdaNetPortable.Share;
 using PdaNetPortable.Share.Media;
 using Cursor = System.Windows.Input.Cursor;
@@ -39,6 +40,12 @@ public partial class RemoteWindow : Window
     private IntPtr _section, _pixels;
     private ViewerPipeline? _viewer;
     private bool _fit = true, _full, _ended, _hasPicture, _viewOnly, _renderQueued;
+    // The GPU presenter (SwapChainPresenter): a child window over the stage that takes each
+    // picture straight from the decoder, on its own thread, while nothing of WPF's is drawn over
+    // the picture. Otherwise, and where the GPU cannot, WPF draws the pictures through _bitmap.
+    private readonly GpuPictureHost? _gpuHost;
+    private volatile bool _gpuActive;
+    private bool _gpuBroken, _gpuStartQueued, _gpuSubscribed, _gpuLogged, _drawing;
     // The window asks before closing ends the session, and Disconnect closes it without asking.
     private bool _asking, _leaving;
     private WindowState _stateBeforeFull;
@@ -51,6 +58,21 @@ public partial class RemoteWindow : Window
     public RemoteWindow()
     {
         InitializeComponent();
+        if (Environment.GetEnvironmentVariable("PDANET_VIEWER_GPU") != "0")
+        {
+            // Over the picture, inside the stage: hidden until a picture shows and nothing covers it.
+            _gpuHost = new GpuPictureHost { Visibility = Visibility.Hidden, IsHitTestVisible = false, Focusable = false };
+            KeyboardNavigation.SetIsTabStop(_gpuHost, false);
+            AutomationProperties.SetName(_gpuHost, "The other PC's screen, drawn by the GPU");
+            Stage.Children.Insert(1, _gpuHost);
+            LayoutUpdated += (_, _) => PlaceGpu();
+        }
+        else
+        {
+            _gpuLogged = true;
+            Logger.Instance.Debug("Screen sharing viewer: WPF draws the pictures, PDANET_VIEWER_GPU is 0");
+        }
+        IsVisibleChanged += (_, _) => UpdateGpu();
         _hook = new KeyboardHook(OnHookKey);
         _moveTimer.Tick += (_, _) => FlushMove();
         _stripTimer.Tick += (_, _) => HideStrip();
@@ -90,6 +112,8 @@ public partial class RemoteWindow : Window
             _s.Ended -= OnEnded;
             _hook.Dispose();
             if (_viewer != null) _viewer.FrameReady -= OnFrameReady;
+            StopGpu(redraw: false);
+            _gpuHost?.Dispose();
             // A window whose session ended leaves the session that came after it alone.
             if (!_ended && _s.Role == ShareRole.Viewer) _s.Stop();
             Picture.Source = null;
@@ -126,6 +150,8 @@ public partial class RemoteWindow : Window
         if (_ended) return;
         if (_viewer != _s.Viewer)
         {
+            // The presenter read the old pipeline's pictures; the new one starts with WPF.
+            StopGpu(redraw: false);
             if (_viewer != null) _viewer.FrameReady -= OnFrameReady;
             _viewer = _s.Viewer;
             if (_viewer != null) _viewer.FrameReady += OnFrameReady;
@@ -214,6 +240,7 @@ public partial class RemoteWindow : Window
         {
             Overlay.Visibility = Visibility.Collapsed;
             OverlaySpin.BeginAnimation(RotateTransform.AngleProperty, null);
+            UpdateGpu();
             return;
         }
         ShowOverlay(show.Value.Title, show.Value.Text, show.Value.Spin, button: false);
@@ -232,6 +259,7 @@ public partial class RemoteWindow : Window
         OverlayBtn.Visibility = button ? Visibility.Visible : Visibility.Collapsed;
         // A picture that is there stays visible under a short drop.
         Overlay.Background = new SolidColorBrush(System.Windows.Media.Color.FromArgb((byte)(_hasPicture && !button ? 0x88 : 0xCC), 5, 7, 10));
+        UpdateGpu();
     }
 
     private void UpdateBanner()
@@ -243,6 +271,7 @@ public partial class RemoteWindow : Window
             : null;
         Banner.Visibility = text == null ? Visibility.Collapsed : Visibility.Visible;
         BannerText.Text = text ?? "";
+        UpdateGpu();
     }
 
     private void OnEnded(string text, bool error)
@@ -265,44 +294,169 @@ public partial class RemoteWindow : Window
     // ============================ Pictures ============================
     private void OnFrameReady()
     {
-        if (_renderQueued) return;
+        // While the GPU presenter shows the pictures it takes them itself, on its own thread.
+        if (_gpuActive || _renderQueued) return;
         _renderQueued = true;
         Dispatcher.BeginInvoke(DispatcherPriority.Render, Present);
     }
 
-    /// <summary>Draws the newest picture: NV12 straight into the bitmap's own memory, the GPU scales it.</summary>
-    private unsafe void Present()
+    /// <summary>Draws the newest picture with WPF, unless the GPU presenter shows them.</summary>
+    private void Present()
     {
         _renderQueued = false;
-        if (_ended || _s.Viewer is not { } viewer) return;
-        var frame = viewer.Take();
-        if (frame == null) return;
-        if (_bitmap == null || _bitmap.PixelWidth != frame.Width || _bitmap.PixelHeight != frame.Height)
+        if (_ended || _gpuActive || _s.Viewer is not { } viewer) return;
+        viewer.Read(newest: false, Draw);
+        // A picture that WPF drew may now go to the GPU, a new pipeline's first one too.
+        if (_gpuHost != null && !_gpuActive) UpdateGpu();
+    }
+
+    /// <summary>NV12 straight into the bitmap's own memory, the GPU scales it. Called inside ViewerPipeline.Read.</summary>
+    private unsafe void Draw(Nv12Frame frame)
+    {
+        _drawing = true;
+        try
         {
-            FreePicture();
-            uint size = (uint)(frame.Width * frame.Height * 4);
-            _section = ShareNative.CreateFileMapping(new IntPtr(-1), IntPtr.Zero, ShareNative.PAGE_READWRITE, 0, size, null);
-            _pixels = _section == IntPtr.Zero ? IntPtr.Zero : ShareNative.MapViewOfFile(_section, ShareNative.FILE_MAP_ALL_ACCESS, 0, 0, size);
-            if (_pixels == IntPtr.Zero)
+            if (_bitmap == null || _bitmap.PixelWidth != frame.Width || _bitmap.PixelHeight != frame.Height)
             {
                 FreePicture();
-                return;
+                uint size = (uint)(frame.Width * frame.Height * 4);
+                _section = ShareNative.CreateFileMapping(new IntPtr(-1), IntPtr.Zero, ShareNative.PAGE_READWRITE, 0, size, null);
+                _pixels = _section == IntPtr.Zero ? IntPtr.Zero : ShareNative.MapViewOfFile(_section, ShareNative.FILE_MAP_ALL_ACCESS, 0, 0, size);
+                if (_pixels == IntPtr.Zero)
+                {
+                    FreePicture();
+                    return;
+                }
+                _bitmap = (InteropBitmap)Imaging.CreateBitmapSourceFromMemorySection(_section, frame.Width, frame.Height, PixelFormats.Bgr32, frame.Width * 4, 0);
+                Picture.Source = _bitmap;
+                SizePicture(frame.Width, frame.Height);
+                if (!_hasPicture) FitFirst(frame.Width, frame.Height);
             }
-            _bitmap = (InteropBitmap)Imaging.CreateBitmapSourceFromMemorySection(_section, frame.Width, frame.Height, PixelFormats.Bgr32, frame.Width * 4, 0);
-            Picture.Source = _bitmap;
-            SizePicture(frame.Width, frame.Height);
-            if (!_hasPicture) FitFirst(frame.Width, frame.Height);
+            ColorConvert.Nv12ToBgra(frame, (byte*)_pixels, frame.Width * 4);
+            _bitmap.Invalidate();
+            if (!_hasPicture)
+            {
+                _hasPicture = true;
+                UpdateOverlay();
+                UpdateBanner();
+                UpdatePointer();
+            }
         }
-        ColorConvert.Nv12ToBgra(frame, (byte*)_pixels, frame.Width * 4);
-        _bitmap.Invalidate();
-        if (!_hasPicture)
+        finally { _drawing = false; }
+    }
+
+    // ============================ The GPU presenter ============================
+    /// <summary>
+    /// The GPU shows the pictures while WPF draws nothing over them: not while connecting or
+    /// reconnecting, asking, watching only (the banner and the other PC's pointer), with the full
+    /// screen strip down, minimized, or after the end. Then WPF draws them, as before.
+    /// </summary>
+    private bool GpuWanted() =>
+        _gpuHost?.Presenter != null && !_gpuBroken && !_ended && _hasPicture && _bitmap != null && IsVisible
+        && WindowState != WindowState.Minimized && _s.Viewer is { HasPicture: true }
+        && Overlay.Visibility != Visibility.Visible && Ask.Visibility != Visibility.Visible
+        && Banner.Visibility != Visibility.Visible && FullStrip.Visibility != Visibility.Visible
+        && RemotePointer.Visibility != Visibility.Visible;
+
+    private void UpdateGpu()
+    {
+        if (_gpuHost == null) return;
+        // Never from inside a picture read: stopping the presenter may wait for its own read.
+        if (_drawing)
         {
-            _hasPicture = true;
-            UpdateOverlay();
-            UpdateBanner();
-            UpdatePointer();
+            Dispatcher.BeginInvoke(DispatcherPriority.Loaded, UpdateGpu);
+            return;
+        }
+        if (!_gpuLogged && _hasPicture && _gpuHost.Presenter == null)
+        {
+            _gpuLogged = true;
+            Logger.Instance.Debug($"Screen sharing viewer: WPF draws the pictures, the GPU cannot: {_gpuHost.Failure ?? "its window did not open"}");
+        }
+        if (!GpuWanted())
+        {
+            StopGpu(redraw: true);
+            return;
+        }
+        if (_gpuActive)
+        {
+            PlaceGpu();
+            return;
+        }
+        if (_gpuStartQueued) return;
+        // After the layout, which places the picture.
+        _gpuStartQueued = true;
+        Dispatcher.BeginInvoke(DispatcherPriority.Loaded, StartGpu);
+    }
+
+    private void StartGpu()
+    {
+        _gpuStartQueued = false;
+        if (_gpuActive || !GpuWanted() || _gpuHost?.Presenter is not { } presenter || _s.Viewer is not { } viewer) return;
+        if (Placement() is not { } place) return;
+        if (!_gpuSubscribed)
+        {
+            _gpuSubscribed = true;
+            presenter.Lost += why => Dispatcher.BeginInvoke(() =>
+            {
+                Logger.Instance.Warning($"Screen sharing viewer: the GPU stopped showing the pictures ({why}), WPF draws them now");
+                _gpuBroken = true;
+                StopGpu(redraw: true);
+            });
+            // A picture of another size: WPF lays it out, then the GPU goes on.
+            presenter.NewSize += (_, _) => Dispatcher.BeginInvoke(() =>
+            {
+                if (!_gpuActive) return;
+                StopGpu(redraw: true);
+                UpdateGpu();
+            });
+        }
+        _gpuActive = true;
+        LayoutGpuHost();
+        presenter.Start(viewer, place);
+        _gpuHost.Visibility = Visibility.Visible;
+        if (!_gpuLogged)
+        {
+            _gpuLogged = true;
+            Logger.Instance.Debug($"Screen sharing viewer: the GPU shows the pictures, a Direct3D 11 swap chain on {presenter.Adapter}");
         }
     }
+
+    /// <summary>WPF draws the pictures again, from the newest, which goes into the bitmap before the GPU's window hides.</summary>
+    private void StopGpu(bool redraw)
+    {
+        if (!_gpuActive || _gpuHost == null) return;
+        _gpuHost.Presenter?.Stop();
+        _gpuActive = false;
+        if (redraw) _s.Viewer?.Read(newest: true, Draw);
+        // Hidden after WPF drew that picture, so the old one never shows in between.
+        Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () =>
+        {
+            if (!_gpuActive) _gpuHost.Visibility = Visibility.Hidden;
+        });
+    }
+
+    /// <summary>After each layout: the picture moved, scaled, scrolled or turned.</summary>
+    private void PlaceGpu()
+    {
+        if (!_gpuActive || _gpuHost?.Presenter is not { } presenter) return;
+        LayoutGpuHost();
+        if (Placement() is { } place) presenter.Place(place);
+    }
+
+    /// <summary>The GPU's window over what the scroller shows, never over its scroll bars.</summary>
+    private void LayoutGpuHost()
+    {
+        double right = Math.Max(0, Scroller.ActualWidth - Scroller.ViewportWidth);
+        double bottom = Math.Max(0, Scroller.ActualHeight - Scroller.ViewportHeight);
+        var margin = new Thickness(0, 0, right, bottom);
+        if (_gpuHost!.Margin != margin) _gpuHost.Margin = margin;
+    }
+
+    /// <summary>Where WPF lays the picture out, in the GPU window's pixels: scaled, turned and scrolled as WPF would draw it.</summary>
+    private PicturePlacement? Placement() =>
+        _bitmap == null || _gpuHost == null || PresentationSource.FromVisual(this)?.CompositionTarget is not { } target
+            ? null
+            : PicturePlacement.FromLayout(Picture, _gpuHost, target.TransformToDevice, _bitmap.PixelWidth, _bitmap.PixelHeight);
 
     /// <summary>One pixel of the picture is one pixel of this screen at actual size.</summary>
     private void SizePicture(int width, int height)
@@ -356,6 +510,14 @@ public partial class RemoteWindow : Window
     /// without any delay. While it only watches, the other pointer is drawn where it is.
     /// </summary>
     private void UpdatePointer()
+    {
+        var was = RemotePointer.Visibility;
+        ShowPointer();
+        // The other PC's pointer is drawn over the picture: the GPU's window would cover it.
+        if (RemotePointer.Visibility != was) UpdateGpu();
+    }
+
+    private void ShowPointer()
     {
         if (_ended) return;
         if (CanControl)
@@ -665,6 +827,17 @@ public partial class RemoteWindow : Window
             BarRow.Height = new GridLength(40);
         }
         FullBtn.Content = on ? "" : "";
+        // Full screen has no title bar: the chrome's caption and resize border would still take
+        // the top 40 pixels, where clicks then moved the window instead of reaching the other PC
+        // and the pointer could never bring the strip down.
+        System.Windows.Shell.WindowChrome.SetWindowChrome(this, new System.Windows.Shell.WindowChrome
+        {
+            CaptionHeight = on ? 0 : 40,
+            ResizeBorderThickness = new Thickness(on ? 0 : 6),
+            GlassFrameThickness = new Thickness(0),
+            CornerRadius = new CornerRadius(0),
+            UseAeroCaptionButtons = false,
+        });
         ApplyFrame();
         Dispatcher.BeginInvoke(DispatcherPriority.Loaded, UpdatePointer);
     }
@@ -674,12 +847,14 @@ public partial class RemoteWindow : Window
         FullStrip.Visibility = Visibility.Visible;
         _stripTimer.Stop();
         _stripTimer.Start();
+        UpdateGpu();
     }
 
     private void HideStrip()
     {
         _stripTimer.Stop();
         if (!FullStrip.IsMouseOver) FullStrip.Visibility = Visibility.Collapsed;
+        UpdateGpu();
     }
 
     private void OnStripLeave(object sender, System.Windows.Input.MouseEventArgs e)
@@ -719,6 +894,7 @@ public partial class RemoteWindow : Window
             ? $"Closing this window ends the session. {peer} shares with easy access, so you can connect again from Recent sessions on the Launchpad"
             : $"Closing this window ends the session. To see {peer} again, they share again and give you a new code";
         Ask.Visibility = Visibility.Visible;
+        UpdateGpu();
         // The keys go to this window while it asks, not to the other PC.
         ReleaseAll();
         UpdateHook();
@@ -729,6 +905,7 @@ public partial class RemoteWindow : Window
     {
         _asking = false;
         Ask.Visibility = Visibility.Collapsed;
+        UpdateGpu();
         UpdateHook();
         InputLayer.Focus();
     }
@@ -738,6 +915,7 @@ public partial class RemoteWindow : Window
     {
         base.OnStateChanged(e);
         ApplyFrame();
+        UpdateGpu();
     }
 
     private void ApplyFrame()

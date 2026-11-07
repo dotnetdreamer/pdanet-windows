@@ -1,0 +1,13 @@
+"phase","transport","workload","fixed_bps","duration_s","first_ms","steady_fps","median_ms","p95_ms","max_gap_ms","keyframe_asks","exact_payload_kbps"
+"baseline","udp","synthetic fixed 60fps","1000000","15","196","42.1","106","233","2039","2",
+"baseline","udp","synthetic fixed 60fps","2500000","15","232","53.4","74","185","514","1",
+"baseline","udp","synthetic fixed 60fps","6000000","15","236","33.1","62","304","4076","5",
+"baseline","tcp","synthetic fixed 60fps","1000000","15","224","59.5","136","602","695","0",
+"baseline","tcp","synthetic fixed 60fps","2500000","15","256","34.3","66","234","7323","22",
+"baseline","tcp","synthetic fixed 60fps","6000000","15","213","9.3","189","721","4232","22",
+"baseline","udp","synthetic adaptive 60fps","0","30","217","59.8","61","168","705","0",
+"after_progress","udp","synthetic fixed 60fps","1000000","15","217","53.6","56","134","746","1","868.992"
+"after_progress","udp","synthetic fixed 60fps","6000000","15","258","32.9","199","445","3212","10","3839.219"
+"after_progress","tcp","synthetic fixed 60fps","2500000","15","409","20.5","198","506","3384","16","1221.542"
+"after_progress","tcp","synthetic fixed 60fps","6000000","15","227","20.4","82","250","3170","20","2907.309"
+"after_progress","udp","synthetic adaptive 60fps","0","30","180","59.8","67","161","753","0","734.624"

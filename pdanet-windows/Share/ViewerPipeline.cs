@@ -12,14 +12,15 @@ namespace PdaNetPortable.Share;
 /// the next); when this PC falls behind, it starts again from a keyframe instead of piling up delay. After
 /// a lost frame the picture holds still until the next keyframe, it never shows a damaged picture.
 /// The window takes the newest picture when it is ready to draw, from three buffers that rotate,
-/// so decoding never waits for drawing.
+/// so decoding never waits for drawing; or, while nothing of WPF's covers the picture, the GPU
+/// presenter takes it on a thread of its own (SwapChainPresenter), see Read.
 /// </summary>
-internal sealed class ViewerPipeline : IDisposable
+internal sealed class ViewerPipeline : IPictureSource, IDisposable
 {
     private readonly ViewerFrameQueue _queue = new();
     private readonly Thread _thread;
     private readonly Action _askKeyframe;
-    private readonly object _gate = new();
+    private readonly object _gate = new(), _readGate = new();
     private Nv12Frame? _decoding, _ready, _shown;
     private bool _hasReady, _signaled;
     private long _lastAsk;
@@ -151,6 +152,43 @@ internal sealed class ViewerPipeline : IDisposable
         }
     }
 
+    /// <summary>
+    /// Hands the newest picture to read, while nothing can free it: a new one, or with newest also
+    /// the one taken last when none came since. False when there is none. One reader takes the
+    /// pictures at a time: the window, or the GPU presenter while it shows them, from its thread.
+    /// </summary>
+    public bool Read(bool newest, Action<Nv12Frame> read)
+    {
+        lock (_readGate)
+        {
+            Nv12Frame? frame;
+            lock (_gate)
+            {
+                _signaled = false;
+                if (_hasReady)
+                {
+                    (_ready, _shown) = (_shown, _ready);
+                    _hasReady = false;
+                    Interlocked.Increment(ref FramesShown);
+                }
+                else if (!newest) return false;
+                frame = _shown;
+            }
+            if (frame == null) return false;
+            read(frame);
+            return true;
+        }
+    }
+
+    /// <summary>A picture came, new or taken already: there is one to show.</summary>
+    public bool HasPicture
+    {
+        get
+        {
+            lock (_gate) return _hasReady || _shown != null;
+        }
+    }
+
     public void Dispose()
     {
         Volatile.Write(ref _disposeRequested, 1);
@@ -161,6 +199,8 @@ internal sealed class ViewerPipeline : IDisposable
 
     private void FreePictures()
     {
+        // Never while a reader on another thread still copies one, see Read.
+        lock (_readGate)
         lock (_gate)
         {
             _decoding?.Dispose();
@@ -178,7 +218,13 @@ internal sealed class ViewerPipeline : IDisposable
 /// </summary>
 internal sealed class ViewerFrameQueue : IDisposable
 {
-    internal const int MaxFrames = 8, MaxBytes = 16 << 20, MaxAgeMs = 100;
+    // A resent packet lets go every frame held behind it at once, each needed to decode the next:
+    // after a round trip of 200 to 450 ms through a relay, 6 to 27 frames at 30 to 60 a second.
+    // Decoding them takes a few milliseconds each; dropping them costs a keyframe, a round trip
+    // and a second freeze. So the queue takes such a run whole, and starts over from a keyframe
+    // only when the decoder really falls behind: 8 frames and 100 ms turned most repairs into
+    // keyframe requests once motion went at 30 frames a second.
+    internal const int MaxFrames = 64, MaxBytes = 16 << 20, MaxAgeMs = 250;
     private readonly object _gate = new();
     private readonly Queue<QueuedVideoFrame> _frames = new();
     private int _bytes;

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"io"
+	"math/rand/v2"
 	"net"
 	"testing"
 	"time"
@@ -26,7 +27,7 @@ func parameterFrame(seq uint16, ts uint32, size int) ([]*rtp.Packet, []byte) {
 }
 
 func TestH264FramesEmitAtMarker(t *testing.T) {
-	for _, size := range []int{40, 3000, 100_000} {
+	for _, size := range []int{40, 3000, 100_000, 1_000_000} {
 		b := &h264Frames{}
 		now := time.Now()
 		packets, data := parameterFrame(10, 9000, size)
@@ -48,6 +49,119 @@ func TestH264FramesEmitAtMarker(t *testing.T) {
 		}
 		if b.Pop(now, time.Second) != nil {
 			t.Fatal("frame was emitted twice")
+		}
+	}
+}
+
+func TestH264FramesFragmentHeadersAndAggregation(t *testing.T) {
+	cases := []struct {
+		name     string
+		payloads [][]byte
+		want     []byte
+	}{
+		{"empty fragments", [][]byte{{0x7c, 0x85}, {0x7c, 0x05, 0xaa}, {0x7c, 0x45}}, []byte{0, 0, 0, 1, 0x65, 0xaa}},
+		{"multiple NALs", [][]byte{{0x61, 0xaa}, {0x7c, 0x81, 0xbb}, {0x7c, 0x41, 0xcc}, {0x61, 0xdd}}, []byte{0, 0, 0, 1, 0x61, 0xaa, 0, 0, 0, 1, 0x61, 0xbb, 0xcc, 0, 0, 0, 1, 0x61, 0xdd}},
+		{"changed NAL type", [][]byte{{0x7c, 0x85, 1}, {0x7c, 0x41, 2}}, nil},
+		{"changed NRI", [][]byte{{0x7c, 0x85, 1}, {0x5c, 0x45, 2}}, nil},
+		{"nested start", [][]byte{{0x7c, 0x85, 1}, {0x7c, 0x85, 2}, {0x7c, 0x45, 3}}, nil},
+		{"NAL inside fragment", [][]byte{{0x7c, 0x85, 1}, {0x61, 2}, {0x7c, 0x45, 3}}, nil},
+		{"truncated STAP length", [][]byte{{24, 0, 2, 0x61, 1, 0}}, nil},
+		{"zero STAP NAL", [][]byte{{24, 0, 0, 0, 1, 0x61}}, nil},
+		{"nested STAP", [][]byte{{24, 0, 2, 24, 1}}, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			frames := &h264Frames{synced: true}
+			now := time.Now()
+			for i, payload := range tc.payloads {
+				frames.Push(&rtp.Packet{Header: rtp.Header{SequenceNumber: uint16(i), Timestamp: 1, Marker: i == len(tc.payloads)-1}, Payload: payload}, now)
+			}
+			got := frames.Pop(now, 150*time.Millisecond)
+			if tc.want == nil {
+				if got != nil || frames.dropped == 0 {
+					t.Fatal("malformed access unit was not rejected")
+				}
+			} else if got == nil || !bytes.Equal(got.Data, tc.want) {
+				t.Fatalf("reassembled frame differs: %v", got)
+			}
+		})
+	}
+}
+
+func TestH264FramesLargeFrameAllocationAndOwnership(t *testing.T) {
+	packets, want := parameterFrame(10, 9000, 1_000_000)
+	frames := &h264Frames{}
+	now := time.Now()
+	sequence := uint16(10)
+	var output []byte
+	allocs := testing.AllocsPerRun(10, func() {
+		for _, packet := range packets {
+			packet.SequenceNumber = sequence
+			sequence++
+			frames.Push(packet, now)
+			if sample := frames.Pop(now, 150*time.Millisecond); sample != nil {
+				output = sample.Data
+			}
+		}
+	})
+	if !bytes.Equal(output, want) {
+		t.Fatal("large access unit changed during assembly")
+	}
+	if allocs > 3 {
+		t.Fatalf("large frame allocated %.0f objects; want only frame storage and sample", allocs)
+	}
+	for _, packet := range packets {
+		clear(packet.Payload)
+	}
+	if !bytes.Equal(output, want) {
+		t.Fatal("returned frame aliases the packet storage")
+	}
+}
+
+func TestH264FramesRandomReorderingAndDuplicates(t *testing.T) {
+	// Anchor the first interval, then reorder packets across frame boundaries and
+	// inject identical retransmissions. Every frame must still emerge once, in order,
+	// without falsely marking a loss. Include sequence wrap and Pop after every input.
+	for seed := uint64(1); seed <= 40; seed++ {
+		random := rand.New(rand.NewPCG(seed, 6184))
+		frames := &h264Frames{}
+		now := time.Now()
+		sequence := uint16(65510)
+		var packets []*rtp.Packet
+		var expected [][]byte
+		for i, size := range []int{6000, 40, 100_000, 3000, 50_000} {
+			frame, data := parameterFrame(sequence, 9000+uint32(i)*3000, size)
+			packets = append(packets, frame...)
+			expected = append(expected, data)
+			sequence += uint16(len(frame))
+		}
+		frames.Push(packets[0], now)
+		if frames.Pop(now, 150*time.Millisecond) != nil {
+			t.Fatal("the anchor packet emitted an incomplete frame")
+		}
+		var arrivals []*rtp.Packet
+		for i, packet := range packets {
+			if i > 0 {
+				arrivals = append(arrivals, packet)
+			}
+			for duplicates := random.IntN(3); duplicates > 0; duplicates-- {
+				arrivals = append(arrivals, packet.Clone())
+			}
+		}
+		random.Shuffle(len(arrivals), func(i, j int) { arrivals[i], arrivals[j] = arrivals[j], arrivals[i] })
+		shown := 0
+		for _, packet := range arrivals {
+			frames.Push(packet, now)
+			for sample := frames.Pop(now, 150*time.Millisecond); sample != nil; sample = frames.Pop(now, 150*time.Millisecond) {
+				if shown >= len(expected) || !bytes.Equal(sample.Data, expected[shown]) ||
+					sample.PacketTimestamp != 9000+uint32(shown)*3000 || sample.PrevDroppedPackets != 0 {
+					t.Fatalf("seed %d: frame %d changed, reordered, duplicated or falsely marked lost", seed, shown)
+				}
+				shown++
+			}
+		}
+		if shown != len(expected) || frames.head != frames.tail {
+			t.Fatalf("seed %d: showed %d of %d complete frames or retained stale packets", seed, shown, len(expected))
 		}
 	}
 }

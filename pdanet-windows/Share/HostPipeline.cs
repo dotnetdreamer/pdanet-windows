@@ -11,7 +11,7 @@ namespace PdaNetPortable.Share;
 /// <summary>
 /// The screen of the PC that shares, from capture to the link, on one thread.
 ///
-/// Nothing runs while the screen is still: Desktop Duplication wakes the thread when something
+/// Video waits while the screen is still: Desktop Duplication wakes the thread when something
 /// changes and says what changed, only those rectangles are converted, and FramePlanner decides
 /// when the next frame goes and at which quantizer: moving content at what the link carries
 /// right then, and once the screen rests, refine frames that bring it to near lossless, so text
@@ -21,7 +21,7 @@ internal sealed class HostPipeline : IDisposable
 {
     private readonly RtcHelper _rtc;
     private readonly Thread _thread;
-    private readonly CursorWatch _cursor;
+    private readonly CursorPolling _cursor;
     private volatile bool _stop, _reopen, _keyframe;
     private volatile int _screenIndex, _bitrate = 1_000_000, _viewerWidth, _viewerHeight; // the helper's start, rtc/peer.go
     private volatile Quality _quality = Quality.Auto;
@@ -50,11 +50,16 @@ internal sealed class HostPipeline : IDisposable
     public HostPipeline(RtcHelper rtc)
     {
         _rtc = rtc;
-        _cursor = new CursorWatch(rtc);
+        var cursor = new CursorWatch(rtc);
+        _cursor = new CursorPolling(cursor.Poll, cursor.Reset);
         _thread = new Thread(Run) { IsBackground = true, Name = "Screen sharing", Priority = ThreadPriority.AboveNormal };
     }
 
-    public void Start() => _thread.Start();
+    public void Start()
+    {
+        _cursor.Start();
+        _thread.Start();
+    }
 
     public void RequestKeyframe() => _keyframe = true;
 
@@ -170,7 +175,7 @@ internal sealed class HostPipeline : IDisposable
                 Capture = source.Kind + (gpu != null ? ", all on the GPU" : "");
                 Size = $"{encoder.Width}x{encoder.Height}";
                 Rotation = source.Rotation;
-                _cursor.Reset();
+                _cursor.SetScreen(screen);
                 Changed?.Invoke();
                 string rate = encoder is D3D12H264Encoder d ? d.RateMode : encoder.ConstantQp ? "constant QP" : "constant bitrate";
                 Logger.Instance.Info($"Screen sharing {screen.DeviceName} at {Size}, up to {EncoderFps(encoder.Width, encoder.Height)} fps, with {Encoder} ({rate}) and {Capture}{(gray ? ", in black and white" : "")}");
@@ -191,7 +196,6 @@ internal sealed class HostPipeline : IDisposable
                         // Sleep until the planner wants to look again, or something changes.
                         dirty.Clear();
                         var r = source.Next(plan.WaitMs, dirty);
-                        _cursor.Poll(screen);
                         if (r == CaptureResult.Lost)
                         {
                             lost = true;
@@ -243,6 +247,7 @@ internal sealed class HostPipeline : IDisposable
             }
             finally
             {
+                _cursor.SetScreen(null);
                 _planner = null;
                 frame?.Dispose();
                 encoder?.Dispose();
@@ -398,21 +403,117 @@ internal sealed class HostPipeline : IDisposable
     public void Dispose()
     {
         _stop = true;
+        _cursor.Dispose();
         if (_thread.IsAlive) _thread.Join(3000);
     }
 }
 
 /// <summary>
+/// Poll the pointer independently of capture and encoding. A busy encoder must not hold a moving
+/// pointer until its next picture. Only this thread owns CursorWatch; screen changes coalesce to
+/// their latest immutable value and reset the shape before polling that screen.
+/// </summary>
+internal sealed class CursorPolling : IDisposable
+{
+    private sealed record Target(ShareScreen Screen);
+    private readonly Action<ShareScreen> _poll;
+    private readonly Action _reset;
+    private readonly AutoResetEvent _wake = new(false);
+    private readonly object _state = new();
+    private readonly Thread _thread;
+    private Target? _target;
+    private bool _started, _stopped;
+
+    public CursorPolling(Action<ShareScreen> poll, Action reset)
+    {
+        _poll = poll;
+        _reset = reset;
+        _thread = new Thread(Run) { IsBackground = true, Name = "Screen pointer" };
+    }
+
+    public void Start()
+    {
+        lock (_state)
+        {
+            if (_started || _stopped) return;
+            _started = true;
+            _thread.Start();
+        }
+    }
+
+    public void SetScreen(ShareScreen? screen)
+    {
+        lock (_state)
+        {
+            if (_stopped) return;
+            _target = screen == null ? null : new Target(screen);
+            _wake.Set();
+        }
+    }
+
+    private void Run()
+    {
+        Target? previous = null;
+        bool warned = false;
+        try
+        {
+            while (true)
+            {
+                Target? target;
+                lock (_state)
+                {
+                    if (_stopped) return;
+                    target = _target;
+                }
+                if (target != null)
+                {
+                    try
+                    {
+                        if (!ReferenceEquals(target, previous)) _reset();
+                        _poll(target.Screen);
+                        warned = false;
+                    }
+                    catch (Exception e)
+                    {
+                        if (!warned) Logger.Instance.Warning($"Screen sharing could not read the pointer: {e.Message}");
+                        warned = true;
+                    }
+                }
+                previous = target;
+                _wake.WaitOne(target == null ? Timeout.Infinite : 16);
+            }
+        }
+        finally { _wake.Dispose(); }
+    }
+
+    public void Dispose()
+    {
+        bool started;
+        lock (_state)
+        {
+            if (_stopped) return;
+            _stopped = true;
+            started = _started;
+            _wake.Set();
+        }
+        // An IPC write may still be completing. The worker owns its wait handle and releases it
+        // when it exits, including after this bounded wait; no capture or GPU resource is shared.
+        if (started) _thread.Join(3000);
+        else _wake.Dispose();
+    }
+}
+
+/// <summary>
 /// The pointer of the PC that shares: where it is goes on the live channel, its shape on the
-/// reliable one, and only when they change.
+/// reliable one. Changed positions go immediately; idle heartbeats repair lost live datagrams.
 /// </summary>
 internal sealed class CursorWatch
 {
     private readonly RtcHelper _rtc;
     private readonly HashSet<uint> _sent = new();
+    private readonly PointerUpdates _pointer = new();
     private IntPtr _shape;
-    private ushort _x, _y;
-    private bool _visible, _fresh = true;
+    private bool _fresh = true;
 
     public CursorWatch(RtcHelper rtc) => _rtc = rtc;
 
@@ -421,6 +522,7 @@ internal sealed class CursorWatch
     {
         _fresh = true;
         _shape = IntPtr.Zero;
+        _pointer.Reset();
     }
 
     public void Poll(ShareScreen screen)
@@ -431,13 +533,8 @@ internal sealed class CursorWatch
         bool visible = (ci.flags & ShareNative.CURSOR_SHOWING) != 0 && px >= 0 && py >= 0 && px < screen.Width && py < screen.Height;
         ushort x = (ushort)Math.Clamp(px * 65535L / Math.Max(1, screen.Width - 1), 0, 65535);
         ushort y = (ushort)Math.Clamp(py * 65535L / Math.Max(1, screen.Height - 1), 0, 65535);
-        if (_fresh || x != _x || y != _y || visible != _visible)
-        {
-            _x = x;
-            _y = y;
-            _visible = visible;
-            _rtc.Send(RtcHelper.KindLive, MsgWriter.Pointer(x, y, visible));
-        }
+        if (_pointer.Next(x, y, visible, Environment.TickCount64) is { } position)
+            _rtc.Send(RtcHelper.KindLive, position);
         if (visible && (ci.hCursor != _shape || _fresh)) SendShape(ci.hCursor);
         _fresh = false;
     }
@@ -459,5 +556,26 @@ internal sealed class CursorWatch
         }
         uint hash = picture.Hash;
         _rtc.Send(RtcHelper.KindCtl, _sent.Add(hash) ? CursorShapes.PictureMessage(picture) : CursorShapes.KnownMessage(hash));
+    }
+}
+
+/// <summary>
+/// Live pointer datagrams are not retransmitted. Repeat the latest position and visibility
+/// occasionally so a lost final movement cannot leave the viewer's pointer stuck indefinitely.
+/// </summary>
+internal sealed class PointerUpdates
+{
+    private (ushort X, ushort Y, bool Visible)? _last;
+    private long _sentAt;
+
+    public void Reset() => _last = null;
+
+    public byte[]? Next(ushort x, ushort y, bool visible, long now)
+    {
+        var value = (x, y, visible);
+        if (_last == value && now - _sentAt < 250) return null;
+        _last = value;
+        _sentAt = now;
+        return MsgWriter.Pointer(x, y, visible);
     }
 }

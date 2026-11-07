@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/binary"
+	"math"
 	"sync"
 	"time"
 
@@ -17,11 +18,22 @@ import (
 // with pauses between, and when the delay rises GCC cuts to 85 % of the rate that arrived over
 // the last half second, a span that then holds mostly a pause. The estimate falls far below what
 // the link carries and climbs back by 8 % a second, while the picture turns to mush. The meter
-// times the bursts instead: the pacer lets a burst out faster than a slower link takes it, so the
-// spacing of its packets on arrival is the link's own rate. The best burst of the last ten
-// seconds sets a floor under the bitrate while the link keeps no standing queue and loses little,
-// see peer.target. A link that really got slower builds a queue that does not drain between
-// bursts, which takes the floor away at once.
+// times the bursts instead: the pacer lets a burst out faster than a slower link takes it, so how
+// long its packets take to arrive is the link's own rate. The best burst of the last ten seconds
+// sets a floor under the bitrate while the link keeps no standing queue and loses little, see
+// peer.target. A link that really got slower builds a queue that does not drain between bursts,
+// which takes the floor away at once.
+//
+// A burst is timed from when its first packet could have arrived, the moment it left plus the
+// lowest delay the link showed, to when its last packet did arrive, see finish. Arrival times
+// only ever come late: Wi-Fi hands packets over in batches, a relay or the phone's tunnel holds
+// them and lets them go together, a busy PC reads them late. Timed from the first arrival, such
+// a batch made a burst look up to 30 times faster than the link (16 to 64 Mbit/s on a relay
+// path to a laptop that carried 2, on 2026-11-06, and 90 to 140 Mbit/s on the relay loop of
+// one PC, 2026-11-07). Timed so, lateness can only make a burst look slower, never faster. A
+// link that lets a burst's first bytes by at once still makes it look faster, so a burst counts
+// at no more than its second half shows either, timed by its own arrivals. And however fast the
+// bursts look, the estimate at most doubles each growTime.
 type linkMeter struct {
 	mu    sync.Mutex
 	start time.Time
@@ -33,16 +45,18 @@ type linkMeter struct {
 	burst     uint32
 	burstFrom time.Duration
 	cur       burstAcc
+	arrivals  []burstArrival // of the packets of cur that arrived, as the feedback told them
 
 	samples  []rateSample // bursts of the last sampleWindow
 	last     rateSample   // the newest burst, kept after the window while nothing newer came
 	capacity float64      // bits per second the link carried, 0 while unknown
+	grownAt  time.Time    // when capacity was last worked out, see refresh
 	target   int          // the bitrate the encoder has now, bounds what one burst may show
 
-	base     [baseBuckets]delayBucket // the lowest one way delay of each of the last seconds
-	standing time.Duration            // how far above that lowest delay the latest burst started
-	standAt  time.Time
-	loss     float64 // the share of packets lost lately, see lossLocked
+	base   [baseBuckets]delayBucket    // the lowest one way delay of each of the last seconds
+	queued [queueReadings]queueReading // how far above that lowest delay the latest bursts started
+	next   int                         // where the next of those goes
+	loss   float64                     // the share of packets lost lately, see lossLocked
 }
 
 type sentPacket struct {
@@ -59,17 +73,28 @@ const (
 	fateLost     byte = 2
 )
 
-// burstAcc adds up the feedback of one burst.
+// burstAcc adds up the feedback of one burst: the packets that arrived, the first of them to
+// leave, and the last of them to arrive.
 type burstAcc struct {
-	id                  uint32
-	on                  bool
-	n, lost, bytes      int
-	firstSize           int
-	sendFirst, sendLast time.Duration
-	arrFirst, arrLast   time.Duration
-	minDelay            time.Duration
-	prevSend, prevArr   time.Duration // the packet before, by sequence number
-	bunched             int           // packets in the same arrival tick as the one before, though sent apart
+	id             uint32
+	on             bool
+	n, lost, bytes int
+	firstSize      int
+	sendFirst      time.Duration
+	arrLast        time.Duration
+	minDelay       time.Duration
+}
+
+// burstArrival is one packet of a burst that arrived: when, and how large.
+type burstArrival struct {
+	at   time.Duration
+	size int
+}
+
+// queueReading is the queue one burst met, and when.
+type queueReading struct {
+	queue time.Duration
+	at    time.Time
 }
 
 type rateSample struct {
@@ -92,13 +117,18 @@ const (
 	minSamplePkts  = 6
 	minSampleBytes = 8000
 	arrivalTick    = 250 * time.Microsecond // the feedback tells arrivals in these steps
-	minArrSpan     = 2 * time.Millisecond   // shorter spans are too coarse for those steps
-	minSendSpan    = 2 * time.Millisecond   // a burst must have been spread out by the pacer, see finish
+	minSpan        = 5 * time.Millisecond   // shorter spans are too coarse for those steps, see finish
+	growTime       = 500 * time.Millisecond // the estimate at most doubles this often, see refresh
 	baseBuckets    = 10                     // the lowest delay over ten one second buckets
-	standingKeep   = 2 * time.Second        // a queue no burst measured again for this long counts as drained
+	queueReadings  = 64                     // the bursts kept for that
+	queueSpan      = 400 * time.Millisecond // a queue counts as standing once every burst this long met it
+	queueBursts    = 3                      // and at least this many, over at least half of queueSpan
 	lossWindow     = 2 * time.Second        // the loss counts the packets sent this lately
 	lossMinPkts    = 10                     // fewer with a known fate say nothing
 )
+
+// meterTrace, when set, is told each burst the meter times: the network lab sets it.
+var meterTrace func(format string, args ...any)
 
 func newLinkMeter() *linkMeter {
 	return &linkMeter{start: time.Now()}
@@ -123,6 +153,10 @@ func (m *linkMeter) onSent(h *rtp.Header, payload int) {
 	m.onSentAt(h, payload, time.Since(m.start))
 }
 
+func burstGapFor(target int) time.Duration {
+	return max(burstGap, time.Duration(1200*8)*time.Second/time.Duration(max(target, minBitrate)))
+}
+
 // onSentAt notes a packet that left at now, counted from when the meter started.
 func (m *linkMeter) onSentAt(h *rtp.Header, payload int, now time.Duration) {
 	m.mu.Lock()
@@ -135,7 +169,11 @@ func (m *linkMeter) onSentAt(h *rtp.Header, payload int, now time.Duration) {
 		return
 	}
 	seq := binary.BigEndian.Uint16(b)
-	if now-m.lastSend > burstGap || now-m.burstFrom > burstMax {
+	// At a low encoder target, a full packet's normal pacing interval exceeds
+	// four milliseconds. Leave room for that interval and timer rounding instead
+	// of splitting an otherwise measurable train into one-packet bursts.
+	gap := burstGapFor(m.target)
+	if now-m.lastSend > gap || now-m.burstFrom > burstMax {
 		m.burst++
 		m.burstFrom = now
 	}
@@ -199,7 +237,7 @@ func (m *linkMeter) onFeedback(fb *rtcp.TransportLayerCC) {
 		}
 	}
 	// The newest burst is whole once the last packet sent is in and nothing followed it.
-	if m.cur.on && m.cur.id == m.burst && seq-1 == m.lastSeq && time.Since(m.start)-m.lastSend > burstGap {
+	if m.cur.on && m.cur.id == m.burst && seq-1 == m.lastSeq && time.Since(m.start)-m.lastSend > burstGapFor(m.target) {
 		m.finish()
 	}
 }
@@ -212,27 +250,22 @@ func (m *linkMeter) add(p sentPacket, arrival time.Duration, received bool) {
 		}
 		m.finish()
 		m.cur = burstAcc{id: p.burst, on: true}
+		m.arrivals = m.arrivals[:0]
 	}
 	c := &m.cur
 	if !received {
 		c.lost++
 		return
 	}
+	m.arrivals = append(m.arrivals, burstArrival{at: arrival, size: p.size})
 	delay := arrival - p.at // one way, with an unknown offset between the two clocks
-	if c.n == 0 {
-		c.firstSize = p.size
-		c.sendFirst, c.sendLast = p.at, p.at
-		c.arrFirst, c.arrLast = arrival, arrival
-		c.minDelay = delay
-	} else {
-		c.sendFirst, c.sendLast = min(c.sendFirst, p.at), max(c.sendLast, p.at)
-		c.arrFirst, c.arrLast = min(c.arrFirst, arrival), max(c.arrLast, arrival)
-		c.minDelay = min(c.minDelay, delay)
-		if arrival-c.prevArr < arrivalTick && p.at-c.prevSend >= 2*arrivalTick {
-			c.bunched++
-		}
+	if c.n == 0 || p.at < c.sendFirst {
+		c.sendFirst, c.firstSize = p.at, p.size
 	}
-	c.prevSend, c.prevArr = p.at, arrival
+	if c.n == 0 {
+		c.arrLast, c.minDelay = arrival, delay
+	}
+	c.arrLast, c.minDelay = max(c.arrLast, arrival), min(c.minDelay, delay)
 	c.n++
 	c.bytes += p.size
 	m.noteDelay(p.at, delay)
@@ -249,31 +282,57 @@ func (m *linkMeter) finish() {
 	now := time.Now()
 	// The first packets of a burst find the queue the bursts before left: none on a link that
 	// keeps up, a standing one on a link that gets more than it carries.
-	if base, ok := m.baseDelay(); ok {
-		m.standing, m.standAt = c.minDelay-base, now
+	base, ok := m.baseDelay()
+	if ok {
+		m.queued[m.next%queueReadings] = queueReading{queue: c.minDelay - base, at: now}
+		m.next++
 	}
-	if c.n < minSamplePkts || c.bytes < minSampleBytes || c.lost*5 > c.n+c.lost {
+	if !ok || c.n < minSamplePkts || c.bytes < minSampleBytes || c.lost*5 > c.n+c.lost {
 		return
 	}
-	// Packets the pacer sent apart that arrive in the same tick came out of a batch, not off the
-	// link: the phone helper's tunnel on the PC that views hands them over that way, and so does
-	// the one on the PC that shares in the phone lab. Their spacing says nothing.
-	if c.bunched*4 > c.n {
-		return
-	}
-	// Only a burst the pacer spread out tells what the link carries, and never more than it was
-	// sent at. A burst that left at once can also arrive at once: the phone helper's tunnel hands
-	// datagrams over in batches, which made bursts look like 20 to 75 Mbit/s on a link that
-	// carried half a megabit (2026-11-06). A link spreads a burst out or keeps its spacing; one
-	// that arrives closer together than it left was held up and let go at once, by the phone's
-	// tunnel or a queue, and says nothing of the link either: those made the floor double the
-	// bitrate again and again until a queue stopped it (2026-11-06, the phone lab).
-	span, sendSpan := c.arrLast-c.arrFirst, c.sendLast-c.sendFirst
-	if span < minArrSpan || sendSpan < minSendSpan || span < sendSpan*4/5 {
+	// The bytes after the first packet arrived by the last arrival, and none of them before the
+	// first packet could have arrived: it left at sendFirst and nothing crosses the link faster
+	// than its lowest delay. So the link carried them at least this fast, and any lateness, a
+	// batch, a hold, a queue the burst found, only stretches the span. A burst sent at once
+	// counts too: it is the clearest picture of the link, which spreads it out at its own rate.
+	// Timed from the first arrival instead, as before, a burst whose first packets a batch held
+	// back looked many times faster than the link. That the pacer spread a burst out was then
+	// the only defence, and a burst spread out still arrives in batches over Wi-Fi: the relay
+	// loop's bursts were then all refused, and the floor never came (2026-11-07).
+	span := c.arrLast - c.sendFirst - base
+	if span < minSpan {
 		return
 	}
 	bits := float64(c.bytes-c.firstSize) * 8
-	bps := min(bits/span.Seconds(), bits/sendSpan.Seconds())
+	bps := bits / span.Seconds()
+	// Some links let the first bytes of a burst by at once and the rest at their rate: a token
+	// bucket, a router's burst allowance. Timed from the first packet, a frame of 8 or 10 packets
+	// sent at once read 3.1 to 3.9 Mbit/s on a 3 Mbit/s link with a 3 KB bucket (the network
+	// lab), the floor came to the link's own rate, and each time the link slowed down the queue
+	// overflowed. The burst's second half, timed by its own arrivals, comes after any such
+	// allowance is spent; late arrivals would make it look faster, which the first rate does not
+	// allow for. Each covers what fools the other, the burst counts at the lower of the two,
+	// and not at all when the second half came in too quickly to time.
+	half, sum := c.bytes/2, 0
+	var halfIn time.Duration
+	for i, a := range m.arrivals {
+		if i == 0 || a.at > halfIn {
+			halfIn = a.at
+		}
+		if sum += a.size; sum >= half {
+			break
+		}
+	}
+	tail := c.arrLast - halfIn
+	if tail < minSpan || sum >= c.bytes {
+		return
+	}
+	tailBps := float64(c.bytes-sum) * 8 / tail.Seconds()
+	if meterTrace != nil {
+		meterTrace("burst %d: %d packets %d bytes (%d lost), sent from %v, in by %v, lowest delay %v, span %v: %.0f kbit/s, second half %v: %.0f kbit/s",
+			c.id, c.n, c.bytes, c.lost, c.sendFirst, c.arrLast, base, span, bps/1000, tail, tailBps/1000)
+	}
+	bps = min(bps, tailBps)
 	// One odd burst moves the estimate a step, not a mile: at most twice what the meter or the
 	// encoder has now, also right after a queue made the meter forget its bursts.
 	bps = min(bps, max(2*m.capacity, 2*float64(m.target), 2e6))
@@ -296,7 +355,14 @@ func (m *linkMeter) refresh(now time.Time) {
 	if best == 0 && m.last.bps > 0 && now.Sub(m.last.at) <= sampleKeep {
 		best = m.last.bps // a resting screen sends nothing to measure, the link likely still carries it
 	}
-	m.capacity = best
+	// However fast its bursts look, the estimate at most doubles each growTime: a link that
+	// really is faster is learned within seconds, while an estimate that something still fools
+	// climbs slowly enough for a queue or losses to stop it first. Batches of arrivals once
+	// doubled it with each burst, from 2 to 88 Mbit/s in 120 ms. Falling takes no time.
+	if m.capacity > 0 && best > m.capacity {
+		best = min(best, m.capacity*math.Exp2(float64(now.Sub(m.grownAt))/float64(growTime)))
+	}
+	m.capacity, m.grownAt = best, now
 }
 
 func (m *linkMeter) noteDelay(at, delay time.Duration) {
@@ -327,11 +393,41 @@ func (m *linkMeter) baseDelay() (time.Duration, bool) {
 func (m *linkMeter) snapshot() (capacity float64, standing time.Duration, loss float64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.refresh(time.Now())
-	if time.Since(m.standAt) <= standingKeep {
-		standing = max(standing, m.standing)
+	now := time.Now()
+	m.refresh(now)
+	return m.capacity, m.standingLocked(now), m.lossLocked()
+}
+
+// standingLocked is the queue every burst of the last queueSpan met. A queue that does not
+// drain delays every burst, jitter such as Wi-Fi's or a busy relay's delays some bursts for a
+// while and not the next ones, and the queue a keyframe leaves drains within it. Read from one
+// burst, jitter of up to 80 ms took the floor away every second or two and left the bitrate to
+// GCC, which jitter sinks as well: 0.25 Mbit/s on a 3 Mbit/s link that lost nothing (the network
+// lab, and the relay sessions of 2026-11-07). Packets that leave alone are bursts of their own,
+// so a few in a row say nothing yet: it takes queueBursts over at least half of queueSpan. A
+// deep queue counts at once: queueBursts in a row that each met more than twice queueOff, more
+// than such jitter adds, are a link that got slower, and waiting would let it lose packets.
+// Callers hold mu.
+func (m *linkMeter) standingLocked(now time.Time) time.Duration {
+	standing, recent, n := time.Duration(math.MaxInt64), time.Duration(math.MaxInt64), 0
+	var oldest time.Time
+	for i := 1; i <= queueReadings; i++ {
+		r := m.queued[(m.next-i+queueReadings*2)%queueReadings]
+		if r.at.IsZero() || now.Sub(r.at) > queueSpan {
+			break
+		}
+		standing, oldest, n = min(standing, r.queue), r.at, n+1
+		if n == queueBursts {
+			recent = standing
+		}
 	}
-	return m.capacity, standing, m.lossLocked()
+	switch {
+	case n >= queueBursts && recent > 2*queueOff:
+		return recent
+	case n < queueBursts || now.Sub(oldest) < queueSpan/2:
+		return 0
+	}
+	return max(standing, 0)
 }
 
 // lossLocked is the share lost of the packets sent in the last lossWindow whose fate the

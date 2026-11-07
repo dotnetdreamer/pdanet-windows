@@ -79,7 +79,10 @@
   <ItemGroup>
     <RtcSource Include="$(RtcDir)*.go;$(RtcDir)go.mod;$(RtcDir)go.sum" Exclude="$(RtcDir)*_test.go" />
   </ItemGroup>
-  <Target Name="BuildRtcHelper" BeforeTargets="BeforeBuild" Inputs="@(RtcSource)" Outputs="$(RtcExe)">
+  <!-- -p:SkipRtcHelper=true keeps the helper already in Resources\rtc, for app-only builds while
+       the Go code is being changed. -->
+  <Target Name="BuildRtcHelper" BeforeTargets="BeforeBuild" Inputs="@(RtcSource)" Outputs="$(RtcExe)"
+          Condition="'$(SkipRtcHelper)' != 'true' Or !Exists('$(RtcExe)')">
     <Exec Command="go version" IgnoreExitCode="true" IgnoreStandardErrorWarningFormat="true" StandardOutputImportance="low">
       <Output TaskParameter="ExitCode" PropertyName="GoVersionExit" />
     </Exec>

@@ -51,11 +51,21 @@ internal static class ViewerQueueSelfTest
 
         using (var queue = new ViewerFrameQueue())
         {
-            for (byte i = 0; i < ViewerFrameQueue.MaxFrames; i++) queue.Push(Frame(i, key: i == 4), i);
-            queue.Push(Frame(8), 8);
-            Take(queue, 8, 4, gap: true);
-            for (byte i = 5; i <= 8; i++) Take(queue, 8, i, gap: false);
-            Check(!queue.TryTake(8, out _), "recent keyframe suffix retained once");
+            const int key = ViewerFrameQueue.MaxFrames / 2;
+            for (int i = 0; i < ViewerFrameQueue.MaxFrames; i++) queue.Push(Frame((byte)i, key: i == key), i);
+            queue.Push(Frame(ViewerFrameQueue.MaxFrames), ViewerFrameQueue.MaxFrames);
+            Take(queue, ViewerFrameQueue.MaxFrames, key, gap: true);
+            for (int i = key + 1; i <= ViewerFrameQueue.MaxFrames; i++) Take(queue, ViewerFrameQueue.MaxFrames, (byte)i, gap: false);
+            Check(!queue.TryTake(ViewerFrameQueue.MaxFrames, out _), "recent keyframe suffix retained once");
+        }
+
+        using (var queue = new ViewerFrameQueue())
+        {
+            // A resent packet lets a run of frames go at once: all of them are decoded, in order.
+            queue.Push(Frame(0, key: true), 0);
+            Take(queue, 0, 0, gap: false);
+            for (byte i = 1; i <= 30; i++) queue.Push(Frame(i), 300);
+            for (byte i = 1; i <= 30; i++) Take(queue, 300 + i * 4, i, gap: false);
         }
 
         using (var queue = new ViewerFrameQueue())
@@ -68,15 +78,16 @@ internal static class ViewerQueueSelfTest
 
         using (var queue = new ViewerFrameQueue())
         {
+            const int age = ViewerFrameQueue.MaxAgeMs;
             queue.Push(Frame(1), 0);
-            queue.Push(Frame(2), 50);
-            queue.Push(Frame(3), 100);
-            Take(queue, 101, 2, gap: true);
-            Take(queue, 101, 3, gap: false);
-            queue.Push(Frame(4), 200);
-            queue.Push(Frame(5, key: true), 301);
-            Take(queue, 301, 5, gap: true);
-            Check(!queue.TryTake(301, out _), "enqueue age limit discards old backlog");
+            queue.Push(Frame(2), age / 2);
+            queue.Push(Frame(3), age);
+            Take(queue, age + 1, 2, gap: true);
+            Take(queue, age + 1, 3, gap: false);
+            queue.Push(Frame(4), 2 * age);
+            queue.Push(Frame(5, key: true), 3 * age + 1);
+            Take(queue, 3 * age + 1, 5, gap: true);
+            Check(!queue.TryTake(3 * age + 1, out _), "enqueue age limit discards old backlog");
         }
 
         using (var queue = new ViewerFrameQueue())
@@ -85,7 +96,7 @@ internal static class ViewerQueueSelfTest
             Take(queue, ViewerFrameQueue.MaxAgeMs, 1, gap: false);
             queue.Push(Frame(2, key: true), 0);
             Take(queue, ViewerFrameQueue.MaxAgeMs + 1, 2, gap: false, stale: true);
-            Check(!queue.TryTake(102, out _), "sole stale frame is exposed for rejection without waiting for another frame");
+            Check(!queue.TryTake(ViewerFrameQueue.MaxAgeMs + 2, out _), "sole stale frame is exposed for rejection without waiting for another frame");
         }
 
         using (var queue = new ViewerFrameQueue())
@@ -122,6 +133,6 @@ internal static class ViewerQueueSelfTest
             queue.Complete();
             Check(reader.Wait(2000) && !reader.Result, "complete wakes concurrent reader");
         }
-        return $"{checks} checks; 8 frames, 100 ms, 16 MiB; gaps resume at a keyframe";
+        return $"{checks} checks; {ViewerFrameQueue.MaxFrames} frames, {ViewerFrameQueue.MaxAgeMs} ms, {ViewerFrameQueue.MaxBytes >> 20} MiB; a repair's run of frames is decoded whole; gaps resume at a keyframe";
     }
 }

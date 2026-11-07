@@ -45,6 +45,9 @@ public static class Program
                 ? Share.ShareSelfTest.MemorySteps(args.Length > 2 ? args[2] : "d3d12")
                 : args.Contains("quality")
                     ? args.Contains("vbr") ? Share.ShareQualityTest.Vbr() : Share.ShareQualityTest.Run(mf: args.Contains("mf"))
+                    : args.Contains("relay") ? Share.ShareSelfTest.Relay()
+                    : args.Contains("presenter-input") ? Share.ShareSelfTest.Presenter(input: true)
+                    : args.Contains("presenter") ? Share.ShareSelfTest.Presenter()
                     : Share.ShareSelfTest.Run(online: args.Contains("online"));
 
         // MCP server mode: drive the PdaNet browser from an AI agent over stdio. With PdaNet running

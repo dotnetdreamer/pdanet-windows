@@ -165,6 +165,24 @@ internal static class ShareSelfTest
         return 0;
     }
 
+    /// <summary>
+    /// "--selftest-share presenter": the viewer's GPU presenter alone; "presenter-input" real
+    /// mouse input through its window, which moves this PC's pointer, see PresenterSelfTest.Input.
+    /// </summary>
+    public static int Presenter(bool input = false)
+    {
+        try
+        {
+            Console.WriteLine("ok   the viewer's GPU presenter\n     " + (input ? PresenterInputTest.Input() : PresenterSelfTest.Run()).Replace("\n", "\n     "));
+            return 0;
+        }
+        catch (Exception e)
+        {
+            Console.WriteLine($"FAIL the viewer's GPU presenter: {e.Message}\n     {e.StackTrace?.Split('\n').FirstOrDefault()?.Trim()}");
+            return 1;
+        }
+    }
+
     public static int Run(bool online)
     {
         Console.WriteLine("==== PdaNet screen sharing self-test ====");
@@ -187,6 +205,9 @@ internal static class ShareSelfTest
         }
         Check("viewer queue latency and recovery", ViewerQueueSelfTest.Run);
         Check("capture metadata stays bounded", HostPerformanceSelfTest.PendingChanges);
+        Check("pointer stays responsive while capture stalls", CursorPollingSelfTest.Run);
+        Check("pixel conversion matches the scalar reference", ColorConvertSelfTest.Run);
+        Check("the viewer's GPU presenter: ColorConvert's pixels, placed as WPF lays them out", PresenterSelfTest.Run);
         Check("planner serialization and static sharpness", FramePlannerSelfTest.Run);
         Check("the picture path: capture, convert, encode, decode", Picture);
         Check("the GPU path: capture, convert and encode on the GPU", Gpu);
@@ -686,24 +707,61 @@ internal static class ShareSelfTest
         return mse == 0 ? 99 : 10 * Math.Log10(255.0 * 255.0 / mse);
     }
 
-    private static string Session(bool online)
+    /// <summary>
+    /// Exercise the actual capture, encoder and decoder through the configured TURN relay.
+    /// PDANET_LAB_FROM can instead name a file containing the credential endpoint, matching
+    /// the Go relay lab. Credentials stay on helper stdin. This does not measure presentation.
+    /// </summary>
+    public static int Relay()
+    {
+        Console.WriteLine("==== Actual screen pipeline through TURN (capture to decode; no display) ====");
+        try
+        {
+            Console.WriteLine(Session(online: false, relay: true));
+            Console.WriteLine("relay pipeline passed");
+            return 0;
+        }
+        catch (Exception e)
+        {
+            Console.WriteLine($"FAIL relay pipeline: {e.Message}");
+            return 1;
+        }
+    }
+
+    private static string Session(bool online, bool relay = false)
     {
         var lines = new List<string>();
         var relays = online ? null : new[] { "none" };
+        var settings = relay ? ShareRelays.Read(Services.ConfigManager.Instance.Config) : null;
+        string? from = settings == null ? null : ShareRelays.From(settings);
+        if (relay && Environment.GetEnvironmentVariable("PDANET_LAB_FROM") is { Length: > 0 } file)
+        {
+            from = File.ReadAllText(file).Trim();
+            if (!Uri.TryCreate(from, UriKind.Absolute, out var uri) || uri.Scheme != "https")
+                throw new InvalidOperationException("PDANET_LAB_FROM must name a file containing an HTTPS relay credential address");
+            // An explicit lab endpoint isolates the test from unrelated saved relay settings.
+            settings = null;
+        }
+        else if (relay && settings != null && (!settings.Any || ShareRelays.Problem(settings) != null))
+            throw new InvalidOperationException("Configure a relay in Settings, or set PDANET_LAB_FROM to a credential URL file");
+        var turn = settings == null ? null : ShareRelays.Servers(settings);
+        var turnKey = settings == null ? null : ShareRelays.Key(settings);
         var hostEvents = new BlockingCollection<JsonElement>();
         var viewEvents = new BlockingCollection<JsonElement>();
         var total = Stopwatch.StartNew();
 
-        using var host = RtcHelper.Start(new { op = "host", name = "Selftest sharing PC", route = new { mode = "direct" }, relays });
+        using var host = RtcHelper.Start(new { op = "host", name = "Selftest sharing PC", route = new { mode = "direct" }, relays, relayOnly = relay, turn, turnKey, turnFrom = from });
         host.Event += e => hostEvents.Add(e);
         var code = Wait(hostEvents, "code", 15).GetProperty("code").GetString()!;
         lines.Add($"code      {code[..3]} {code[3..6]} {code[6..]} in {total.ElapsedMilliseconds} ms");
 
-        using var view = RtcHelper.Start(new { op = "join", code, name = "Selftest viewing PC", route = new { mode = "direct" }, relays });
+        using var view = RtcHelper.Start(new { op = "join", code, name = "Selftest viewing PC", route = new { mode = "direct" }, relays, relayOnly = relay, turn, turnKey, turnFrom = from });
         view.Event += e => viewEvents.Add(e);
         var connect = Stopwatch.StartNew();
         var connected = Wait(viewEvents, "connected", 40);
-        Wait(hostEvents, "connected", 20);
+        var hostConnected = Wait(hostEvents, "connected", 20);
+        if (relay && (connected.GetProperty("path").GetString() != "relay" || hostConnected.GetProperty("path").GetString() != "relay"))
+            throw new InvalidOperationException("the forced relay test used a different network path");
         lines.Add($"connected {connected.GetProperty("path").GetString()} path, {connected.GetProperty("local").GetString()} to {connected.GetProperty("remote").GetString()}, in {connect.ElapsedMilliseconds} ms after the code");
 
         // What this process holds before the screen pipelines start, to tell what they cost.
@@ -720,7 +778,7 @@ internal static class ShareSelfTest
             if (!m.IsEmpty && m.Span[0] == Msg.Keyframe) pipeline.RequestKeyframe();
         };
         var shown = new ManualResetEventSlim();
-        int frames = 0;
+        int frames = 0, keyframes = 0, decodedAtKey = 0;
         string size = "";
         var viewer = new ViewerPipeline(() => view.Send(RtcHelper.KindCtl, MsgWriter.Bare(Msg.Keyframe)));
         try
@@ -733,7 +791,15 @@ internal static class ShareSelfTest
                 Interlocked.Increment(ref frames);
                 shown.Set();
             };
-            view.Video += f => viewer.Push(f.Span);
+            view.Video += f =>
+            {
+                if (!f.IsEmpty && (f.Span[0] & 1) != 0)
+                {
+                    Volatile.Write(ref decodedAtKey, Volatile.Read(ref frames));
+                    Interlocked.Increment(ref keyframes);
+                }
+                viewer.Push(f.Span);
+            };
             var first = Stopwatch.StartNew();
             // Subscribe before capture starts: exercise the opening keyframe, rather than
             // hiding startup faults by letting the host run for 1.5 seconds first.
@@ -743,13 +809,17 @@ internal static class ShareSelfTest
             lines.Add($"picture   {size} on the viewer {first.ElapsedMilliseconds} ms after it asked, with {pipeline.Encoder}");
 
             // Keyframes on request travel the whole way: the viewer asks, the sharing PC sends.
-            int before = frames;
+            int before = Volatile.Read(ref frames), keysBefore = Volatile.Read(ref keyframes);
             for (int i = 0; i < 5; i++)
             {
                 view.Send(RtcHelper.KindCtl, MsgWriter.Bare(Msg.Keyframe));
                 Thread.Sleep(350);
             }
-            lines.Add($"frames    {frames - before} more pictures after 5 keyframe requests, {pipeline.BytesSent / 1024} KB sent in all");
+            if (!SpinWait.SpinUntil(() => Volatile.Read(ref keyframes) > keysBefore, 5000))
+                throw new Exception("the viewer received no new IDR after keyframe requests");
+            if (!SpinWait.SpinUntil(() => Volatile.Read(ref frames) > Volatile.Read(ref decodedAtKey), 5000))
+                throw new Exception("the viewer decoded no subsequent picture after receiving the requested IDR");
+            lines.Add($"frames    {frames - before} more pictures, {keyframes - keysBefore} IDRs after 5 keyframe requests, {pipeline.BytesSent / 1024} KB sent in all");
 
             Thread.Sleep(1200);
             var now = Memory();

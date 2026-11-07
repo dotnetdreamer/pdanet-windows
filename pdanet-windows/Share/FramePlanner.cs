@@ -48,6 +48,7 @@ internal sealed class FramePlanner
     private const int Recode = 3;          // a block this many steps above a frame's quantizer is coded again by it
     private const int MaxQp = 44, MaxMotionQp = 46, MinQp = 12;
     private const long FirstRefine = 120, RefineGap = 200; // ms after the last change, and between refine frames
+    private const long MotionStreak = 250; // ms: a motion frame this soon after one is the same motion
     private const double Overhead = 600;   // bits of a frame's headers and skipped blocks
 
     /// <summary>
@@ -178,8 +179,14 @@ internal sealed class FramePlanner
                 long due = Math.Max(_lastFrame + 1000 / maxFps, now + DebtMs(rate));
                 if (now < due) return FramePlan.Wait(due - now);
                 // A first change after a rest may spend what saved up, then each frame its share.
+                // While motion goes on the saved credit stays put, as each frame's wait to drain
+                // earns back what it took: spent on every frame, it held a window being dragged or
+                // a page scrolling to about 10 frames a second at a sharper quantizer, where the
+                // link carried 30 at the soft one (11 to 14 fps at QP 16 to 29 on the relay,
+                // 2026-11-07). Resting sharpens what moved, the refine frames are for that.
                 double perFrame = rate / maxFps, most = rate * s.MotionMax;
-                double budget = Math.Min(Math.Max(perFrame, _credit), most);
+                bool streak = _lastKind == FrameKind.Motion && now - _lastFrame <= MotionStreak;
+                double budget = streak ? perFrame : Math.Min(Math.Max(perFrame, _credit), most);
                 int q = Pick(FrameKind.Motion, budget, restQp, s.HardQp);
                 if (q > s.SoftQp)
                 {

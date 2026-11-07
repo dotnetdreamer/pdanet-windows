@@ -38,7 +38,9 @@ type burstPacer struct {
 	newest   map[uint32]uint16
 	gcc      int     // bits per second GCC asks for
 	floor    int     // bits per second the link meter allows, 0 for none
+	linkBps  int     // bits per second the link meter measured the link at, 0 while unknown
 	rate     float64 // bytes per second
+	most     float64 // bytes per second no burst goes faster than, 0 for no limit
 	tokens   float64 // bytes that may go now, below zero means in debt
 	last     time.Time
 	meter    *linkMeter
@@ -69,9 +71,14 @@ type resendTracker interface {
 }
 
 const (
-	pacingFactor  = 2.5
-	burstTime     = 25 * time.Millisecond
-	minBurstBytes = 16 * 1200
+	pacingFactor = 2.5
+	capacityGain = 1.5                   // of the measured link, the fastest a burst goes once the meter measured it
+	netQueue     = 30 * time.Millisecond // of the link, the most a burst should add to the queue in front of it
+	burstTime    = 25 * time.Millisecond
+	// Idle credit scales with the rate; a fixed 16-packet minimum consumed
+	// almost a whole floor-rate keyframe without any measurable pacing and
+	// injected hundreds of milliseconds of serialization into slow links.
+	minBurstBytes = 1200 // one MTU minimum, plus at most one packet of token debt
 	drainTime     = 250 * time.Millisecond
 )
 
@@ -109,17 +116,44 @@ func (p *burstPacer) SetTargetBitrate(bps int) {
 	p.mu.Unlock()
 }
 
-// SetFloor takes the rate the link meter allows, 0 for none.
-func (p *burstPacer) SetFloor(bps int) {
+// SetFloor takes the rate the link meter allows, 0 for none, and the rate it measured the link
+// at, 0 while it knows none.
+func (p *burstPacer) SetFloor(bps, capacity int) {
 	p.mu.Lock()
-	p.floor = bps
+	p.floor, p.linkBps = bps, capacity
 	p.setRate()
 	p.mu.Unlock()
 }
 
-// setRate paces at the higher of the two. Callers hold mu.
+// setRate paces at the higher of the two, 2.5 times over. Once the link meter measured the link,
+// no burst goes faster than capacityGain times what it carries (or GCC's estimate, when that is
+// higher): with the floor at 0.8 of the link, 2.5 times over sent bursts at twice what the link
+// takes, and a keyframe or a large refine then overflowed the buffer in front of a slow hop. The
+// lost packets were asked for again behind the rest of the burst, the frame expired, and the
+// keyframe asked for next did the same (the network lab, 2026-11-07). A little faster than the
+// link still lets the meter see the link get faster. Callers hold mu.
 func (p *burstPacer) setRate() {
 	p.rate = float64(max(p.gcc, p.floor)) * pacingFactor / 8
+	p.most = 0
+	if p.linkBps > 0 {
+		p.most = float64(max(p.linkBps, p.gcc)) * capacityGain / 8
+		p.rate = min(p.rate, p.most)
+	}
+}
+
+// limit is how fast what waits may leave once the meter measured the link: capacityGain times
+// the link while little waits, and closer to the link the more waits, so that a burst adds no
+// more than netQueue of the link's time to the queue in front of the slowest hop. A burst of S
+// bytes sent at g times the link leaves S(1-1/g) there: a 900 KB keyframe at 1.5 times a
+// 20 Mbit/s link left 300 KB, more than its router kept, and the frame's last packets were
+// lost; paced near the link it waits here instead, and arrives no later. Callers hold mu.
+func (p *burstPacer) limit() float64 {
+	link := p.most / capacityGain
+	gain := capacityGain
+	if room := link * netQueue.Seconds(); float64(p.queued) > room {
+		gain = min(gain, 1/(1-room/float64(p.queued)))
+	}
+	return link * gain // never below the link itself: gain stays above 1
 }
 
 func (p *burstPacer) AddStream(ssrc uint32, w interceptor.RTPWriter) {
@@ -142,6 +176,9 @@ func (p *burstPacer) refill(now time.Time) {
 		}
 		left := max(drainTime-now.Sub(oldest), 50*time.Millisecond)
 		rate = max(rate, float64(p.queued)/left.Seconds())
+		if p.most > 0 {
+			rate = min(rate, p.limit())
+		}
 	}
 	p.tokens = min(p.tokens+now.Sub(p.last).Seconds()*rate, max(p.capacity(), rate*burstTime.Seconds()))
 	p.last = now

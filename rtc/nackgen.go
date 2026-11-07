@@ -4,6 +4,7 @@ import (
 	"math/rand/v2"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pion/interceptor"
@@ -21,6 +22,7 @@ import (
 // most nackTries times, and stops once the viewer no longer waits for the frame (frameWait).
 type nackGenFactory struct {
 	rtt func() time.Duration // the round trip now, 0 while unknown
+	gen atomic.Pointer[nackGen]
 }
 
 type nackGen struct {
@@ -40,6 +42,7 @@ type nackStream struct {
 	started bool
 	newest  uint16
 	missing map[uint16]*nackMiss
+	parity  [4096]int32 // sequence number + 1 of the slots that hold parity, never asked for
 }
 
 type nackMiss struct {
@@ -58,7 +61,34 @@ const (
 )
 
 func (f *nackGenFactory) NewInterceptor(string) (interceptor.Interceptor, error) {
-	return &nackGen{rtt: f.rtt, streams: map[uint32]*nackStream{}, close: make(chan struct{})}, nil
+	g := &nackGen{rtt: f.rtt, streams: map[uint32]*nackStream{}, close: make(chan struct{})}
+	f.gen.Store(g)
+	return g, nil
+}
+
+// notMedia tells n sequence numbers from from on of stream ssrc that hold parity, see
+// fecReceiver: their loss loses nothing of the screen, so they are never asked for.
+func (g *nackGen) notMedia(ssrc uint32, from uint16, n int) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	st := g.streams[ssrc]
+	if st == nil {
+		return
+	}
+	for i := 0; i < n && i < len(st.parity); i++ {
+		s := from + uint16(i)
+		st.parity[int(s)%len(st.parity)] = int32(s) + 1
+		delete(st.missing, s)
+	}
+}
+
+// recovered tells a packet of stream ssrc that parity rebuilt: no need to ask for it again.
+func (g *nackGen) recovered(ssrc uint32, seq uint16) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if st := g.streams[ssrc]; st != nil {
+		delete(st.missing, seq)
+	}
 }
 
 // supportsNack tells a stream whose packets may be asked for again.
@@ -134,7 +164,9 @@ func (g *nackGen) arrived(st *nackStream, seq uint16, now time.Time) {
 	switch d := int16(seq - st.newest); {
 	case d > 0 && d <= nackMaxGap:
 		for s := st.newest + 1; s != seq; s++ {
-			st.missing[s] = &nackMiss{since: now, next: now.Add(nackGrace)}
+			if st.parity[int(s)%len(st.parity)] != int32(s)+1 {
+				st.missing[s] = &nackMiss{since: now, next: now.Add(nackGrace)}
+			}
 		}
 		st.newest = seq
 	case d > nackMaxGap || d < -nackMaxGap:

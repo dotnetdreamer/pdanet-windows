@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"log"
+	"math"
 	"net"
 	"slices"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	"github.com/pion/interceptor/pkg/nack"
 	"github.com/pion/rtcp"
 	"github.com/pion/rtp"
+	"github.com/pion/transport/v5"
 	"github.com/pion/webrtc/v4"
 	"github.com/pion/webrtc/v4/pkg/media"
 )
@@ -47,16 +49,19 @@ const (
 	// 400 ms, as before, nearly every lost packet cost a keyframe, and keyframes, the largest
 	// frames, lost packets the most.
 	frameWait = 2 * time.Second
-	// Packets the PC that shares keeps to send again: frameWait at 16 Mbit/s.
-	resendKeep = 4096
+	// Packets the PC that shares keeps to send again: frameWait at 16 Mbit/s, with parity.
+	resendKeep = 8192
 	// SRTP drops a packet that comes more than this many packets late as a replay. Pion's 64
 	// dropped most resends at a megabit and more, see nackGen.
 	srtpWindow = 4096
 	// Decode bursts can queue briefly, but a stalled local pipe must not turn into
-	// seconds of old pictures. Expired dependencies recover at a fresh keyframe.
-	videoQueue      = 16
+	// seconds of old pictures. Expired dependencies recover at a fresh keyframe. A resent
+	// packet lets every frame held behind it go at once, 6 to 27 of them after a relay's
+	// round trip at 30 to 60 frames a second: the queue takes such a run whole, as
+	// ViewerFrameQueue in the app does.
+	videoQueue      = 64
 	videoQueueBytes = 8 << 20
-	videoQueueWait  = 150 * time.Millisecond
+	videoQueueWait  = 250 * time.Millisecond
 
 	// The floor the link meter puts under GCC's estimate, see target.
 	floorShare = 0.8                   // of the best burst of the last seconds
@@ -78,6 +83,7 @@ type peerConfig struct {
 	relayOnly bool
 	phoneIPs  []net.IP // addresses of the phone's network on this PC, to name the path
 	viaPhone  bool
+	vnet      transport.Net // an emulated network instead of this PC's, in tests only
 }
 
 type videoOut struct {
@@ -103,6 +109,11 @@ type peer struct {
 	gccBps     atomic.Int64
 	rtt        atomic.Int64  // the round trip in nanoseconds, from the stats, for nackGen
 	ssrc       atomic.Uint32 // the screen's SSRC, on the PC that views
+	nacks      *nackGenFactory
+	fec        atomic.Pointer[fecSender] // the screen's parity, on the PC that shares, see fec.go
+	fecExt     atomic.Uint32             // the header extension of the parity, on the PC that views
+	rebuilt    atomic.Int64              // packets the parity rebuilt, on the PC that views
+	lossNow    atomic.Uint64             // the share of packets lost lately, float64 bits, from target
 	video      chan videoOut
 	videoMu    sync.Mutex
 	videoBytes atomic.Int64
@@ -124,6 +135,9 @@ type peer struct {
 	lastTarget  int
 	lastTargetT time.Time
 	floorOn     bool
+	fecOn       bool      // parity goes out, see fecShare
+	fecLow      time.Time // since when the loss stayed below fecOff, zero while it did not
+	fecCost     float64   // parity sent per byte of the screen lately
 	statsOn     bool
 	closeOnce   sync.Once
 	closed      chan struct{}
@@ -146,6 +160,10 @@ func newPeer(cfg peerConfig) (*peer, error) {
 		},
 		PayloadType: 102,
 	}, webrtc.RTPCodecTypeVideo); err != nil {
+		return nil, err
+	}
+	// Parity for the screen, see fec.go: offered by both, used once both offer it.
+	if err := m.RegisterHeaderExtension(webrtc.RTPHeaderExtensionCapability{URI: fecURI}, webrtc.RTPCodecTypeVideo); err != nil {
 		return nil, err
 	}
 
@@ -188,7 +206,8 @@ func newPeer(cfg peerConfig) (*peer, error) {
 	m.RegisterFeedback(webrtc.RTCPFeedback{Type: "nack"}, webrtc.RTPCodecTypeVideo)
 	m.RegisterFeedback(webrtc.RTCPFeedback{Type: "nack", Parameter: "pli"}, webrtc.RTPCodecTypeVideo)
 	reg.Add(responder)
-	reg.Add(&nackGenFactory{rtt: func() time.Duration { return time.Duration(p.rtt.Load()) }})
+	p.nacks = &nackGenFactory{rtt: func() time.Duration { return time.Duration(p.rtt.Load()) }}
+	reg.Add(p.nacks)
 	if err := webrtc.ConfigureRTCPReports(reg); err != nil {
 		return nil, err
 	}
@@ -200,6 +219,10 @@ func newPeer(cfg peerConfig) (*peer, error) {
 	}
 	if err := webrtc.ConfigureTWCCSender(m, reg); err != nil {
 		return nil, err
+	}
+	if cfg.host {
+		// Last, so it sees the screen's packets first: it numbers them, parity in between.
+		reg.Add(&fecFactory{share: p.fecShare, started: p.fec.Store})
 	}
 
 	var se webrtc.SettingEngine
@@ -214,6 +237,9 @@ func newPeer(cfg peerConfig) (*peer, error) {
 		if !cfg.pnet.has6 {
 			types = types[:1]
 		}
+	} else if cfg.vnet != nil {
+		se.SetNet(cfg.vnet)
+		types = types[:1]
 	}
 	se.SetNetworkTypes(types)
 	if cfg.keepIP != nil {
@@ -238,6 +264,7 @@ func newPeer(cfg peerConfig) (*peer, error) {
 	}
 	p.pc = pc
 	pc.OnICEConnectionStateChange(p.onICEState)
+	pc.OnConnectionStateChange(p.onConnectionState)
 
 	if cfg.host {
 		p.track, err = webrtc.NewTrackLocalStaticSample(
@@ -586,9 +613,10 @@ func (p *peer) onGCC(bps int) {
 // Past queueOff or lossOff the floor goes and the bursts measured so far are forgotten, so GCC
 // alone brings the bitrate down; the floor only comes back below queueOn and lossOn, with
 // bursts measured after that.
-func (p *peer) target() (final, floor int) {
+func (p *peer) target() (final, floor, link int) {
 	gccBps := int(p.gccBps.Load())
 	capacity, standing, loss := p.meter.snapshot()
+	p.lossNow.Store(math.Float64bits(loss))
 	p.mu.Lock()
 	was := p.floorOn
 	switch {
@@ -607,20 +635,62 @@ func (p *peer) target() (final, floor int) {
 	}
 	if on && capacity > 0 {
 		floor = min(int(floorShare*capacity), maxBitrate)
+		link = int(capacity)
 	}
 	final = min(max(gccBps, floor, minBitrate), maxBitrate)
-	return final, floor
+	return final, floor, link
+}
+
+// fecShare is the share of parity to send with each frame now, 0 for none, see fec.go: on once
+// the link loses fecOn of the packets, off once it lost less than fecOff for fecHold.
+func (p *peer) fecShare() float64 {
+	loss := math.Float64frombits(p.lossNow.Load())
+	now := time.Now()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	was := p.fecOn
+	switch {
+	case loss >= fecOn:
+		p.fecOn, p.fecLow = true, time.Time{}
+	case loss >= fecOff:
+		p.fecLow = time.Time{}
+	case p.fecLow.IsZero():
+		p.fecLow = now
+	case now.Sub(p.fecLow) > fecHold:
+		p.fecOn = false
+	}
+	switch {
+	case p.fecOn && !was:
+		log.Printf("parity: the link loses %.1f %% of the packets, each frame takes %.0f %% parity along", loss*100, fecShareFor(loss)*100)
+	case was && !p.fecOn:
+		log.Printf("parity: the link lost nothing for %v, the frames go without", fecHold)
+	}
+	if !p.fecOn {
+		return 0
+	}
+	return fecShareFor(loss)
 }
 
 // updateTarget sets the pacer and tells PdaNet the bitrate for the encoder when it changed
-// enough: 8 % at once, any change after 2 seconds.
+// enough: 8 % at once, any change after 2 seconds. The parity goes out within the bitrate:
+// the encoder gets what it leaves.
 func (p *peer) updateTarget() {
-	final, floor := p.target()
+	final, floor, link := p.target()
 	if pc := p.pacer.Load(); pc != nil {
-		pc.SetFloor(floor)
+		pc.SetFloor(floor, link)
 	}
 	p.meter.setTarget(final)
+	cost := -1.0
+	if s := p.fec.Load(); s != nil {
+		cost = s.overhead()
+	}
 	p.mu.Lock()
+	if cost >= 0 {
+		p.fecCost = 0.7*p.fecCost + 0.3*cost
+	} else if !p.fecOn {
+		p.fecCost = 0
+	}
+	final = int(float64(final) / (1 + min(p.fecCost, fecMaxShare)))
 	last, at := p.lastTarget, p.lastTargetT
 	change := final - last
 	if change < 0 {
@@ -659,6 +729,11 @@ func (p *peer) receive(tr *webrtc.TrackRemote, rx *webrtc.RTPReceiver) {
 		return
 	}
 	p.ssrc.Store(uint32(tr.SSRC()))
+	for _, e := range rx.GetParameters().HeaderExtensions {
+		if e.URI == fecURI && e.ID > 0 && e.ID < 15 {
+			p.fecExt.Store(uint32(e.ID))
+		}
+	}
 	go func() {
 		buf := make([]byte, 1500)
 		for {
@@ -680,6 +755,23 @@ func (p *peer) receiveFrames(tr frameReader) {
 	// frame before the desktop rests. Gaps wait for one round trip, with a bounded
 	// deadline, instead of holding every later frame for two seconds after loss.
 	sb := &h264Frames{}
+	var nacks *nackGen
+	if p.nacks != nil {
+		nacks = p.nacks.gen.Load()
+	}
+	fr := newFecReceiver(uint8(p.fecExt.Load()),
+		func(from uint16, n int) {
+			sb.notMedia(from, n)
+			if nacks != nil {
+				nacks.notMedia(p.ssrc.Load(), from, n)
+			}
+		},
+		func(seq uint16) {
+			p.rebuilt.Add(1)
+			if nacks != nil {
+				nacks.recovered(p.ssrc.Load(), seq)
+			}
+		})
 	recovering := true
 	p.requestKeyframe()
 	var readDeadline time.Time
@@ -687,7 +779,7 @@ func (p *peer) receiveFrames(tr frameReader) {
 		wait := repairWait(time.Duration(p.rtt.Load()))
 		var deadline time.Time
 		if sb.head != sb.tail {
-			deadline = sb.since.Add(wait)
+			deadline = sb.deadline(wait)
 		}
 		if !deadline.Equal(readDeadline) {
 			if err := tr.SetReadDeadline(deadline); err != nil {
@@ -703,7 +795,9 @@ func (p *peer) receiveFrames(tr frameReader) {
 				return
 			}
 		} else {
-			sb.Push(pkt, now)
+			for _, q := range fr.push(pkt, now) {
+				sb.Push(q, now)
+			}
 		}
 		for s := sb.Pop(now, wait); s != nil; s = sb.Pop(now, wait) {
 			var flags byte
@@ -873,23 +967,52 @@ func isKeyframe(b []byte) bool {
 
 // ============================ Connection state ============================
 
+// ICE has found an address pair before DTLS has established the keys for media.
+// Pion deliberately returns a successful zero-byte write before SRTP is ready, so
+// announcing at ICE connected can silently lose the opening keyframe. The aggregate
+// peer state becomes connected only after DTLS.Start returns and media is writable.
+func (p *peer) onConnectionState(st webrtc.PeerConnectionState) {
+	if st != webrtc.PeerConnectionStateConnected {
+		return
+	}
+	p.mu.Lock()
+	// Pion dispatches this callback on another goroutine. Ignore a delayed connected
+	// callback if ICE has already disconnected again, or the session has stopped. Every
+	// transition is announced, as ICE's own were: an ICE restart passes through connecting
+	// without a disconnect, and the app must hear the new path and leave "reconnecting".
+	iceState := p.pc.ICEConnectionState()
+	if p.pc.ConnectionState() != webrtc.PeerConnectionStateConnected ||
+		(iceState != webrtc.ICEConnectionStateConnected && iceState != webrtc.ICEConnectionStateCompleted) {
+		p.mu.Unlock()
+		return
+	}
+	select {
+	case <-p.closed:
+		p.mu.Unlock()
+		return
+	default:
+	}
+	p.connected, p.everUp, p.lostAt = true, true, time.Time{}
+	startStats := !p.statsOn
+	p.statsOn = true
+	p.mu.Unlock()
+	path, local, remote, detail := p.describePath()
+	log.Printf("media: connected %s, %s to %s, %s", path, local, remote, detail)
+	p.link.event(event{Ev: "connected", Path: path, Local: local, Remote: remote, Detail: detail})
+	if startStats {
+		go p.statsLoop()
+		if p.cfg.host {
+			go p.targetLoop()
+		}
+	}
+}
+
 func (p *peer) onICEState(st webrtc.ICEConnectionState) {
 	p.mu.Lock()
 	switch st {
 	case webrtc.ICEConnectionStateConnected, webrtc.ICEConnectionStateCompleted:
-		p.connected, p.everUp, p.lostAt = true, true, time.Time{}
-		startStats := !p.statsOn
-		p.statsOn = true
 		p.mu.Unlock()
-		path, local, remote, detail := p.describePath()
-		log.Printf("ice: connected %s, %s to %s, %s", path, local, remote, detail)
-		p.link.event(event{Ev: "connected", Path: path, Local: local, Remote: remote, Detail: detail})
-		if startStats {
-			go p.statsLoop()
-			if p.cfg.host {
-				go p.targetLoop()
-			}
-		}
+		// Wait for DTLS as well before asking the app to capture and encode.
 		return
 	case webrtc.ICEConnectionStateDisconnected:
 		if p.connected || p.lostAt.IsZero() {
@@ -1090,10 +1213,13 @@ func (p *peer) statsLoop() {
 		p.link.event(e)
 		if ticks++; ticks%10 == 1 {
 			if p.cfg.host {
-				log.Printf("stats: rtt %.0f ms, sending %d kbit/s, target %d kbit/s (gcc %d, best burst %d), standing queue %d ms, loss %.1f %%",
-					e.RTT, e.Send, e.Target, e.Gcc, e.Capacity, e.Queue, e.Loss)
+				p.mu.Lock()
+				parity := p.fecCost
+				p.mu.Unlock()
+				log.Printf("stats: rtt %.0f ms, sending %d kbit/s, target %d kbit/s (gcc %d, best burst %d), standing queue %d ms, loss %.1f %%, parity %.0f %%",
+					e.RTT, e.Send, e.Target, e.Gcc, e.Capacity, e.Queue, e.Loss, parity*100)
 			} else {
-				log.Printf("stats: rtt %.0f ms, receiving %d kbit/s, loss %.1f %%", e.RTT, e.Recv, e.Loss)
+				log.Printf("stats: rtt %.0f ms, receiving %d kbit/s, loss %.1f %%, %d packets rebuilt from parity", e.RTT, e.Recv, e.Loss, p.rebuilt.Load())
 			}
 		}
 	}

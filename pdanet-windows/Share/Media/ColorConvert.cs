@@ -1,5 +1,7 @@
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.X86;
 using System.Threading.Tasks;
 
 namespace PdaNetPortable.Share.Media;
@@ -77,7 +79,8 @@ internal static unsafe class ColorConvert
             Rows(src, pitch, x, y, w, y, y + h, dst, scale, gray);
             return;
         }
-        int rowsPerBand = (h / bands + step - 1) / step * step;
+        // Rounded up, so the bands cover every row: rounded down, 1050 rows in 4 bands left 2 out.
+        int rowsPerBand = ((h + bands - 1) / bands + step - 1) / step * step;
         var srcAddr = (nint)src;
         Parallel.For(0, bands, b =>
         {
@@ -157,25 +160,36 @@ internal static unsafe class ColorConvert
     private static byte Clamp(int v) => (byte)(v < 0 ? 0 : v > 255 ? 255 : v);
 
     /// <summary>Converts a whole NV12 frame to BGRA with full alpha, into a buffer of the same size.</summary>
-    public static void Nv12ToBgra(Nv12Frame src, byte* dst, int pitch)
+    public static void Nv12ToBgra(Nv12Frame src, byte* dst, int pitch) => Nv12ToBgra(src, dst, pitch, useSimd: true);
+
+    // Retain the integer reference path for checking every output byte, including clipping and
+    // rounding. SIMD changes how many pixels are calculated together, never their color values.
+    internal static void Nv12ToBgra(Nv12Frame src, byte* dst, int pitch, bool useSimd)
     {
         int h = src.Height;
         int bands = Math.Clamp(Environment.ProcessorCount, 1, Math.Max(1, h / 64));
-        int rowsPerBand = (h / bands + 1) & ~1;
+        // Rounded up, so the bands cover every row: rounded down, 1200 rows in 18 bands (a PC with
+        // 18 or more logical processors) left the bottom 12 black.
+        int rowsPerBand = ((h + bands - 1) / bands + 1) & ~1;
         var dstAddr = (nint)dst;
         if (bands == 1)
         {
-            ToBgraRows(src, dst, pitch, 0, h);
+            ToBgraRows(src, dst, pitch, 0, h, useSimd);
             return;
         }
         Parallel.For(0, bands, b =>
         {
             int from = b * rowsPerBand, to = Math.Min(h, from + rowsPerBand);
-            if (from < to) ToBgraRows(src, (byte*)dstAddr, pitch, from, to);
+            if (from < to) ToBgraRows(src, (byte*)dstAddr, pitch, from, to, useSimd);
         });
     }
 
-    private static void ToBgraRows(Nv12Frame src, byte* dst, int pitch, int from, int to)
+    private static readonly Vector128<byte> ChromaU = Vector128.Create(
+        (byte)0, 0, 2, 2, 4, 4, 6, 6, 128, 128, 128, 128, 128, 128, 128, 128);
+    private static readonly Vector128<byte> ChromaV = Vector128.Create(
+        (byte)1, 1, 3, 3, 5, 5, 7, 7, 128, 128, 128, 128, 128, 128, 128, 128);
+
+    private static void ToBgraRows(Nv12Frame src, byte* dst, int pitch, int from, int to, bool useSimd)
     {
         int w = src.Width;
         for (int y = from; y < to; y += 2)
@@ -185,7 +199,40 @@ internal static unsafe class ColorConvert
             byte* c = src.UV + (y >> 1) * w;
             uint* d0 = (uint*)(dst + y * pitch);
             uint* d1 = (uint*)(dst + (y + 1) * pitch);
-            for (int x = 0; x < w; x += 2, c += 2)
+            int x = 0;
+            if (useSimd && Avx2.IsSupported && Ssse3.IsSupported)
+            {
+                for (; x <= w - 8; x += 8, c += 8)
+                {
+                    // Four interleaved chroma samples cover eight pixels on each of two rows.
+                    // Read only these eight bytes: a narrow final row has no readable padding.
+                    var uv = Sse2.LoadScalarVector128((ulong*)c).AsByte();
+                    var u = Avx2.Subtract(Avx2.ConvertToVector256Int32(Ssse3.Shuffle(uv, ChromaU)), Vector256.Create(128));
+                    var v = Avx2.Subtract(Avx2.ConvertToVector256Int32(Ssse3.Shuffle(uv, ChromaV)), Vector256.Create(128));
+                    var rd = Avx2.Add(Avx2.MultiplyLow(v, Vector256.Create(RV)), Vector256.Create(32768));
+                    var gd = Avx2.Subtract(Vector256.Create(32768), Avx2.Add(
+                        Avx2.MultiplyLow(u, Vector256.Create(GU)), Avx2.MultiplyLow(v, Vector256.Create(GV))));
+                    var bd = Avx2.Add(Avx2.MultiplyLow(u, Vector256.Create(BU)), Vector256.Create(32768));
+                    Avx.Store(d0 + x, Pixels256(y0 + x, rd, gd, bd));
+                    Avx.Store(d1 + x, Pixels256(y1 + x, rd, gd, bd));
+                }
+            }
+            else if (useSimd && Sse41.IsSupported && Ssse3.IsSupported)
+            {
+                for (; x <= w - 4; x += 4, c += 4)
+                {
+                    var uv = Sse2.LoadScalarVector128((uint*)c).AsByte();
+                    var u = Sse2.Subtract(Sse41.ConvertToVector128Int32(Ssse3.Shuffle(uv, ChromaU)), Vector128.Create(128));
+                    var v = Sse2.Subtract(Sse41.ConvertToVector128Int32(Ssse3.Shuffle(uv, ChromaV)), Vector128.Create(128));
+                    var rd = Sse2.Add(Sse41.MultiplyLow(v, Vector128.Create(RV)), Vector128.Create(32768));
+                    var gd = Sse2.Subtract(Vector128.Create(32768), Sse2.Add(
+                        Sse41.MultiplyLow(u, Vector128.Create(GU)), Sse41.MultiplyLow(v, Vector128.Create(GV))));
+                    var bd = Sse2.Add(Sse41.MultiplyLow(u, Vector128.Create(BU)), Vector128.Create(32768));
+                    Sse2.Store(d0 + x, Pixels128(y0 + x, rd, gd, bd));
+                    Sse2.Store(d1 + x, Pixels128(y1 + x, rd, gd, bd));
+                }
+            }
+            for (; x < w; x += 2, c += 2)
             {
                 int u = c[0] - 128, v = c[1] - 128;
                 int rd = RV * v + 32768, gd = -GU * u - GV * v + 32768, bd = BU * u + 32768;
@@ -196,6 +243,38 @@ internal static unsafe class ColorConvert
             }
         }
     }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static Vector256<uint> Pixels256(byte* row, Vector256<int> rd, Vector256<int> gd, Vector256<int> bd)
+    {
+        var luma = Avx2.MultiplyLow(Avx2.Subtract(
+            Avx2.ConvertToVector256Int32(Sse2.LoadScalarVector128((ulong*)row).AsByte()), Vector256.Create(16)), Vector256.Create(YK));
+        var r = Clip256(Avx2.ShiftRightArithmetic(Avx2.Add(luma, rd), 16)).AsUInt32();
+        var g = Clip256(Avx2.ShiftRightArithmetic(Avx2.Add(luma, gd), 16)).AsUInt32();
+        var b = Clip256(Avx2.ShiftRightArithmetic(Avx2.Add(luma, bd), 16)).AsUInt32();
+        return Avx2.Or(Vector256.Create(0xFF000000u), Avx2.Or(
+            Avx2.ShiftLeftLogical(r, 16), Avx2.Or(Avx2.ShiftLeftLogical(g, 8), b)));
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static Vector256<int> Clip256(Vector256<int> value) =>
+        Avx2.Min(Avx2.Max(value, Vector256<int>.Zero), Vector256.Create(255));
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static Vector128<uint> Pixels128(byte* row, Vector128<int> rd, Vector128<int> gd, Vector128<int> bd)
+    {
+        var luma = Sse41.MultiplyLow(Sse2.Subtract(
+            Sse41.ConvertToVector128Int32(Sse2.LoadScalarVector128((uint*)row).AsByte()), Vector128.Create(16)), Vector128.Create(YK));
+        var r = Clip128(Sse2.ShiftRightArithmetic(Sse2.Add(luma, rd), 16)).AsUInt32();
+        var g = Clip128(Sse2.ShiftRightArithmetic(Sse2.Add(luma, gd), 16)).AsUInt32();
+        var b = Clip128(Sse2.ShiftRightArithmetic(Sse2.Add(luma, bd), 16)).AsUInt32();
+        return Sse2.Or(Vector128.Create(0xFF000000u), Sse2.Or(
+            Sse2.ShiftLeftLogical(r, 16), Sse2.Or(Sse2.ShiftLeftLogical(g, 8), b)));
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static Vector128<int> Clip128(Vector128<int> value) =>
+        Sse41.Min(Sse41.Max(value, Vector128<int>.Zero), Vector128.Create(255));
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static uint Pixel(int luma, int rd, int gd, int bd)

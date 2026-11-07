@@ -64,7 +64,7 @@ func waitSent(t *testing.T, log *sentLog, n int, within time.Duration) {
 // A packet sent again goes before the screen's new ones waiting, and every packet leaves with
 // the next transport wide number, in the order they leave.
 func TestPacerResendsFirstNumbersInOrder(t *testing.T) {
-	p, log := newTestPacer(200_000) // 62.5 KB/s: the first 16 packets go at once, the rest wait
+	p, log := newTestPacer(200_000) // 62.5 KB/s: only a couple of packets go at once, the rest wait
 	defer p.Close()
 	for seq := uint16(100); seq < 140; seq++ {
 		h, b := testPacket(seq)
@@ -88,6 +88,51 @@ func TestPacerResendsFirstNumbersInOrder(t *testing.T) {
 		if n != uint16(i) {
 			t.Fatalf("packet %d left with transport wide number %d, want %d (%v)", i, n, i, log.twcc)
 		}
+	}
+}
+
+// A 22.5 KB keyframe at the floor must retain enough paced tail to measure the
+// link and lift the encoder target. A fixed 19.2 KB idle allowance spent nearly
+// all of it at once, leaving no usable timing sample and trapping the bitrate.
+func TestPacerFloorKeyframeTeachesCapacity(t *testing.T) {
+	m := newTestMeter()
+	m.setExt(pacerExt)
+	m.setTarget(minBitrate)
+	p := newBurstPacer(minBitrate, m)
+	p.setExt(pacerExt)
+	log := &sentLog{}
+	p.AddStream(9, log)
+	defer p.Close()
+	if credit := p.capacity(); credit > 2*1200 {
+		t.Fatalf("floor idle credit %.0f bytes exceeds two packets", credit)
+	}
+	const count = 19
+	for i := 0; i < count; i++ {
+		h, payload := testPacket(uint16(i + 1))
+		if i == count-1 {
+			payload = payload[:900-h.MarshalSize()]
+		}
+		if _, err := p.Write(h, payload, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	waitSent(t, log, count, 2*time.Second)
+	settle(m)
+	fb := feedback(0, count, 10, 0, 0, nil)
+	previous := time.Duration(0)
+	for i := range fb.RecvDeltas {
+		m.mu.Lock()
+		at := m.sent[i].at / arrivalTick * arrivalTick
+		m.mu.Unlock()
+		fb.RecvDeltas[i].Delta = int64((at - previous) / time.Microsecond)
+		previous = at
+	}
+	m.onFeedback(fb)
+	peer := &peer{meter: m, floorOn: true}
+	peer.gccBps.Store(minBitrate)
+	if target, _, _ := peer.target(); target <= minBitrate {
+		capacity, _, _ := m.snapshot()
+		t.Fatalf("floor keyframe left target %d, capacity %.0f; want measured capacity to lift the floor", target, capacity)
 	}
 }
 
@@ -116,5 +161,42 @@ func TestPacerDrainsAPile(t *testing.T) {
 		if j-i > 40 {
 			t.Fatalf("%d packets left within 10 ms from packet %d, want the pile spread out", j-i, i)
 		}
+	}
+}
+
+// Once the meter measured the link, a large burst leaves close to the link's rate: the queue
+// it makes waits here, not in front of the slowest hop, which might keep less of it. A small
+// burst still goes faster than the link, so the meter can see the link get faster.
+func TestPacerKeepsALargeBurstNearTheLink(t *testing.T) {
+	p, log := newTestPacer(1_000_000)
+	defer p.Close()
+	p.SetFloor(8_000_000, 10_000_000) // 1.5 times the 10 Mbit/s link is 15 Mbit/s
+	start := time.Now()
+	for seq := uint16(1); seq <= 500; seq++ { // 600 KB: 0.32 s at 15 Mbit/s, 0.48 s at the link's 10
+		h, b := testPacket(seq)
+		_, _ = p.Write(h, b, nil)
+	}
+	waitSent(t, log, 500, 2*time.Second)
+	log.mu.Lock()
+	took := log.at[499].Sub(start)
+	log.mu.Unlock()
+	if took < 360*time.Millisecond || took > 600*time.Millisecond {
+		t.Fatalf("600 KB took %v to leave towards a 10 Mbit/s link, want about 0.4 s", took)
+	}
+
+	// 30 KB, less than 30 ms of the link adds to its queue at 1.5 times, goes at 1.5 times.
+	time.Sleep(100 * time.Millisecond)
+	before := log.count()
+	start = time.Now()
+	for seq := uint16(501); seq <= 525; seq++ {
+		h, b := testPacket(seq)
+		_, _ = p.Write(h, b, nil)
+	}
+	waitSent(t, log, before+25, time.Second)
+	log.mu.Lock()
+	took = log.at[before+24].Sub(start)
+	log.mu.Unlock()
+	if took > 25*time.Millisecond {
+		t.Fatalf("a 30 KB burst took %v, want about 16 ms at 15 Mbit/s", took)
 	}
 }
