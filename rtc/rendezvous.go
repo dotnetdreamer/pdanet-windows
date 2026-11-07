@@ -282,7 +282,7 @@ func (d dialer) websocket(ctx context.Context, u string, protocols ...string) (*
 		WriteBufferSize:  8 << 10,
 	}
 	if d.proxy != nil {
-		wd.Proxy = http.ProxyURL(d.proxy)
+		wd.Proxy = d.proxyFor
 	}
 	c, _, err := wd.DialContext(ctx, u, http.Header{"User-Agent": {"PdaNet/" + version}})
 	return c, err
@@ -296,9 +296,33 @@ func (d dialer) httpClient() *http.Client {
 		IdleConnTimeout:     30 * time.Second,
 	}
 	if d.proxy != nil {
-		t.Proxy = http.ProxyURL(d.proxy)
+		t.Proxy = d.proxyFor
 	}
 	return &http.Client{Transport: t}
+}
+
+// proxyFor is the proxy for one connection: none when the proxy is one on this PC that does not
+// answer. PdaNet's own proxy (127.0.0.1:12345) runs only while PdaNet is connected to a phone,
+// and a share outlives that: it takes the proxy Windows has when it starts. A share that started
+// while PdaNet was connected failed on every relay with "connection refused" once PdaNet
+// disconnected, and no PC could reach it (2026-11-07). Each new connection asks again, so the
+// relays go through the proxy again when it comes back.
+func (d dialer) proxyFor(*http.Request) (*url.URL, error) {
+	if d.proxy == nil {
+		return nil, nil
+	}
+	if ip := net.ParseIP(d.proxy.Hostname()); (ip != nil && ip.IsLoopback()) || d.proxy.Hostname() == "localhost" {
+		port := d.proxy.Port()
+		if port == "" {
+			port = "80"
+		}
+		c, err := net.DialTimeout("tcp", net.JoinHostPort(d.proxy.Hostname(), port), time.Second)
+		if err != nil {
+			return nil, nil
+		}
+		_ = c.Close()
+	}
+	return d.proxy, nil
 }
 
 // backoff waits a little longer after each failed connect, up to a limit.

@@ -357,7 +357,8 @@
                             <StackPanel Style="{StaticResource FieldLabelRow}" Margin="0,12,0,6">
                                 <TextBlock Text="WEB ADDRESS" Style="{StaticResource T.Eyebrow}" VerticalAlignment="Center" />
                             </StackPanel>
-                            <PasswordBox x:Name="RelayFrom" MaxLength="2048" AutomationProperties.Name="Relay web address" />
+                            <TextBox x:Name="RelayFrom" MaxLength="2048" Tag="https://relay.example.com/turn"
+                                     AutomationProperties.Name="Relay web address" />
                         </StackPanel>
 
                         <Border Style="{StaticResource Divider}" />

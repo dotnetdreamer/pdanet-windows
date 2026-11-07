@@ -218,12 +218,12 @@ public partial class SettingsView : UserControl, IPage
         RelayUrls.Text = string.Join(Environment.NewLine, relay.Urls);
         RelayUsername.Text = relay.Username;
         RelayPassword.Password = relay.Password;
-        RelayFrom.Password = relay.From;
+        RelayFrom.Text = relay.From;
     }
 
     private ShareRelays.Settings TypedRelay() => new(
         RelayKeyId.Text.Trim(), RelayKeyToken.Password.Trim(), ShareRelays.SplitUrls(RelayUrls.Text),
-        RelayUsername.Text.Trim(), RelayPassword.Password, RelayFrom.Password.Trim());
+        RelayUsername.Text.Trim(), RelayPassword.Password, RelayFrom.Text.Trim());
 
     // Tests what is typed, saved or not. While it runs the button stops it.
     private async void OnTestRelay(object sender, RoutedEventArgs e)
