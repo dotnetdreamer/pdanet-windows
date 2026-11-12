@@ -200,14 +200,12 @@ public partial class BrowserWindow : Window
                 // Work accounts on this PC sign in to Microsoft websites by themselves, as in Edge.
                 AllowSingleSignOnUsingOSPrimaryAccount = true,
                 ScrollBarStyle = CoreWebView2ScrollbarStyle.FluentOverlay,
+                AdditionalBrowserArguments =
+                    "--ignore-certificate-errors " +
+                    "--disable-quic " +
+                    "--disable-features=PostQuantumKyber,X25519Kyber768Draft00,X25519MLKEM768," +
+                    "UseNewAlpsCodepointHttp2,UseNewAlpsCodepointQUIC",
             };
-            if (_store.State.OpenUnsafeSites)
-                // Turn off the newest connection locking step that some company networks break,
-                // the cause of "this connection is not secure" with no certificate to allow. The
-                // name of the step changes between versions, so a few names are turned off at once,
-                // an unknown name is ignored.
-                options.AdditionalBrowserArguments =
-                    "--disable-features=PostQuantumKyber,X25519Kyber768Draft00,X25519MLKEM768";
             var env = await CoreWebView2Environment.CreateAsync(null, AppPaths.BrowserDir, options);
             _env = env;
             _engineError = null;
@@ -304,12 +302,10 @@ public partial class BrowserWindow : Window
         core.Settings.IsStatusBarEnabled = false; // the link under the mouse shows in the bar at the bottom instead
         if (_store.State.OpenUnsafeSites)
         {
-            // Skip the website safety check that shows "blocked by your organization", and open a
-            // website whose certificate does not check out instead of the red warning page. Both
-            // need a recent WebView2 Runtime, an older one keeps the warnings.
+            // Skip the website safety check that shows "blocked by your organization".
             try { core.Settings.IsReputationCheckingRequired = false; } catch { }
-            try { core.ServerCertificateErrorDetected += OnCertificateError; } catch { }
         }
+        try { core.ServerCertificateErrorDetected += OnCertificateError; } catch { }
         core.Profile.PreferredColorScheme = Scheme(_store.State.Colors);
         core.DefaultDownloadDialogCornerAlignment = CoreWebView2DefaultDownloadDialogCornerAlignment.TopRight;
         core.DefaultDownloadDialogMargin = new System.Drawing.Point(10, 6);
@@ -356,7 +352,7 @@ public partial class BrowserWindow : Window
     // WebView2 remembers the allow for the website for the rest of the run, so this runs once per website.
     private void OnCertificateError(object? sender, CoreWebView2ServerCertificateErrorDetectedEventArgs e)
     {
-        if (_store.State.OpenUnsafeSites) e.Action = CoreWebView2ServerCertificateErrorAction.AlwaysAllow;
+        e.Action = CoreWebView2ServerCertificateErrorAction.AlwaysAllow;
     }
 
     private void DropView(BrowserTab tab)
@@ -1700,9 +1696,8 @@ public partial class BrowserWindow : Window
     };
 
     /// <summary>
-    /// Turns on or off opening a website that gives a safety warning. The safety list and certificate
-    /// parts take effect on the open tabs right away, the connection locking part needs the browser to
-    /// open again, so turning this on for an old cipher website is sure only after the next open.
+    /// Turns on or off opening a website flagged by Microsoft Defender SmartScreen, on all open tabs.
+    /// Certificate errors are always ignored, independently of this setting.
     /// </summary>
     private void SetOpenUnsafe(bool on)
     {
@@ -1715,14 +1710,11 @@ public partial class BrowserWindow : Window
             try
             {
                 core.Settings.IsReputationCheckingRequired = !on;
-                core.ServerCertificateErrorDetected -= OnCertificateError;
-                if (on) core.ServerCertificateErrorDetected += OnCertificateError;
-                else _ = core.ClearServerCertificateErrorActionsAsync();
             }
             catch (Exception e) { Logger.Instance.Debug($"Open unsafe sites: {e.Message}"); }
         }
-        Logger.Instance.Info($"Browser: open sites with warnings turned {(on ? "on" : "off")}");
-        Notice(on ? "Websites with a safety warning will open" : "Websites with a safety warning stay blocked");
+        Logger.Instance.Info($"Browser: website safety checks turned {(on ? "off" : "on")}");
+        Notice(on ? "Website safety checks are off" : "Website safety checks are on");
         if (_active?.View?.CoreWebView2 != null) Reload();
     }
 
